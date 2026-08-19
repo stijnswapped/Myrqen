@@ -1,0 +1,35 @@
+{
+  "name": "myrqen",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "myrqen": "./dist/myrqen.mjs"
+  },
+  "files": [
+    "dist",
+    "skill"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node build.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@myrqen/analytics": "workspace:*",
+    "@myrqen/auth": "workspace:*",
+    "@myrqen/brand": "workspace:*",
+    "@myrqen/contracts": "workspace:*",
+    "@myrqen/policy": "workspace:*",
+    "@myrqen/report": "workspace:*",
+    "@myrqen/scan": "workspace:*",
+    "@myrqen/skill": "workspace:*",
+    "@myrqen/updater": "workspace:*",
+    "commander": "^15.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "@types/node": "^24.10.1",
+    "esbuild": "^0.25.12"
+  }
+}

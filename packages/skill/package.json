@@ -1,0 +1,21 @@
+{
+  "name": "@myrqen/skill",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "files": [
+    "myrqen"
+  ],
+  "scripts": {
+    "build": "node -e \"process.stdout.write(String.fromCharCode(10))\"",
+    "typecheck": "node -e \"process.exit(0)\"",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@myrqen/brand": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "@types/node": "^24.10.1"
+  }
+}

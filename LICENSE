@@ -1,0 +1,200 @@
+Myrqen Source-Available Licence 1.0
+
+Copyright (c) 2026 Stijn. All rights reserved.
+
+
+                    ═══════════════════════════════════
+                     THIS IS NOT AN OPEN SOURCE LICENCE
+                    ═══════════════════════════════════
+
+It is not approved by the Open Source Initiative and it does not meet the Open
+Source Definition or the Free Software Definition. Please do not describe this
+project as open source, and please do not add it to a list of open source tools.
+
+The source is published so that it can be read, audited, and understood —
+particularly because this software performs security analysis, and software that
+inspects your code should be inspectable in return. The licence grants reading.
+It does not grant reuse.
+
+
+IN PLAIN LANGUAGE
+─────────────────
+
+  You may, without asking:
+
+    ✓  read, study, and learn from the source
+    ✓  clone it so you can read it locally
+    ✓  run it on your own machines, for your own work, including commercial work
+    ✓  run it against systems you own or are authorised to test
+    ✓  quote short excerpts in a review, a lesson, an article, or a security
+       report, with attribution
+    ✓  open an issue containing whatever excerpt is needed to describe a defect
+    ✓  submit a fix
+
+  You may not, without written permission:
+
+    ✗  redistribute it, in source or compiled form
+    ✗  publish a fork or a mirror
+    ✗  modify it and distribute the result
+    ✗  run it as a hosted or managed service for other people
+    ✗  build it into a product or service you distribute or host
+    ✗  remove the copyright or licence notices
+    ✗  use the name or the logo to endorse or promote something else
+
+  And two things worth knowing before you rely on it:
+
+    !  This software can be wrong in both directions. It may report a defect
+       that does not exist, and it may stay silent about one that does. No output
+       from it is a statement that anything is secure.
+    !  Point it only at systems you own or have documented permission to test.
+       Anything else is outside the permissions granted here and is your
+       responsibility alone.
+
+The summary above is written to be read. Where it and the terms below could be
+read differently, the terms below govern.
+
+
+TERMS
+─────
+
+1. DEFINITIONS
+
+   "Software" means the contents of this repository, including source code,
+   documentation, configuration, test corpora, and any accompanying files.
+
+   "You" means the individual or entity exercising the permissions below. If you
+   are acting for an organisation, "You" includes that organisation.
+
+   "Distribute" means to make available to any third party, by any means,
+   including publishing, mirroring, bundling, or providing network access to a
+   running copy.
+
+2. PERMISSIONS GRANTED
+
+   Subject to the conditions and limitations below, the copyright holder grants
+   You a worldwide, royalty-free, non-exclusive, non-transferable, revocable
+   licence to:
+
+   a. read, view, and study the Software;
+
+   b. reproduce the Software as necessary to read it, to run it, and to keep a
+      local working copy;
+
+   c. run the Software on machines You control, for Your own internal purposes,
+      including commercial purposes, and against systems You own or are
+      authorised in writing to test;
+
+   d. quote excerpts of the Software in commentary, review, teaching,
+      journalism, academic work, or security research, with attribution to the
+      Software and its author, provided the excerpt is no larger than the
+      purpose requires;
+
+   e. report defects and security issues, including whatever excerpt is
+      necessary to describe them clearly.
+
+3. LIMITATIONS
+
+   Without prior written permission from the copyright holder, You may not:
+
+   a. Distribute the Software, in source or compiled form, in whole or in
+      substantial part;
+
+   b. publish a fork, a mirror, or a derivative work of the Software;
+
+   c. modify the Software and Distribute the result;
+
+   d. offer the Software, or any substantial part of it, to third parties as a
+      hosted, managed, or embedded service, whether or not for a fee;
+
+   e. incorporate the Software, or any substantial part of it, into another
+      product or service that You Distribute or host;
+
+   f. remove, obscure, or alter any copyright, licence, or attribution notice;
+
+   g. use the names, logos, or trade dress of the Software or its author to
+      endorse or promote any product, service, or organisation.
+
+   Nothing in this section restricts any right You have under applicable law
+   that cannot be restricted by agreement, including rights of quotation,
+   interoperability, or study that a statute grants You regardless of contract.
+
+4. CONTRIBUTIONS
+
+   You retain copyright in anything You contribute. By submitting a contribution
+   You grant the copyright holder a perpetual, worldwide, royalty-free,
+   irrevocable, sublicensable licence to use, reproduce, modify, distribute, and
+   relicense it, including under different terms, and You confirm that You have
+   the right to grant that licence. If Your employer has rights in Your
+   contribution, You confirm You have their permission.
+
+5. NO PATENT LICENCE
+
+   No patent rights are granted, expressly, by implication, by estoppel, or
+   otherwise.
+
+6. NO TRADEMARK LICENCE
+
+   No rights are granted in any name, logo, or mark of the copyright holder.
+   Nominative use — naming the Software in order to refer to it truthfully — is
+   not restricted by this licence.
+
+7. TERM AND TERMINATION
+
+   This licence applies for as long as You comply with it. Your permissions end
+   automatically if You breach section 3, and may be restored only in writing by
+   the copyright holder. Sections 8, 9, 10, and 11 survive termination.
+
+8. NO WARRANTY
+
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE, TITLE, AND NONINFRINGEMENT.
+
+   Specifically and without limiting the above: this Software analyses code and
+   reports what it believes it has found. It can report a defect that does not
+   exist, and it can stay silent about one that does. It is not a substitute for
+   a security review by a qualified person, it is not a certification, and no
+   output from it constitutes a representation that any system is secure,
+   compliant, or free of vulnerabilities.
+
+9. LIMITATION OF LIABILITY
+
+   TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, IN NO EVENT SHALL THE
+   COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY,
+   WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM, OUT OF,
+   OR IN CONNECTION WITH THE SOFTWARE, ITS USE, ITS OUTPUT, OR ANY ACTION TAKEN
+   OR NOT TAKEN IN RELIANCE ON ITS OUTPUT.
+
+   Nothing here excludes liability that cannot lawfully be excluded, including
+   liability for death or personal injury caused by negligence, or for fraud.
+
+10. AUTHORISED USE ONLY
+
+    You may direct this Software only at systems You own or have documented
+    permission to test. Using it against anything else may be unlawful in Your
+    jurisdiction, is outside the permissions granted in section 2, and is Your
+    responsibility alone. The copyright holder accepts no responsibility for
+    Your use of it against systems You were not authorised to test.
+
+11. GENERAL
+
+    If any provision of this licence is held unenforceable, the remainder
+    continues in force and the unenforceable provision is limited to the minimum
+    extent necessary to make it enforceable.
+
+    This licence is the entire agreement between You and the copyright holder
+    concerning the Software, and supersedes any prior understanding.
+
+
+THIRD-PARTY COMPONENTS
+──────────────────────
+
+The Software depends on third-party packages that are licensed separately by
+their own authors, under MIT, Apache-2.0, and BSD-3-Clause terms. Those licences
+are not affected by this one, they travel with those packages, and nothing here
+grants or restricts any right in them. See each package's own licence text under
+`node_modules` after installation.
+
+
+For permission beyond this licence, or to discuss a use it does not allow,
+contact the copyright holder.

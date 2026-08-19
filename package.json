@@ -1,0 +1,30 @@
+{
+  "name": "myrqen",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@9.15.4",
+  "engines": {
+    "node": ">=20.12"
+  },
+  "license": "SEE LICENSE IN LICENSE",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/stijnswapped/Myrqen.git"
+  },
+  "scripts": {
+    "build": "turbo build",
+    "lint": "node scripts/lint.mjs",
+    "typecheck": "turbo typecheck",
+    "test": "turbo test",
+    "test:all": "pnpm lint && pnpm build && pnpm typecheck && pnpm test && pnpm benchmark",
+    "benchmark": "node benchmark/run.mjs",
+    "benchmark:corpus": "node benchmark/score-corpus.mjs",
+    "schemas:generate": "node scripts/generate-schema-module.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "esbuild": "^0.25.12",
+    "turbo": "^2.5.8",
+    "typescript": "^5.9.3"
+  }
+}

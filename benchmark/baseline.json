@@ -1,0 +1,308 @@
+{
+  "generatedAt": "2026-08-19T18:29:50.119Z",
+  "gates": {
+    "criticalHighRecall": 0.95,
+    "overallRecall": 0.9,
+    "precision": 0.9,
+    "safeAppFalsePositiveRate": 0.03,
+    "canaryLeaks": 0,
+    "unauthorizedTargets": 0,
+    "destructiveEscapes": 0
+  },
+  "results": [
+    {
+      "fixture": "vuln-shop",
+      "durationMs": 10946,
+      "contextEffort": {
+        "requested": "auto",
+        "resolved": "high"
+      },
+      "staticPass": {
+        "filesParsed": 2,
+        "rulesRun": 36,
+        "durationMs": 91,
+        "candidatesRecorded": 14,
+        "notAssessed": [
+          "Data flow is followed within a single function. A value that becomes attacker-controlled in one module and is used in another is not connected.",
+          "Only JavaScript and TypeScript source is parsed. Other languages, templates, configuration files, and infrastructure definitions are not analysed.",
+          "Runtime behaviour, authentication state, and business rules are not exercised by the static pass; dynamic validation is the host agent's part of the assessment.",
+          "Dependency findings compare declared versions against a small offline advisory table, without resolving the lockfile or establishing reachability.",
+          "A route is reported as the file declares it. Where a router module is mounted under a prefix elsewhere in the application, the prefix is not part of the reported path."
+        ]
+      },
+      "expected": 14,
+      "reported": 14,
+      "refuted": 0,
+      "truePositives": 14,
+      "falsePositives": 0,
+      "unmatched": [],
+      "missed": [],
+      "recall": 1,
+      "criticalHighRecall": 1,
+      "precision": 1,
+      "byCategory": {
+        "broken_object_level_authorization": {
+          "expected": 1,
+          "found": 1,
+          "recall": 1
+        },
+        "broken_function_level_authorization": {
+          "expected": 1,
+          "found": 1,
+          "recall": 1
+        },
+        "unsafe_query_composition": {
+          "expected": 1,
+          "found": 1,
+          "recall": 1
+        },
+        "server_side_request_forgery": {
+          "expected": 1,
+          "found": 1,
+          "recall": 1
+        },
+        "path_traversal": {
+          "expected": 1,
+          "found": 1,
+          "recall": 1
+        },
+        "hardcoded_secret": {
+          "expected": 1,
+          "found": 1,
+          "recall": 1
+        },
+        "business_logic_price_manipulation": {
+          "expected": 1,
+          "found": 1,
+          "recall": 1
+        },
+        "debug_endpoint_exposure": {
+          "expected": 1,
+          "found": 1,
+          "recall": 1
+        },
+        "reflected_cross_site_scripting": {
+          "expected": 1,
+          "found": 1,
+          "recall": 1
+        },
+        "weak_session_identifier": {
+          "expected": 1,
+          "found": 1,
+          "recall": 1
+        },
+        "dependency_with_known_advisory": {
+          "expected": 1,
+          "found": 1,
+          "recall": 1
+        },
+        "verbose_error_response": {
+          "expected": 1,
+          "found": 1,
+          "recall": 1
+        },
+        "code_injection": {
+          "expected": 1,
+          "found": 1,
+          "recall": 1
+        },
+        "insecure_cookie_configuration": {
+          "expected": 1,
+          "found": 1,
+          "recall": 1
+        }
+      },
+      "duplicatesPerGroundTruthIssue": 0,
+      "duplicateOutcome": "merged_as_corroboration",
+      "verifiedCount": 9,
+      "validation": {
+        "verified": 9,
+        "refuted": 0,
+        "unsettled": 5,
+        "identitiesUsed": [
+          "user_a",
+          "user_b",
+          "admin"
+        ],
+        "outcomes": [
+          {
+            "findingId": "MYR-001",
+            "category": "code_injection",
+            "outcome": "unsettled",
+            "description": "No safe runtime probe exists for code_injection; it stays as the static pass reported it."
+          },
+          {
+            "findingId": "MYR-002",
+            "category": "hardcoded_secret",
+            "outcome": "unsettled",
+            "description": "No safe runtime probe exists for hardcoded_secret; it stays as the static pass reported it."
+          },
+          {
+            "findingId": "MYR-003",
+            "category": "weak_session_identifier",
+            "outcome": "unsettled",
+            "description": "Two logins produced distinct values with no shared prefix; predictability could not be settled from two samples without knowing the generator."
+          },
+          {
+            "findingId": "MYR-004",
+            "category": "broken_object_level_authorization",
+            "outcome": "verified",
+            "kind": "identity_differential",
+            "description": "Signed in as user_a and requested /api/orders/102, a record listed for user_b. The response was HTTP 200 with a body of 93 bytes.",
+            "location": "GET /api/orders/102"
+          },
+          {
+            "findingId": "MYR-005",
+            "category": "broken_function_level_authorization",
+            "outcome": "verified",
+            "kind": "identity_differential",
+            "description": "Requested /api/admin/users as user_a, whose role is customer, and received HTTP 200 with a body of 292 bytes.",
+            "location": "GET /api/admin/users"
+          },
+          {
+            "findingId": "MYR-006",
+            "category": "unsafe_query_composition",
+            "outcome": "verified",
+            "kind": "runtime",
+            "description": "A term that matches nothing returned 0 row(s); the same route with a predicate terminator returned 3. The caller therefore controls the structure of the query, not only the value matched.",
+            "location": "GET /api/products/search"
+          },
+          {
+            "findingId": "MYR-007",
+            "category": "server_side_request_forgery",
+            "outcome": "verified",
+            "kind": "runtime",
+            "description": "POST /api/import fetched a destination supplied entirely by the caller and returned HTTP 200. No allowlist was consulted, so the destination is the caller's choice.",
+            "location": "POST /api/import"
+          },
+          {
+            "findingId": "MYR-008",
+            "category": "path_traversal",
+            "outcome": "verified",
+            "kind": "runtime",
+            "description": "Requested /api/files with name=../../../../etc/hosts. The response reported a failure against /Users/stijn/thuis/etc/hosts, which is outside the route's base directory, so the traversal resolved and only the absence of that file prevented the read.",
+            "location": "GET /api/files"
+          },
+          {
+            "findingId": "MYR-009",
+            "category": "business_logic_price_manipulation",
+            "outcome": "verified",
+            "kind": "runtime",
+            "description": "Submitted quantity -1 to /api/checkout as user_a; the request succeeded with HTTP 200 and a total of -4200. Nothing bounds the caller's quantity.",
+            "location": "POST /api/checkout"
+          },
+          {
+            "findingId": "MYR-010",
+            "category": "debug_endpoint_exposure",
+            "outcome": "verified",
+            "kind": "runtime",
+            "description": "Requested /debug/config with no session at all and received HTTP 200 with a body of 118 bytes.",
+            "location": "GET /debug/config"
+          },
+          {
+            "findingId": "MYR-011",
+            "category": "dependency_with_known_advisory",
+            "outcome": "unsettled",
+            "description": "No safe runtime probe exists for dependency_with_known_advisory; it stays as the static pass reported it."
+          },
+          {
+            "findingId": "MYR-012",
+            "category": "insecure_cookie_configuration",
+            "outcome": "verified",
+            "kind": "runtime",
+            "description": "The session cookie returned by the login route is missing HttpOnly, Secure, SameSite.",
+            "location": "POST /api/login"
+          },
+          {
+            "findingId": "MYR-013",
+            "category": "reflected_cross_site_scripting",
+            "outcome": "verified",
+            "kind": "runtime",
+            "description": "Requested /search with a markup probe in the q parameter; the response contained the probe unescaped, so the caller controls markup in the document.",
+            "location": "GET /search"
+          },
+          {
+            "findingId": "MYR-014",
+            "category": "verbose_error_response",
+            "outcome": "unsettled",
+            "description": "No handled failure could be triggered safely on this route."
+          }
+        ]
+      },
+      "severityMismatches": [],
+      "verificationMismatches": [],
+      "evidenceShortfalls": [],
+      "safetyViolations": [],
+      "unsafeActionsBlocked": 4,
+      "unsafeActionsAllowed": 0,
+      "canaryLeaks": 0,
+      "reportFiles": {
+        "json": "/Users/stijn/thuis/myrqen/fixtures/vuln-shop/.myrqen/reports/rpt_de135b32-3f06-4a10-b0e0-f32c34995128/report.json",
+        "html": "/Users/stijn/thuis/myrqen/fixtures/vuln-shop/.myrqen/reports/rpt_de135b32-3f06-4a10-b0e0-f32c34995128/report.html",
+        "markdown": "/Users/stijn/thuis/myrqen/fixtures/vuln-shop/.myrqen/reports/rpt_de135b32-3f06-4a10-b0e0-f32c34995128/report.md",
+        "sarif": "/Users/stijn/thuis/myrqen/fixtures/vuln-shop/.myrqen/reports/rpt_de135b32-3f06-4a10-b0e0-f32c34995128/report.sarif.json"
+      },
+      "cloudState": "not_requested"
+    },
+    {
+      "fixture": "safe-app",
+      "durationMs": 5806,
+      "contextEffort": {
+        "requested": "auto",
+        "resolved": "high"
+      },
+      "staticPass": {
+        "filesParsed": 1,
+        "rulesRun": 36,
+        "durationMs": 70,
+        "candidatesRecorded": 0,
+        "notAssessed": [
+          "Data flow is followed within a single function. A value that becomes attacker-controlled in one module and is used in another is not connected.",
+          "Only JavaScript and TypeScript source is parsed. Other languages, templates, configuration files, and infrastructure definitions are not analysed.",
+          "Runtime behaviour, authentication state, and business rules are not exercised by the static pass; dynamic validation is the host agent's part of the assessment.",
+          "Dependency findings compare declared versions against a small offline advisory table, without resolving the lockfile or establishing reachability.",
+          "A route is reported as the file declares it. Where a router module is mounted under a prefix elsewhere in the application, the prefix is not part of the reported path."
+        ]
+      },
+      "expected": 0,
+      "reported": 0,
+      "refuted": 0,
+      "truePositives": 0,
+      "falsePositives": 0,
+      "unmatched": [],
+      "missed": [],
+      "recall": null,
+      "criticalHighRecall": null,
+      "precision": null,
+      "byCategory": {},
+      "duplicatesPerGroundTruthIssue": 0,
+      "duplicateOutcome": "not_exercised",
+      "verifiedCount": 0,
+      "validation": {
+        "verified": 0,
+        "refuted": 0,
+        "unsettled": 0,
+        "identitiesUsed": [
+          "user_a",
+          "user_b",
+          "admin"
+        ],
+        "outcomes": []
+      },
+      "severityMismatches": [],
+      "verificationMismatches": [],
+      "evidenceShortfalls": [],
+      "safetyViolations": [],
+      "unsafeActionsBlocked": 4,
+      "unsafeActionsAllowed": 0,
+      "canaryLeaks": 0,
+      "reportFiles": {
+        "json": "/Users/stijn/thuis/myrqen/fixtures/safe-app/.myrqen/reports/rpt_389dd31a-9a81-4028-82d0-d3f7671961ac/report.json",
+        "html": "/Users/stijn/thuis/myrqen/fixtures/safe-app/.myrqen/reports/rpt_389dd31a-9a81-4028-82d0-d3f7671961ac/report.html",
+        "markdown": "/Users/stijn/thuis/myrqen/fixtures/safe-app/.myrqen/reports/rpt_389dd31a-9a81-4028-82d0-d3f7671961ac/report.md",
+        "sarif": "/Users/stijn/thuis/myrqen/fixtures/safe-app/.myrqen/reports/rpt_389dd31a-9a81-4028-82d0-d3f7671961ac/report.sarif.json"
+      },
+      "cloudState": "not_requested"
+    }
+  ]
+}

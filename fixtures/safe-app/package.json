@@ -1,0 +1,9 @@
+{
+  "name": "myrqen-fixture-safe-app",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Correctly implemented counterpart fixture used to measure false positives.",
+  "scripts": { "start": "node src/server.js" },
+  "dependencies": {}
+}

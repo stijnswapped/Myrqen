@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Myrqen safe live scan event",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "eventId",
+    "reportId",
+    "type",
+    "occurredAt"
+  ],
+  "properties": {
+    "eventId": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "reportId": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "occurredAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "type": {
+      "enum": [
+        "report_created",
+        "phase_started",
+        "phase_completed",
+        "aggregate_updated",
+        "warning_safe",
+        "scan_completed",
+        "scan_failed"
+      ]
+    },
+    "phase": {
+      "enum": [
+        "preflight",
+        "scope",
+        "discovery",
+        "source_review",
+        "runtime_validation",
+        "access_control",
+        "validation",
+        "reporting"
+      ]
+    },
+    "safeCode": {
+      "type": "string",
+      "pattern": "^[A-Z0-9_]{1,80}$"
+    },
+    "message": {
+      "type": "string",
+      "maxLength": 300
+    },
+    "durationMs": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "aggregate": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "candidateCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "validatedCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "critical": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "high": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "medium": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "low": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "info": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  },
+  "$id": "https://schemas.myrqen.invalid/scan-event.schema.json"
+}

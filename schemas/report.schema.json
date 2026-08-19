@@ -1,0 +1,202 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.myrqen.invalid/report.schema.json",
+  "title": "Myrqen Report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion","id","generatedAt","project","scan","summary","findings","coverage","limitations"],
+  "$defs": {
+    "severityCounts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["critical","high","medium","low","info"],
+      "properties": {
+        "critical": { "type": "integer", "minimum": 0 },
+        "high": { "type": "integer", "minimum": 0 },
+        "medium": { "type": "integer", "minimum": 0 },
+        "low": { "type": "integer", "minimum": 0 },
+        "info": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "verificationCounts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["verified","strong_evidence","needs_review"],
+      "properties": {
+        "verified": { "type": "integer", "minimum": 0 },
+        "strong_evidence": { "type": "integer", "minimum": 0 },
+        "needs_review": { "type": "integer", "minimum": 0 }
+      }
+    }
+  },
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" },
+    "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "cloudReportId": { "type": "string", "maxLength": 128 },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name","workspaceKind"],
+      "properties": {
+        "name": { "type": "string", "maxLength": 200 },
+        "workspaceKind": { "enum": ["personal","team"] },
+        "workspaceName": { "type": "string", "maxLength": 200 },
+        "repositoryLabel": { "type": "string", "maxLength": 300 }
+      }
+    },
+    "scan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["effortRequested","effortResolved","durationMs","agent","tokenUsage","scope"],
+      "properties": {
+        "effortRequested": { "enum": ["low","high","xhigh","ultra","auto"] },
+        "effortResolved": { "enum": ["low","high","xhigh","ultra"] },
+        "effortProfile": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["reasoningPasses","validationPasses","maxParallelInvestigations","wallClockBudgetMs","falsePositiveChallengePass","identityMatrixDepth","breadth"],
+          "properties": {
+            "reasoningPasses": { "type": "integer", "minimum": 1 },
+            "validationPasses": { "type": "integer", "minimum": 1 },
+            "maxParallelInvestigations": { "type": "integer", "minimum": 1 },
+            "wallClockBudgetMs": { "type": "integer", "minimum": 1000 },
+            "falsePositiveChallengePass": { "type": "boolean" },
+            "identityMatrixDepth": { "type": "integer", "minimum": 0, "maximum": 3 },
+            "breadth": { "enum": ["focused","broad","comprehensive"] }
+          }
+        },
+        "startedAt": { "type": "string", "format": "date-time" },
+        "completedAt": { "type": "string", "format": "date-time" },
+        "durationMs": { "type": "integer", "minimum": 0 },
+        "agent": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name"],
+          "properties": {
+            "name": { "type": "string", "maxLength": 120 },
+            "version": { "type": "string", "maxLength": 120 },
+            "model": { "type": "string", "maxLength": 200 }
+          }
+        },
+        "host": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["osFamily","arch"],
+          "properties": {
+            "osFamily": { "type": "string", "maxLength": 60 },
+            "arch": { "type": "string", "maxLength": 40 },
+            "runtimeVersion": { "type": "string", "maxLength": 60 },
+            "cliVersion": { "type": "string", "maxLength": 60 },
+            "isolatedRuntimeAvailable": { "type": "boolean" }
+          }
+        },
+        "tokenUsage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["source"],
+          "properties": {
+            "source": { "enum": ["exact","estimated","unavailable"] },
+            "count": { "type": "integer", "minimum": 0 },
+            "estimator": { "type": "string", "maxLength": 160 }
+          }
+        },
+        "scope": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["localTargets","externalTargets"],
+          "properties": {
+            "localTargets": { "type": "array", "items": { "type": "string", "maxLength": 1000 }, "maxItems": 128 },
+            "externalTargets": {
+              "type": "array",
+              "maxItems": 64,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["target","authorized"],
+                "properties": {
+                  "target": { "type": "string", "maxLength": 1000 },
+                  "authorized": { "const": true },
+                  "authorizedAt": { "type": "string", "format": "date-time" },
+                  "method": { "enum": ["interactive_confirmation","preauthorized_project_config"] }
+                }
+              }
+            }
+          }
+        },
+        "phases": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["phase","state"],
+            "properties": {
+              "phase": { "enum": ["preflight","scope","discovery","source_review","runtime_validation","access_control","validation","reporting"] },
+              "state": { "enum": ["pending","running","complete","skipped"] },
+              "startedAt": { "type": "string", "format": "date-time" },
+              "completedAt": { "type": "string", "format": "date-time" },
+              "durationMs": { "type": "integer", "minimum": 0 },
+              "note": { "type": "string", "maxLength": 500 }
+            }
+          }
+        },
+        "stack": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["languages","frameworks","packageManagers","services"],
+          "properties": {
+            "languages": { "type": "array", "items": { "type": "string", "maxLength": 80 }, "maxItems": 40 },
+            "frameworks": { "type": "array", "items": { "type": "string", "maxLength": 80 }, "maxItems": 40 },
+            "packageManagers": { "type": "array", "items": { "type": "string", "maxLength": 80 }, "maxItems": 20 },
+            "services": { "type": "array", "items": { "type": "string", "maxLength": 200 }, "maxItems": 40 }
+          }
+        }
+      }
+    },
+    "authorization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["destructiveActionsAllowed","prohibitedActions","externalTargetAuthorization","localTargetsInScope"],
+      "properties": {
+        "destructiveActionsAllowed": { "const": false },
+        "prohibitedActions": { "type": "array", "items": { "type": "string", "maxLength": 80 }, "maxItems": 64 },
+        "externalTargetAuthorization": { "const": "exact_origin_only" },
+        "localTargetsInScope": { "type": "boolean" },
+        "notes": { "type": "array", "items": { "type": "string", "maxLength": 500 }, "maxItems": 32 }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["findingCount","severityCounts","verificationCounts"],
+      "properties": {
+        "findingCount": { "type": "integer", "minimum": 0 },
+        "severityCounts": { "$ref": "#/$defs/severityCounts" },
+        "verificationCounts": { "$ref": "#/$defs/verificationCounts" },
+        "candidateCount": { "type": "integer", "minimum": 0 },
+        "duplicateCount": { "type": "integer", "minimum": 0 },
+        "fixedCount": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "findings": { "type": "array", "maxItems": 5000, "items": { "$ref": "https://schemas.myrqen.invalid/finding.schema.json" } },
+    "coverage": { "type": "array", "items": { "type": "string", "maxLength": 1000 }, "maxItems": 200 },
+    "coverageAreas": {
+      "type": "array",
+      "maxItems": 200,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["area","assessed"],
+        "properties": {
+          "area": { "type": "string", "maxLength": 200 },
+          "assessed": { "type": "boolean" },
+          "method": { "type": "string", "maxLength": 300 },
+          "note": { "type": "string", "maxLength": 1000 }
+        }
+      }
+    },
+    "limitations": { "type": "array", "items": { "type": "string", "maxLength": 1000 }, "maxItems": 200 },
+    "methodologyVersion": { "type": "string", "maxLength": 40 }
+  }
+}

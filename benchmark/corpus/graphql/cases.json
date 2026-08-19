@@ -1,0 +1,150 @@
+{
+  "family": "graphql",
+  "architecture": "Apollo Server 4 with graphql-js executable schemas: gql-tagged typeDefs per module, a resolvers object of Query/Mutation/type maps taking (parent, args, context) where context.viewer is the authenticated subject, Prisma for relational reads and the Mongo driver for the search collections",
+  "cases": [
+    {
+      "id": "graphql-invoice-drawer-lookup",
+      "family": "graphql",
+      "architecture": "Apollo Server 4 with graphql-js executable schemas: gql-tagged typeDefs per module, a resolvers object of Query/Mutation/type maps taking (parent, args, context) where context.viewer is the authenticated subject, Prisma for relational reads and the Mongo driver for the search collections",
+      "language": "javascript",
+      "file": "graphql/invoice-resolvers.js",
+      "kind": "vulnerable",
+      "category": "broken_object_level_authorization",
+      "severityBand": ["high", "critical"],
+      "route": "POST /graphql",
+      "line": 67,
+      "lineRange": [64, 69],
+      "runtimeVerifiable": true,
+      "why": "The `invoice(id:)` query resolves the record from the client-supplied id alone: requireViewer only proves someone is signed in, and viewer.accountId — which the sibling `invoices` resolver two lines above does put in the WHERE clause — never reaches this findUnique, so any authenticated user can read any account's invoice, billing email and line items by guessing or replaying an id."
+    },
+    {
+      "id": "graphql-statement-drawer-lookup",
+      "family": "graphql",
+      "language": "javascript",
+      "file": "graphql/statement-resolvers.js",
+      "kind": "safe",
+      "pairedWith": "graphql-invoice-drawer-lookup",
+      "why": "The single-record query uses findFirst with both the requested id and the viewer's accountId in the where clause, so a statement belonging to another account resolves to null and is reported as not found rather than returned."
+    },
+    {
+      "id": "graphql-member-role-dropdown",
+      "family": "graphql",
+      "architecture": "Apollo Server 4 with graphql-js executable schemas: gql-tagged typeDefs per module, a resolvers object of Query/Mutation/type maps taking (parent, args, context) where context.viewer is the authenticated subject, Prisma for relational reads and the Mongo driver for the search collections",
+      "language": "javascript",
+      "file": "graphql/member-role-resolvers.js",
+      "kind": "vulnerable",
+      "category": "broken_function_level_authorization",
+      "severityBand": ["high", "critical"],
+      "route": "POST /graphql",
+      "line": 54,
+      "lineRange": [54, 69],
+      "runtimeVerifiable": true,
+      "why": "The `updateMemberRole` mutation writes any WorkspaceRole — including OWNER — for any workspace and any user after checking only that the caller is signed in; it never calls the assertOwner helper that the transferWorkspaceOwnership mutation in the same file uses, so any authenticated account can promote itself to owner of a workspace it does not belong to."
+    },
+    {
+      "id": "graphql-workspace-plan-picker",
+      "family": "graphql",
+      "language": "javascript",
+      "file": "graphql/plan-change-resolvers.js",
+      "kind": "safe",
+      "pairedWith": "graphql-member-role-dropdown",
+      "why": "The privileged mutation resolves the caller's own membership row for the target workspace and rejects the request with FORBIDDEN unless that row carries OWNER or ADMIN, so authentication alone does not authorise the plan change."
+    },
+    {
+      "id": "graphql-library-facet-search",
+      "family": "graphql",
+      "architecture": "Apollo Server 4 with graphql-js executable schemas: gql-tagged typeDefs per module, a resolvers object of Query/Mutation/type maps taking (parent, args, context) where context.viewer is the authenticated subject, Prisma for relational reads and the Mongo driver for the search collections",
+      "language": "javascript",
+      "file": "graphql/document-search-resolvers.js",
+      "kind": "vulnerable",
+      "category": "nosql_injection",
+      "severityBand": ["high", "critical"],
+      "route": "POST /graphql",
+      "line": 61,
+      "lineRange": [58, 66],
+      "runtimeVerifiable": true,
+      "why": "`filter` arrives as a JSON scalar and is spread whole into the object handed to collection.find and countDocuments, so the client controls query operators rather than values: a filter of {\"ownerEmail\": {\"$ne\": null}} or {\"$where\": \"sleep(5000)\"} changes the query's meaning, and because the spread comes last it also overwrites the workspaceId and deletedAt keys that scope the search to the caller's tenant."
+    },
+    {
+      "id": "graphql-notes-facet-search",
+      "family": "graphql",
+      "language": "javascript",
+      "file": "graphql/note-search-resolvers.js",
+      "kind": "safe",
+      "pairedWith": "graphql-library-facet-search",
+      "why": "The same JSON facet payload is projected through buildFacetQuery, which reads only the four known facet keys, rejects any value that is not a string or number, and coerces what it keeps with String(), so no client-supplied object can become a Mongo operator; the tenant scope is applied after the facets and cannot be overwritten."
+    },
+    {
+      "id": "graphql-account-profile-patch",
+      "family": "graphql",
+      "architecture": "Apollo Server 4 with graphql-js executable schemas: gql-tagged typeDefs per module, a resolvers object of Query/Mutation/type maps taking (parent, args, context) where context.viewer is the authenticated subject, Prisma for relational reads and the Mongo driver for the search collections",
+      "language": "javascript",
+      "file": "graphql/profile-resolvers.js",
+      "kind": "vulnerable",
+      "category": "mass_assignment",
+      "severityBand": ["high", "critical"],
+      "route": "POST /graphql",
+      "line": 59,
+      "lineRange": [57, 60],
+      "runtimeVerifiable": true,
+      "why": "The self-service mutation spreads the whole UserFields input into prisma.user.update, and that input type is shared with the staff console, so it carries role, planTier and emailVerified; a caller can send updateProfile(input: {role: \"ADMIN\", planTier: \"ENTERPRISE\"}) and the fields are written to its own row with no further check."
+    },
+    {
+      "id": "graphql-account-settings-patch",
+      "family": "graphql",
+      "language": "javascript",
+      "file": "graphql/account-settings-resolvers.js",
+      "kind": "safe",
+      "pairedWith": "graphql-account-profile-patch",
+      "why": "The same shared input type reaches the resolver, but only the three fields listed in SELF_EDITABLE are copied into the update payload, so supportTier and isStaff are dropped before the write no matter what the client sends."
+    },
+    {
+      "id": "graphql-error-extensions-shape",
+      "family": "graphql",
+      "architecture": "Apollo Server 4 bootstrap: expressMiddleware over an executable schema, session loaded into context, formatError shaping the response body",
+      "language": "javascript",
+      "file": "graphql/graphql-server.js",
+      "kind": "vulnerable",
+      "category": "verbose_error_response",
+      "severityBand": ["low", "medium"],
+      "route": "POST /graphql",
+      "line": 33,
+      "lineRange": [29, 37],
+      "runtimeVerifiable": true,
+      "why": "formatError unwraps the original resolver error and copies its stack, message, and the pg driver's detail and query fields into extensions, so any failing operation returns server file paths, the failing SQL and database error text to an unauthenticated client; the error is already logged server-side on the line above, so nothing but the attacker gains from returning it."
+    },
+    {
+      "id": "graphql-gateway-error-shape",
+      "family": "graphql",
+      "language": "javascript",
+      "file": "graphql/gateway-server.js",
+      "kind": "safe",
+      "pairedWith": "graphql-error-extensions-shape",
+      "why": "formatError logs the unwrapped cause with an incident id server-side and returns only the message for codes on the client-facing allowlist; anything else becomes a fixed generic message with INTERNAL_SERVER_ERROR and the incident id, so no stack, driver text or query reaches the response."
+    },
+    {
+      "id": "graphql-home-feed-paging",
+      "family": "graphql",
+      "architecture": "Apollo Server 4 with graphql-js executable schemas: gql-tagged typeDefs per module, a resolvers object of Query/Mutation/type maps taking (parent, args, context) where context.viewer is the authenticated subject, Prisma for relational reads and the Mongo driver for the search collections",
+      "language": "javascript",
+      "file": "graphql/activity-feed-resolvers.js",
+      "kind": "vulnerable",
+      "category": "unbounded_resource_consumption",
+      "severityBand": ["medium", "high"],
+      "route": "POST /graphql",
+      "line": 51,
+      "lineRange": [45, 71],
+      "runtimeVerifiable": true,
+      "why": "`first` is passed straight to Prisma's take with no ceiling, so activityFeed(first: 1000000) is one query for the whole workspace history, and Comment.replies returns [Comment!]! resolved by a fresh findMany per node, so a query alternating replies { replies { ... } } multiplies database round-trips with query depth. A static reading of this file is needs_review rather than confirmed: it cannot see whether the server that mounts these resolvers installs a depth or complexity limit, which is what would bound the nested expansion."
+    },
+    {
+      "id": "graphql-project-timeline-paging",
+      "family": "graphql",
+      "language": "javascript",
+      "file": "graphql/timeline-resolvers.js",
+      "kind": "safe",
+      "pairedWith": "graphql-home-feed-paging",
+      "why": "The page size is validated as a positive integer and clamped to MAX_PAGE_SIZE before it reaches take, every nested list resolver carries its own fixed take, and the reply type has no list field of its own, so recursion depth is bounded by the schema rather than by the client's query."
+    }
+  ]
+}

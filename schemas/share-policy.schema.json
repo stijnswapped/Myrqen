@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Myrqen share projection policy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "sections",
+    "findings",
+    "fields"
+  ],
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "sections": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "ids"
+      ],
+      "properties": {
+        "mode": {
+          "enum": [
+            "allow_all",
+            "allow_only"
+          ]
+        },
+        "ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "maxItems": 256
+        }
+      }
+    },
+    "findings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "ids"
+      ],
+      "properties": {
+        "mode": {
+          "enum": [
+            "allow_all",
+            "allow_only"
+          ]
+        },
+        "ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "maxItems": 5000
+        },
+        "maxSeverity": {
+          "enum": [
+            "critical",
+            "high",
+            "medium",
+            "low",
+            "info"
+          ]
+        }
+      }
+    },
+    "fields": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "evidence": {
+          "type": "boolean"
+        },
+        "code": {
+          "type": "boolean"
+        },
+        "reproduction": {
+          "type": "boolean"
+        },
+        "remediation": {
+          "type": "boolean"
+        },
+        "metadata": {
+          "type": "boolean"
+        }
+      }
+    },
+    "anonymize": {
+      "type": "boolean"
+    }
+  },
+  "$id": "https://schemas.myrqen.invalid/share-policy.schema.json"
+}

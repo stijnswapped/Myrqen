@@ -1,0 +1,150 @@
+{
+  "family": "hono",
+  "architecture": "Hono 4 route modules in TypeScript, mounted with app.use middleware for session handling, reading input through c.req.param/query/json, persisting through a Prisma client or a pg pool, and answering with c.json, c.html or a raw Response",
+  "cases": [
+    {
+      "id": "hono-document-detail-drawer",
+      "family": "hono",
+      "architecture": "Hono 4 route modules in TypeScript, mounted with app.use middleware for session handling, reading input through c.req.param/query/json, persisting through a Prisma client or a pg pool, and answering with c.json, c.html or a raw Response",
+      "language": "typescript",
+      "file": "hono/document-detail.ts",
+      "kind": "vulnerable",
+      "category": "broken_object_level_authorization",
+      "severityBand": ["high", "critical"],
+      "route": "GET /documents/:id",
+      "line": 41,
+      "lineRange": [40, 50],
+      "runtimeVerifiable": true,
+      "why": "The detail handler resolves the document from the path parameter alone; requireSession proves the caller is signed in but the viewer's workspaceId never enters the query, so any authenticated user can read any workspace's document by id. The list handler two routes above shows the scoping that the detail route omits."
+    },
+    {
+      "id": "hono-report-detail-drawer",
+      "family": "hono",
+      "language": "typescript",
+      "file": "hono/report-detail.ts",
+      "kind": "safe",
+      "pairedWith": "hono-document-detail-drawer",
+      "why": "The same detail-drawer shape, but the lookup is a findFirst keyed on both the path id and the viewer's workspaceId, so a report belonging to another workspace comes back null and the handler answers 404."
+    },
+    {
+      "id": "hono-status-incident-filter",
+      "family": "hono",
+      "architecture": "Hono 4 route modules in TypeScript, mounted with app.use middleware for session handling, reading input through c.req.param/query/json, persisting through a Prisma client or a pg pool, and answering with c.json, c.html or a raw Response",
+      "language": "typescript",
+      "file": "hono/status-search.ts",
+      "kind": "vulnerable",
+      "category": "reflected_cross_site_scripting",
+      "severityBand": ["medium", "high"],
+      "route": "GET /status/incidents",
+      "line": 65,
+      "lineRange": [64, 70],
+      "runtimeVerifiable": true,
+      "why": "The q query parameter is interpolated straight into the heading markup and handed to c.html, which serves it as text/html; the file's own escapeHtml helper is applied to the database-sourced incident fields but not to the echoed search term, so a term containing a script tag executes on this public page."
+    },
+    {
+      "id": "hono-status-component-filter",
+      "family": "hono",
+      "language": "typescript",
+      "file": "hono/status-directory.ts",
+      "kind": "safe",
+      "pairedWith": "hono-status-incident-filter",
+      "why": "The same public page echoes its search term through c.html, but the term passes through escapeHtml first, so the reflected value can only ever land in the document as text."
+    },
+    {
+      "id": "hono-ticket-attachment-stream",
+      "family": "hono",
+      "architecture": "Hono 4 route modules in TypeScript, mounted with app.use middleware for session handling, reading input through c.req.param/query/json, persisting through a Prisma client or a pg pool, and answering with c.json, c.html or a raw Response",
+      "language": "typescript",
+      "file": "hono/attachment-download.ts",
+      "kind": "vulnerable",
+      "category": "path_traversal",
+      "severityBand": ["high", "critical"],
+      "route": "GET /tickets/:ticketId/attachments/:filename",
+      "line": 39,
+      "lineRange": [39, 43],
+      "runtimeVerifiable": true,
+      "why": "The trailing route segment is a greedy {.+} parameter that is joined onto the storage root with no containment check, so a request for ../../../../etc/passwd (or its percent-encoded form, which c.req.param decodes) resolves outside the attachment volume and the file is read and returned. The ticket lookup above it is correctly workspace-scoped, so authorization is not the problem here."
+    },
+    {
+      "id": "hono-expense-receipt-stream",
+      "family": "hono",
+      "language": "typescript",
+      "file": "hono/receipt-download.ts",
+      "kind": "safe",
+      "pairedWith": "hono-ticket-attachment-stream",
+      "why": "The same greedy filename parameter and the same fs read, but the candidate path is resolved and then required to sit inside the resolved per-expense directory before anything is opened, so a dot-dot segment returns 404 instead of escaping the storage root."
+    },
+    {
+      "id": "hono-inbox-priority-filter",
+      "family": "hono",
+      "architecture": "Hono 4 route modules in TypeScript, mounted with app.use middleware for session handling, reading input through c.req.param/query/json, persisting through a Prisma client or a pg pool, and answering with c.json, c.html or a raw Response",
+      "language": "typescript",
+      "file": "hono/conversation-search.ts",
+      "kind": "vulnerable",
+      "category": "sql_injection",
+      "severityBand": ["high", "critical"],
+      "route": "GET /conversations/search",
+      "line": 48,
+      "lineRange": [48, 61],
+      "runtimeVerifiable": true,
+      "why": "Every other filter is bound as a numbered placeholder, but the repeated priority query parameters are wrapped in single quotes and spliced into the IN list, so a value containing a quote closes the literal and appends attacker-chosen SQL to the statement pool.query executes."
+    },
+    {
+      "id": "hono-contact-stage-filter",
+      "family": "hono",
+      "language": "typescript",
+      "file": "hono/contact-search.ts",
+      "kind": "safe",
+      "pairedWith": "hono-inbox-priority-filter",
+      "why": "The identical multi-value filter is bound as one array placeholder matched with = ANY($n::text[]), and the only interpolated fragments are the sort column resolved through a fixed map and a two-way direction ternary, so no request text reaches the statement text."
+    },
+    {
+      "id": "hono-idp-callback-landing",
+      "family": "hono",
+      "architecture": "Hono 4 route modules in TypeScript, mounted with app.use middleware for session handling, reading input through c.req.param/query/json, persisting through a Prisma client or a pg pool, and answering with c.json, c.html or a raw Response",
+      "language": "typescript",
+      "file": "hono/session-callback.ts",
+      "kind": "vulnerable",
+      "category": "open_redirect",
+      "severityBand": ["medium", "high"],
+      "route": "GET /auth/callback",
+      "line": 45,
+      "lineRange": [19, 45],
+      "runtimeVerifiable": true,
+      "why": "The next query parameter is passed to c.redirect without any check that it points inside this application, so a crafted sign-in link sends the browser to an attacker's host immediately after a successful authentication — the most credible possible moment to present a fake password prompt."
+    },
+    {
+      "id": "hono-magic-link-landing",
+      "family": "hono",
+      "language": "typescript",
+      "file": "hono/signin-return.ts",
+      "kind": "safe",
+      "pairedWith": "hono-idp-callback-landing",
+      "why": "The same post-sign-in redirect, but the requested landing page is resolved against the app origin and discarded unless the resulting origin matches it, so protocol-relative and absolute external targets fall back to /inbox and only a local path and query survive."
+    },
+    {
+      "id": "hono-embedded-widget-origins",
+      "family": "hono",
+      "architecture": "Hono 4 route modules in TypeScript, mounted with app.use middleware for session handling, reading input through c.req.param/query/json, persisting through a Prisma client or a pg pool, and answering with c.json, c.html or a raw Response",
+      "language": "typescript",
+      "file": "hono/embed-api.ts",
+      "kind": "vulnerable",
+      "category": "insecure_cors_configuration",
+      "severityBand": ["medium", "high"],
+      "route": "GET /embed/conversations",
+      "line": 16,
+      "lineRange": [13, 22],
+      "runtimeVerifiable": true,
+      "why": "The cors middleware echoes whatever Origin the request carried while also setting credentials: true, so any web page can make cookie-bearing requests to every /embed/* route and read the response, turning the session-scoped conversation list into cross-origin readable data. The misconfiguration sits on the mount and applies to every route beneath it; the route recorded here is the first one it exposes."
+    },
+    {
+      "id": "hono-status-widget-origins",
+      "family": "hono",
+      "language": "typescript",
+      "file": "hono/widget-api.ts",
+      "kind": "safe",
+      "pairedWith": "hono-embedded-widget-origins",
+      "why": "The same credentialed cors middleware on the same kind of mount, but the origin callback returns the request origin only when it is a member of a fixed allowlist and otherwise returns null, so an unknown origin receives no CORS headers at all."
+    }
+  ]
+}

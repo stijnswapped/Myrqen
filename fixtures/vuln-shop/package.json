@@ -1,0 +1,14 @@
+{
+  "name": "myrqen-fixture-vuln-shop",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Intentionally vulnerable local fixture owned by Myrqen. Never deploy this.",
+  "scripts": {
+    "start": "node src/server.js"
+  },
+  "dependencies": {
+    "lodash": "4.17.11",
+    "minimist": "1.2.0"
+  }
+}

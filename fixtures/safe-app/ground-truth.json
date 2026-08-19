@@ -1,0 +1,12 @@
+{
+  "fixture": "safe-app",
+  "version": "1.0.0",
+  "baseUrl": "http://127.0.0.1:4020",
+  "identities": [
+    { "label": "user_a", "email": "alice@example.test", "password": "alice-password-1", "role": "customer" },
+    { "label": "user_b", "email": "bob@example.test", "password": "bob-password-1", "role": "customer" },
+    { "label": "admin", "email": "root@example.test", "password": "root-password-1", "role": "admin" }
+  ],
+  "canarySecrets": [],
+  "expected": []
+}

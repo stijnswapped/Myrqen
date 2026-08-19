@@ -1,0 +1,150 @@
+{
+  "family": "trpc",
+  "architecture": "tRPC 11 routers in TypeScript composed with router({ ... }), publicProcedure and protectedProcedure, Zod input schemas, a Prisma client and the session on ctx, and TRPCError for failures — procedures are addressed by dotted procedure path rather than by HTTP method and path",
+  "cases": [
+    {
+      "id": "trpc-order-detail-drawer",
+      "family": "trpc",
+      "architecture": "tRPC 11 routers in TypeScript composed with router({ ... }), publicProcedure and protectedProcedure, Zod input schemas, a Prisma client and the session on ctx, and TRPCError for failures — procedures are addressed by dotted procedure path rather than by HTTP method and path",
+      "language": "typescript",
+      "file": "trpc/orders-router.ts",
+      "kind": "vulnerable",
+      "category": "broken_object_level_authorization",
+      "severityBand": ["high", "critical"],
+      "route": "orders.byId",
+      "line": 32,
+      "lineRange": [31, 43],
+      "runtimeVerifiable": true,
+      "why": "byId resolves the order from input.orderId alone; protectedProcedure establishes that a session exists but ctx.session.organizationId never reaches the query, so any signed-in user can read another tenant's order, billing e-mail and shipping address. The list and resendConfirmation procedures in the same router show the tenant scoping this one drops. Recorded with the tRPC procedure path instead of a route because the procedure is not bound to an HTTP path."
+    },
+    {
+      "id": "trpc-invoice-detail-drawer",
+      "family": "trpc",
+      "language": "typescript",
+      "file": "trpc/invoices-router.ts",
+      "kind": "safe",
+      "pairedWith": "trpc-order-detail-drawer",
+      "why": "The same detail-drawer procedure shape, but the lookup is a findFirst keyed on both input.invoiceId and ctx.session.organizationId, so another tenant's invoice comes back null and the procedure throws NOT_FOUND."
+    },
+    {
+      "id": "trpc-membership-role-dropdown",
+      "family": "trpc",
+      "architecture": "tRPC 11 routers in TypeScript composed with router({ ... }), publicProcedure and protectedProcedure, Zod input schemas, a Prisma client and the session on ctx, and TRPCError for failures — procedures are addressed by dotted procedure path rather than by HTTP method and path",
+      "language": "typescript",
+      "file": "trpc/members-router.ts",
+      "kind": "vulnerable",
+      "category": "broken_function_level_authorization",
+      "severityBand": ["high", "critical"],
+      "route": "members.setRole",
+      "line": 38,
+      "lineRange": [26, 42],
+      "runtimeVerifiable": true,
+      "why": "setRole is reachable by every member of the organization: the membership is correctly tenant-scoped, but nothing checks the caller's own role before writing the new one, so a viewer can call members.setRole against their own membership and become owner. The remove procedure directly below it performs exactly the owner/admin check that this one is missing. Recorded with the tRPC procedure path instead of a route because the procedure is not bound to an HTTP path."
+    },
+    {
+      "id": "trpc-project-role-dropdown",
+      "family": "trpc",
+      "language": "typescript",
+      "file": "trpc/roles-router.ts",
+      "kind": "safe",
+      "pairedWith": "trpc-membership-role-dropdown",
+      "why": "The same role-writing mutation, but the caller's own assignment on that project is loaded first and the mutation throws FORBIDDEN unless that assignment is maintainer or lead, so an ordinary contributor cannot promote anyone."
+    },
+    {
+      "id": "trpc-profile-autosave-patch",
+      "family": "trpc",
+      "architecture": "tRPC 11 routers in TypeScript composed with router({ ... }), publicProcedure and protectedProcedure, Zod input schemas, a Prisma client and the session on ctx, and TRPCError for failures — procedures are addressed by dotted procedure path rather than by HTTP method and path",
+      "language": "typescript",
+      "file": "trpc/profile-router.ts",
+      "kind": "vulnerable",
+      "category": "mass_assignment",
+      "severityBand": ["medium", "high"],
+      "route": "profile.update",
+      "line": 43,
+      "lineRange": [32, 43],
+      "runtimeVerifiable": true,
+      "why": "The input schema accepts an open record of arbitrary keys and the whole patch is spread into the Prisma update, so the caller chooses which user columns are written — role, plan and emailVerified are all readable on the neighbouring query and all writable here. Recorded with the tRPC procedure path instead of a route because the procedure is not bound to an HTTP path."
+    },
+    {
+      "id": "trpc-settings-autosave-patch",
+      "family": "trpc",
+      "language": "typescript",
+      "file": "trpc/settings-router.ts",
+      "kind": "safe",
+      "pairedWith": "trpc-profile-autosave-patch",
+      "why": "The same sparse autosave patch, but the input is a strict Zod object naming the four editable fields and each one is copied across individually, so no key the client invents can reach the update."
+    },
+    {
+      "id": "trpc-revenue-breakdown-filter",
+      "family": "trpc",
+      "architecture": "tRPC 11 routers in TypeScript composed with router({ ... }), publicProcedure and protectedProcedure, Zod input schemas, a Prisma client and the session on ctx, and TRPCError for failures — procedures are addressed by dotted procedure path rather than by HTTP method and path",
+      "language": "typescript",
+      "file": "trpc/reports-router.ts",
+      "kind": "vulnerable",
+      "category": "sql_injection",
+      "severityBand": ["high", "critical"],
+      "route": "reports.revenueBreakdown",
+      "line": 35,
+      "lineRange": [34, 48],
+      "runtimeVerifiable": true,
+      "why": "The organization and date bounds are bound as positional parameters, but the optional channel filter is wrapped in single quotes and concatenated into the WHERE clause of a $queryRawUnsafe call, so a channel value containing a quote closes the literal and appends attacker-chosen SQL. The Zod string with a max length constrains the shape of the value, not its content."
+    },
+    {
+      "id": "trpc-usage-breakdown-filter",
+      "family": "trpc",
+      "language": "typescript",
+      "file": "trpc/metrics-router.ts",
+      "kind": "safe",
+      "pairedWith": "trpc-revenue-breakdown-filter",
+      "why": "The same $queryRawUnsafe breakdown, but the optional filter is pushed onto the values array and referenced as a positional placeholder, and the only interpolated fragment is a column name resolved through a fixed map, so no caller-supplied text becomes statement text."
+    },
+    {
+      "id": "trpc-device-deregistration",
+      "family": "trpc",
+      "architecture": "tRPC 11 routers in TypeScript composed with router({ ... }), publicProcedure and protectedProcedure, Zod input schemas, a Prisma client and the session on ctx, and TRPCError for failures — procedures are addressed by dotted procedure path rather than by HTTP method and path",
+      "language": "typescript",
+      "file": "trpc/devices-router.ts",
+      "kind": "vulnerable",
+      "category": "missing_authentication",
+      "severityBand": ["high", "critical"],
+      "route": "devices.deregister",
+      "line": 42,
+      "lineRange": [42, 56],
+      "runtimeVerifiable": true,
+      "why": "deregister is declared on publicProcedure while every sibling in the router is protectedProcedure, so an unauthenticated caller with a device id revokes that device's push token, deletes the row and clears its refresh tokens — signing a stranger's handset out. The Zod input is present and correct; validating that the id is a UUID says nothing about who is allowed to submit it. Recorded with the tRPC procedure path instead of a route because the procedure is not bound to an HTTP path."
+    },
+    {
+      "id": "trpc-session-revocation",
+      "family": "trpc",
+      "language": "typescript",
+      "file": "trpc/sessions-router.ts",
+      "kind": "safe",
+      "pairedWith": "trpc-device-deregistration",
+      "why": "The same sign-out mutation, including the same push-token revocation and refresh-token cleanup, but it runs on protectedProcedure and the row is loaded with ctx.session.userId in the where clause, so a caller can only revoke their own sessions."
+    },
+    {
+      "id": "trpc-cart-order-submission",
+      "family": "trpc",
+      "architecture": "tRPC 11 routers in TypeScript composed with router({ ... }), publicProcedure and protectedProcedure, Zod input schemas, a Prisma client and the session on ctx, and TRPCError for failures — procedures are addressed by dotted procedure path rather than by HTTP method and path",
+      "language": "typescript",
+      "file": "trpc/checkout-router.ts",
+      "kind": "vulnerable",
+      "category": "business_logic_price_manipulation",
+      "severityBand": ["high", "critical"],
+      "route": "checkout.placeOrder",
+      "line": 46,
+      "lineRange": [45, 53],
+      "runtimeVerifiable": true,
+      "why": "The subtotal is summed from the client-supplied unitPriceCents, and that subtotal becomes the order total and the amount handed to ctx.payments.charge. The catalog rows are already loaded a few lines above and carry the authoritative priceCents, but they are only consulted for availability, so a caller can post unitPriceCents: 1 and be charged a penny. Recorded with the tRPC procedure path instead of a route because the procedure is not bound to an HTTP path."
+    },
+    {
+      "id": "trpc-plan-change-submission",
+      "family": "trpc",
+      "language": "typescript",
+      "file": "trpc/subscription-checkout.ts",
+      "kind": "safe",
+      "pairedWith": "trpc-cart-order-submission",
+      "why": "The input still carries the price the browser was showing, but the total is summed from the catalog's priceCents and the submitted figure is only compared against it so a stale basket is rejected with CONFLICT, so the charged amount is server-determined."
+    }
+  ]
+}

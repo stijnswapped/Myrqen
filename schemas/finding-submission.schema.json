@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.myrqen.invalid/finding-submission.schema.json",
+  "title": "Myrqen finding submission from host agent",
+  "description": "The host agent proposes a finding. The local CLI owns identity, fingerprint, dedupe, redaction, and verification bookkeeping.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["title","category","severity","verification","summary","impact","affected","evidence","remediation","verificationPlan"],
+  "properties": {
+    "title": { "type": "string", "minLength": 4, "maxLength": 240 },
+    "category": { "type": "string", "minLength": 2, "maxLength": 120 },
+    "taxonomy": { "type": "array", "items": { "type": "string", "maxLength": 64 }, "maxItems": 16 },
+    "severity": { "enum": ["critical","high","medium","low","info"] },
+    "verification": { "enum": ["verified","strong_evidence","needs_review"] },
+    "summary": { "type": "string", "minLength": 20, "maxLength": 8000 },
+    "impact": { "type": "string", "minLength": 20, "maxLength": 8000 },
+    "affected": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["component"],
+      "properties": {
+        "component": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "file": { "type": "string", "maxLength": 1000 },
+        "lineStart": { "type": "integer", "minimum": 1 },
+        "lineEnd": { "type": "integer", "minimum": 1 },
+        "route": { "type": "string", "maxLength": 1000 },
+        "origin": { "type": "string", "maxLength": 1000 }
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind","description"],
+        "properties": {
+          "kind": { "enum": ["source","runtime","identity_differential","configuration","dependency","other"] },
+          "description": { "type": "string", "minLength": 10, "maxLength": 12000 },
+          "snippet": { "type": "string", "maxLength": 24000 },
+          "location": { "type": "string", "maxLength": 1000 },
+          "redacted": { "type": "boolean" }
+        }
+      }
+    },
+    "remediation": { "type": "string", "minLength": 20, "maxLength": 12000 },
+    "verificationPlan": { "type": "string", "minLength": 10, "maxLength": 8000 },
+    "reproduction": { "type": "string", "maxLength": 12000 },
+    "references": { "type": "array", "items": { "type": "string", "maxLength": 500 }, "maxItems": 32 },
+    "tags": { "type": "array", "items": { "type": "string", "maxLength": 80 }, "maxItems": 32 }
+  }
+}

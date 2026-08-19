@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Myrqen signed update manifest payload",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "releaseVersion",
+    "channel",
+    "publishedAt",
+    "artifacts",
+    "revokedVersions",
+    "keyId"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "releaseVersion": {
+      "type": "string",
+      "maxLength": 80
+    },
+    "channel": {
+      "enum": [
+        "stable",
+        "beta",
+        "canary"
+      ]
+    },
+    "publishedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "minimumClientVersion": {
+      "type": "string",
+      "maxLength": 80
+    },
+    "revokedVersions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "range",
+          "reasonCode"
+        ],
+        "properties": {
+          "range": {
+            "type": "string",
+            "maxLength": 160
+          },
+          "reasonCode": {
+            "type": "string",
+            "maxLength": 80
+          }
+        }
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "os",
+          "arch",
+          "url",
+          "sha256",
+          "size"
+        ],
+        "properties": {
+          "os": {
+            "enum": [
+              "darwin",
+              "windows",
+              "linux"
+            ]
+          },
+          "arch": {
+            "enum": [
+              "x64",
+              "arm64"
+            ]
+          },
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      }
+    },
+    "skillBundle": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "type": "string"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      }
+    },
+    "keyId": {
+      "type": "string",
+      "maxLength": 120
+    }
+  }
+}

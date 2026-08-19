@@ -1,0 +1,6 @@
+# Fixtures and the corpus are deliberately excluded: their manifests pin outdated
+# versions so the dependency check has something real to find, and nothing should
+# install them.
+packages:
+  - "apps/*"
+  - "packages/*"
