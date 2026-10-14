@@ -1,0 +1,174 @@
+{
+  "family": "sveltekit",
+  "architecture": "SvelteKit 2 file-routed server endpoints (+server.ts) and form actions (+page.server.ts) on the Node adapter, with locals.session populated by a hook, Prisma for relational reads and node:fs for generated files",
+  "cases": [
+    {
+      "id": "holdout-sveltekit-export-stream",
+      "family": "sveltekit",
+      "architecture": "SvelteKit 2 +server.ts endpoint streaming a generated file from a per-tenant directory",
+      "language": "typescript",
+      "file": "sveltekit/routes/api/exports/[name]/+server.ts",
+      "scanAs": "src/routes/api/exports/[name]/+server.ts",
+      "kind": "vulnerable",
+      "category": "path_traversal",
+      "severityBand": ["high", "critical"],
+      "route": "GET /api/exports/[name]",
+      "line": 19,
+      "lineRange": [15, 24],
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-web",
+        "version": "1.0.0",
+        "type": "module",
+        "dependencies": { "@sveltejs/kit": "^2.5.5", "svelte": "^4.2.15", "@prisma/client": "^5.11.0" },
+        "devDependencies": { "@sveltejs/adapter-node": "^5.0.1", "vite": "^5.2.8" }
+      },
+      "why": "The join looks scoped because the tenant id is a path segment, but the segment that follows it is the raw request value — the [name] parameter, or the file query parameter that overrides it three lines above — so ../ escapes the tenant directory and streams any file the process can read. The DELETE handler in the same file shows the correct shape: it resolves the storage key from a tenant-scoped database row first."
+    },
+    {
+      "id": "holdout-sveltekit-report-stream",
+      "family": "sveltekit",
+      "architecture": "SvelteKit 2 +server.ts endpoint streaming a generated file from a per-tenant directory",
+      "language": "typescript",
+      "file": "sveltekit/routes/api/reports/[name]/+server.ts",
+      "scanAs": "src/routes/api/reports/[name]/+server.ts",
+      "kind": "safe",
+      "pairedWith": "holdout-sveltekit-export-stream",
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-web",
+        "version": "1.0.0",
+        "type": "module",
+        "dependencies": { "@sveltejs/kit": "^2.5.5", "svelte": "^4.2.15", "@prisma/client": "^5.11.0" },
+        "devDependencies": { "@sveltejs/adapter-node": "^5.0.1", "vite": "^5.2.8" }
+      },
+      "why": "Same endpoint, same join of a request-supplied name onto a tenant directory and the same stream, but the name must match a single-segment CSV pattern with no dot-dot and no separator before it is used, so nothing outside the tenant directory is reachable."
+    },
+    {
+      "id": "holdout-sveltekit-session-cookie",
+      "family": "sveltekit",
+      "architecture": "SvelteKit 2 +page.server.ts form actions issuing a session cookie",
+      "language": "typescript",
+      "file": "sveltekit/routes/session/+page.server.ts",
+      "scanAs": "src/routes/session/+page.server.ts",
+      "kind": "vulnerable",
+      "category": "insecure_cookie_configuration",
+      "severityBand": ["medium", "high"],
+      "route": "POST /session",
+      "line": 31,
+      "lineRange": [30, 32],
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-web",
+        "version": "1.0.0",
+        "type": "module",
+        "dependencies": { "@sveltejs/kit": "^2.5.5", "svelte": "^4.2.15" },
+        "devDependencies": { "@sveltejs/adapter-node": "^5.0.1", "vite": "^5.2.8" }
+      },
+      "why": "The shared cookie options are correct, and the tenant hint cookie legitimately relaxes them because it carries nothing sensitive. The session cookie spreads the same base and then overrides httpOnly to false, so the bearer token for the whole session becomes readable by any script on the page and any XSS anywhere in the application turns into account takeover."
+    },
+    {
+      "id": "holdout-sveltekit-signin-cookie",
+      "family": "sveltekit",
+      "architecture": "SvelteKit 2 +page.server.ts form actions issuing a session cookie",
+      "language": "typescript",
+      "file": "sveltekit/routes/sign-in/+page.server.ts",
+      "scanAs": "src/routes/sign-in/+page.server.ts",
+      "kind": "safe",
+      "pairedWith": "holdout-sveltekit-session-cookie",
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-web",
+        "version": "1.0.0",
+        "type": "module",
+        "dependencies": { "@sveltejs/kit": "^2.5.5", "svelte": "^4.2.15" },
+        "devDependencies": { "@sveltejs/adapter-node": "^5.0.1", "vite": "^5.2.8" }
+      },
+      "why": "The same action still writes two cookies from the same spread, and the tenant hint cookie is still readable by client script, but the session cookie keeps httpOnly, secure and SameSite from the base options; a readable cookie that carries only a tenant slug is not a finding."
+    },
+    {
+      "id": "holdout-sveltekit-link-preview",
+      "family": "sveltekit",
+      "architecture": "SvelteKit 2 +server.ts endpoint fetching a caller-supplied URL to build a link preview",
+      "language": "typescript",
+      "file": "sveltekit/routes/api/link-preview/+server.ts",
+      "scanAs": "src/routes/api/link-preview/+server.ts",
+      "kind": "vulnerable",
+      "category": "server_side_request_forgery",
+      "severityBand": ["high", "critical"],
+      "route": "POST /api/link-preview",
+      "line": 46,
+      "lineRange": [42, 50],
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-web",
+        "version": "1.0.0",
+        "type": "module",
+        "dependencies": { "@sveltejs/kit": "^2.5.5", "svelte": "^4.2.15" },
+        "devDependencies": { "@sveltejs/adapter-node": "^5.0.1", "vite": "^5.2.8" }
+      },
+      "why": "The allow list exists and the host is compared against it, but the failing branch only logs a warning and execution falls through to the fetch, which follows redirects with the caller's URL. Any internal address or cloud metadata endpoint is reachable, and the response status and title come back to the caller."
+    },
+    {
+      "id": "holdout-sveltekit-embed-preview",
+      "family": "sveltekit",
+      "architecture": "SvelteKit 2 +server.ts endpoint fetching a caller-supplied URL to build a link preview",
+      "language": "typescript",
+      "file": "sveltekit/routes/api/embed-preview/+server.ts",
+      "scanAs": "src/routes/api/embed-preview/+server.ts",
+      "kind": "safe",
+      "pairedWith": "holdout-sveltekit-link-preview",
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-web",
+        "version": "1.0.0",
+        "type": "module",
+        "dependencies": { "@sveltejs/kit": "^2.5.5", "svelte": "^4.2.15" },
+        "devDependencies": { "@sveltejs/adapter-node": "^5.0.1", "vite": "^5.2.8" }
+      },
+      "why": "The caller still supplies the URL and the same fetch still runs, but the host check throws before the fetch is reached and redirects are not followed, so only the four allowed hosts can ever be contacted."
+    },
+    {
+      "id": "holdout-sveltekit-catalog-fragment",
+      "family": "sveltekit",
+      "architecture": "SvelteKit 2 +server.ts endpoint returning an HTML fragment for progressive enhancement",
+      "language": "typescript",
+      "file": "sveltekit/routes/api/catalog-fragment/+server.ts",
+      "scanAs": "src/routes/api/catalog-fragment/+server.ts",
+      "kind": "vulnerable",
+      "category": "reflected_cross_site_scripting",
+      "severityBand": ["medium", "high"],
+      "route": "GET /api/catalog-fragment",
+      "line": 35,
+      "lineRange": [33, 41],
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-web",
+        "version": "1.0.0",
+        "type": "module",
+        "dependencies": { "@sveltejs/kit": "^2.5.5", "svelte": "^4.2.15" },
+        "devDependencies": { "@sveltejs/adapter-node": "^5.0.1", "vite": "^5.2.8" }
+      },
+      "why": "The file has a working escape helper and applies it to every field of every result row, which is exactly why the omission is easy to miss: the echoed search term is interpolated raw into the summary line of a text/html response, so a crafted q parameter executes script in the page that injects this fragment."
+    },
+    {
+      "id": "holdout-sveltekit-inventory-fragment",
+      "family": "sveltekit",
+      "architecture": "SvelteKit 2 +server.ts endpoint returning an HTML fragment for progressive enhancement",
+      "language": "typescript",
+      "file": "sveltekit/routes/api/inventory-fragment/+server.ts",
+      "scanAs": "src/routes/api/inventory-fragment/+server.ts",
+      "kind": "safe",
+      "pairedWith": "holdout-sveltekit-catalog-fragment",
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-web",
+        "version": "1.0.0",
+        "type": "module",
+        "dependencies": { "@sveltejs/kit": "^2.5.5", "svelte": "^4.2.15" },
+        "devDependencies": { "@sveltejs/adapter-node": "^5.0.1", "vite": "^5.2.8" }
+      },
+      "why": "The endpoint still builds an HTML string by hand from a query parameter and still returns it as text/html, but every interpolation including the echoed term passes through the escape helper, and the only unescaped value is a number the handler computed itself."
+    }
+  ]
+}

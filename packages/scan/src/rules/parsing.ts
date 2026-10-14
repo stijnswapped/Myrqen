@@ -9,18 +9,11 @@ import {
   isConstantString,
   isStringLike,
   literalTextOf,
-  walk
-} from "../ast/helpers.js";
+  walk, isAbortCall } from "../ast/helpers.js";
+import { entryPointForFunction, type TaintSeed } from "../ast/entrypoints.js";
 import type { ParsedFile } from "../ast/parse.js";
 import { analyzeFunction, functionsIn, resolveExpression, rootOf, taintOrigin, type TaintScope } from "../ast/taint.js";
-import {
-  locationOf,
-  routeFor,
-  sourceEvidence,
-  taintEvidence,
-  type Rule,
-  type RuleContext
-} from "./context.js";
+import { formatRoute, locationOf, routeFor, sourceEvidence, taintEvidence, type Rule, type RuleContext } from "./context.js";
 
 /**
  * Injection through parsers and interpreters.
@@ -69,6 +62,23 @@ function contains(outer: ts.Node, inner: ts.Node): boolean {
   return inner.pos >= outer.pos && inner.end <= outer.end;
 }
 
+const callCache = new WeakMap<ts.SourceFile, ts.CallExpression[]>();
+
+/**
+ * Every call in the file, memoised.
+ *
+ * Looking for the call sites of a helper is a whole-file question asked once per
+ * sink whose taint did not resolve locally. Walking the AST again each time would
+ * make a large file quadratic for no gain, since the tree does not change.
+ */
+function callsIn(source: ts.SourceFile): ts.CallExpression[] {
+  const cached = callCache.get(source);
+  if (cached) return cached;
+  const calls = collect(source, ts.isCallExpression);
+  callCache.set(source, calls);
+  return calls;
+}
+
 /** Scopes that contain this node, innermost first. */
 function scopesContaining(context: RuleContext, node: ts.Node): ScopeEntry[] {
   return scopesOf(context.file).filter((entry) => contains(entry.fn, node));
@@ -80,10 +90,82 @@ function scopesContaining(context: RuleContext, node: ts.Node): ScopeEntry[] {
  * handler nested inside a plugin factory is still analysed with its own
  * parameters.
  */
-function taintAt(context: RuleContext, site: ts.Node, expression: ts.Node): string | null {
+function taintAt(context: RuleContext, site: ts.Node, expression: ts.Node, hops = 1): string | null {
   for (const entry of scopesContaining(context, site)) {
     const origin = taintOrigin(expression, entry.scope);
     if (origin) return origin;
+  }
+  if (hops <= 0) return null;
+  return parameterTaintAt(context, site, expression, hops - 1);
+}
+
+/**
+ * Taint that arrives through a parameter, one call away.
+ *
+ * Taint analysis is intra-procedural by design, so a handler that hands its input
+ * to a small named helper — `decode(job)`, `render(payload)` — leaves that helper
+ * holding a parameter with no origin, and every rule judging a sink inside it
+ * stays silent. Splitting a handler into a helper is the ordinary way this code
+ * is written, and a consumer that does it is not less exposed for having done so.
+ *
+ * One hop is enough, and the conditions are what keep it honest: the helper has
+ * to be called in this file, the argument in that parameter's own position has to
+ * be caller-controlled where the call is written, and the sink's value has to be
+ * read off the parameter. A helper only ever called with the application's own
+ * data still yields nothing, and the hop is not taken twice, so a chain of
+ * helpers ends rather than being guessed at.
+ */
+function parameterTaintAt(context: RuleContext, site: ts.Node, expression: ts.Node, hops: number): string | null {
+  const root = rootOf(expression);
+  if (!root) return null;
+
+  for (const entry of scopesContaining(context, site)) {
+    // A parameter the helper itself sanitised is no longer the caller's value,
+    // whatever the call site passed in.
+    if (entry.scope.cleared.has(root)) return null;
+    const parameters = (entry.fn as ts.FunctionLikeDeclaration).parameters ?? [];
+    const index = parameters.findIndex(
+      (parameter) => ts.isIdentifier(parameter.name) && parameter.name.text === root
+    );
+    if (index < 0) continue;
+    const name = functionName(entry.fn);
+    if (!name) return null;
+
+    for (const call of callsIn(context.file.source)) {
+      // A recursive call proves nothing about where the value came from: the
+      // helper is passing its own parameter back to itself.
+      if (contains(entry.fn, call)) continue;
+      const callee = call.expression;
+      const matches = ts.isIdentifier(callee)
+        ? callee.text === name
+        : ts.isPropertyAccessExpression(callee) &&
+          callee.name.text === name &&
+          callee.expression.kind === ts.SyntaxKind.ThisKeyword;
+      if (!matches) continue;
+      const argument = call.arguments[index];
+      if (!argument) continue;
+      const origin = taintAt(context, call, argument, hops);
+      if (origin) return `${origin}, handed to \`${name}\` as \`${root}\``;
+    }
+    /*
+     * No call site in this file passes caller data in. Before giving up, ask whether one
+     * in another file does.
+     *
+     * This is the same question, one file over, and it is answered from an index built
+     * before the per-file loop rather than by reaching across files here: a rule still
+     * only ever sees its own module. What the index holds is an observation — some real
+     * call site passed an argument this engine could already prove was caller-controlled
+     * *there* — which is the distinction the earlier attempt at widening taint was
+     * closed with, and the reason it is safe to cross the boundary at all.
+     *
+     * Still one hop. A parameter reached this way is not followed into a further callee,
+     * so a chain of services ends rather than being guessed at.
+     */
+    const crossFile = context.taintedParameters?.get(name)?.get(index);
+    if (crossFile) return `${crossFile} as \`${root}\``;
+
+    // The parameter was found and no call site passes caller data into it.
+    return null;
   }
   return null;
 }
@@ -381,9 +463,7 @@ function nameParameters(path: string, handler: ts.Node | undefined): string {
     .join("/");
 }
 
-function formatRoute(method: string, path: string): string {
-  return method === "ANY" ? path : `${method} ${path}`;
-}
+
 
 /** Does this file define GraphQL resolvers? */
 function isGraphqlModule(context: RuleContext): boolean {
@@ -507,7 +587,7 @@ function scalarGuarded(scope: TaintScope | null, name: string | null): boolean {
     if (guarded || !ts.isIfStatement(node)) return;
     let terminates = false;
     walk(node.thenStatement, (inner) => {
-      if (ts.isReturnStatement(inner) || ts.isThrowStatement(inner)) terminates = true;
+      if (ts.isReturnStatement(inner) || ts.isThrowStatement(inner) || isAbortCall(inner)) terminates = true;
     });
     if (!terminates) return;
     const condition = node.expression.getText(scope.fn.getSourceFile());
@@ -516,12 +596,139 @@ function scalarGuarded(scope: TaintScope | null, name: string | null): boolean {
       new RegExp(`typeof\\s+${escaped}\\b`).test(condition) ||
       new RegExp(`Array\\.isArray\\(\\s*${escaped}\\b`).test(condition) ||
       new RegExp(`Number\\.is(Integer|Finite|SafeInteger)\\(\\s*${escaped}\\b`).test(condition) ||
-      new RegExp(`\\b${escaped}\\s+instanceof\\b`).test(condition)
+      new RegExp(`\\b${escaped}\\s+instanceof\\b`).test(condition) ||
+      /*
+       * A validating predicate pins the type as firmly as a `typeof` comparison.
+       *
+       * `if (!mongoose.isValidObjectId(id)) ctx.throw(400)` is the documented way to
+       * reject a non-scalar before it reaches a Mongo filter: what comes through is a
+       * 24-character hex string or an ObjectId, and neither can carry `$ne`. The
+       * shape is `isValid…(value)` — `isValidObjectId(id)`, `ObjectId.isValid(id)`,
+       * `isValidUuid(id)` — which is narrow enough to mean an assertion about this
+       * value and not a coincidence of naming.
+       */
+      new RegExp(`\\bisValid\\w*\\(\\s*${escaped}\\b`, "i").test(condition)
     ) {
       guarded = true;
     }
   });
   return guarded;
+}
+
+/** Type names a `typeof` comparison pins a value to that cannot carry an operator. */
+const SCALAR_TYPEOF = new Set(["string", "number", "boolean", "bigint"]);
+
+/** Predicates that answer "is this a number" without changing the value. */
+const SCALAR_PREDICATE = /^Number\.(isInteger|isFinite|isSafeInteger)$/;
+
+/**
+ * The dotted path a read is written as.
+ *
+ * `"exact"` returns null when any segment is computed, which is what a guard
+ * question needs: `typeof message === "string"` says nothing about
+ * `message[key]`. `"prefix"` returns the part written out before the first
+ * computed segment, which is what a provenance question needs, because
+ * `message[key]` is a field of `message` whatever `key` turns out to hold.
+ */
+function readPath(node: ts.Node, tail: "exact" | "prefix"): string | null {
+  if (ts.isIdentifier(node)) return node.text;
+  if (ts.isNonNullExpression(node) || ts.isParenthesizedExpression(node)) return readPath(node.expression, tail);
+  if (ts.isPropertyAccessExpression(node)) {
+    const base = readPath(node.expression, tail);
+    return base ? `${base}.${node.name.text}` : null;
+  }
+  if (ts.isElementAccessExpression(node)) {
+    const base = readPath(node.expression, tail);
+    if (!base) return null;
+    const key = literalTextOf(node.argumentExpression);
+    if (key !== null) return `${base}.${key}`;
+    return tail === "prefix" ? base : null;
+  }
+  return null;
+}
+
+/** Does this condition pin exactly this path to a scalar? */
+function pinsPathToScalar(condition: ts.Node, path: string): boolean {
+  let pinned = false;
+  walk(condition, (node) => {
+    if (pinned) return;
+    if (ts.isCallExpression(node) && SCALAR_PREDICATE.test(calleeName(node))) {
+      const argument = node.arguments[0];
+      if (argument && readPath(argument, "exact") === path) pinned = true;
+      return;
+    }
+    if (!ts.isBinaryExpression(node)) return;
+    const kind = node.operatorToken.kind;
+    if (kind !== ts.SyntaxKind.EqualsEqualsEqualsToken && kind !== ts.SyntaxKind.EqualsEqualsToken) return;
+    const sides = [
+      [node.left, node.right],
+      [node.right, node.left]
+    ] as const;
+    for (const [operand, expected] of sides) {
+      if (!ts.isTypeOfExpression(operand)) continue;
+      const type = literalTextOf(expected);
+      if (type === null || !SCALAR_TYPEOF.has(type)) continue;
+      if (readPath(operand.expression, "exact") === path) pinned = true;
+    }
+  });
+  return pinned;
+}
+
+/**
+ * Is the value pinned to a scalar by the very branch that uses it?
+ *
+ * `scalarGuarded` recognises the check written as an early exit — `if (typeof
+ * state !== "string") return` — which is one of the two ways a handler pins an
+ * open field to a scalar. The other is the positive form: read each field the
+ * caller may narrow by and copy it across only inside `if (typeof criteria.state
+ * === "string")`. That is the correct way to build a query out of an open
+ * message, and a rule that cannot see it reports the fixed version of a feature
+ * as loudly as the broken one — which costs more than the finding is worth,
+ * because a reader shown a defended handler stops believing the next report.
+ *
+ * The check has to name the same path the query uses. `typeof criteria.state ===
+ * "string"` says nothing about `criteria.owner`, so answering per root would
+ * clear a field nobody ever looked at.
+ */
+function scalarPinnedWhereUsed(value: ts.Node): boolean {
+  if (ts.isParenthesizedExpression(value)) return scalarPinnedWhereUsed(value.expression);
+  // `q.owner = typeof msg.owner === "string" ? msg.owner : "nobody"` is the same
+  // check written as an expression, and it is how a handler supplies
+  // a default for a field the caller left out. The value the query receives is
+  // whichever branch ran, so every branch that is not already a literal has to
+  // be pinned for the whole expression to be.
+  if (ts.isConditionalExpression(value)) {
+    return [value.whenTrue, value.whenFalse].every(
+      (branch) => isConstantString(branch) || ts.isNumericLiteral(branch) || scalarPinnedWhereUsed(branch)
+    );
+  }
+  const path = readPath(value, "exact");
+  if (!path) return false;
+  for (let current: ts.Node | undefined = value.parent; current; current = current.parent) {
+    if (
+      ts.isIfStatement(current) &&
+      contains(current.thenStatement, value) &&
+      pinsPathToScalar(current.expression, path)
+    ) {
+      return true;
+    }
+    if (
+      ts.isConditionalExpression(current) &&
+      contains(current.whenTrue, value) &&
+      pinsPathToScalar(current.condition, path)
+    ) {
+      return true;
+    }
+    if (
+      ts.isBinaryExpression(current) &&
+      current.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken &&
+      contains(current.right, value) &&
+      pinsPathToScalar(current.left, path)
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /* ------------------------------------------------------------------ *
@@ -571,11 +778,24 @@ export const templateInjection: Rule = {
       // data is escaped by the engine and cannot become part of the program.
       if (isConstantString(template)) continue;
 
-      const origin = taintAt(context, call, template);
-      if (!origin) continue;
-
       const sink = `${receiver ? `${receiver}.` : ""}${tail}()`;
-      report(context, call, sink, origin, "engine");
+
+      const origin = taintAt(context, call, template);
+      if (origin) {
+        report(context, call, sink, origin, "engine");
+        continue;
+      }
+
+      // A template program that arrived over the network is not this
+      // application's code, whoever chose the URL. `lodash.template` and its
+      // peers compile their first argument into a JavaScript function, so a
+      // downloaded layout is remote code execution with an extra step — and the
+      // request-taint model above cannot see it, because the value is a
+      // *response*, not a request. The safe form of the same feature downloads
+      // the DATA and keeps the template a constant, which the check above
+      // already passes over.
+      const remote = remoteOrigin(context, call, template);
+      if (remote) report(context, call, sink, remote, "engine");
     }
 
     // A hand-rolled renderer: caller markup interpolated into source given to
@@ -800,6 +1020,87 @@ function objectCapable(text: string): boolean {
 }
 
 /**
+ * Seed descriptions that name a whole caller-supplied payload.
+ *
+ * An entry point declares its seeds with the wording a reader will see in the
+ * evidence, and that wording is where the difference is recorded: a seed
+ * described as an inbound request is a framework object, part caller and part
+ * middleware, whose caller-controlled members are the known list above. A seed
+ * described as a payload, a message, an input, an argument, a request body or a
+ * query string *is* what the caller sent — every field of it, under names the
+ * caller chose.
+ *
+ * The list is an allowlist on purpose. An adapter that describes a payload in
+ * words nobody has used before costs a missed finding; one that describes a
+ * request object in words a looser pattern happened to match would cost a false
+ * finding on every handler that reads its session off the request.
+ *
+ * BELONGS UPSTREAM, with the note already on `objectCapable`: a `kind` field on
+ * `TaintSeed` would state this outright instead of leaving it to be read back
+ * out of prose.
+ */
+const PAYLOAD_SEED_DESCRIPTION =
+  /\b(payloads?|messages?|inputs?|arguments?|request body|query string|posted|enqueued|published|delivered)\b/i;
+
+/**
+ * The path an entry point declares as the caller's payload, if it declares one.
+ *
+ * A seed's origin is written `<path> (<description>)`, and the path matters as
+ * much as the description: a queue worker's seed is the `job` binding described
+ * as `job.data`, so `job.data.filter` is the caller's while `job.id` is the
+ * queue's own bookkeeping. Where the leading text is not a path — a decorator
+ * names itself rather than a binding — the seeded binding is the payload.
+ */
+function payloadPathOf(seed: TaintSeed): string | null {
+  const opening = seed.origin.lastIndexOf(" (");
+  if (opening < 0) return null;
+  const description = seed.origin.slice(opening + 2).replace(/\)$/, "");
+  if (!PAYLOAD_SEED_DESCRIPTION.test(description)) return null;
+  const head = seed.origin.slice(0, opening).trim();
+  const dotted = /^[A-Za-z_$][\w$]*(\.[A-Za-z_$][\w$]*)*$/.test(head);
+  if (dotted && (head === seed.name || head.startsWith(`${seed.name}.`))) return head;
+  return seed.name;
+}
+
+const declaredPayloadCache = new WeakMap<ts.Node, readonly string[]>();
+
+/** Paths the entry point implemented by this function declares as caller payloads. */
+function declaredPayloads(file: ParsedFile, fn: ts.Node): readonly string[] {
+  const cached = declaredPayloadCache.get(fn);
+  if (cached) return cached;
+  const paths: string[] = [];
+  for (const seed of entryPointForFunction(file, fn)?.seeds ?? []) {
+    const path = payloadPathOf(seed);
+    if (path && !paths.includes(path)) paths.push(path);
+  }
+  declaredPayloadCache.set(fn, paths);
+  return paths;
+}
+
+/**
+ * Is this read a field of a payload the entry point declared?
+ *
+ * The question about `payload.where` is not what the property is called but
+ * where the object it was read off came from, and only the entry point knows. A
+ * socket event's payload, a queue job's data, an IPC argument and an action's
+ * input are one thing — what the caller sent, under keys the caller named — so a
+ * query built from any field of one is built from an object the caller composed,
+ * and the caller can compose an operator instead of a value.
+ *
+ * Asking the entry point is what keeps this from being a guess. A handler with
+ * no entry point, and one whose seeds are a framework request object, are both
+ * judged exactly as they were before: by the list of request members the caller
+ * writes.
+ */
+function withinDeclaredPayload(file: ParsedFile, node: ts.Node, scope: TaintScope): boolean {
+  const payloads = declaredPayloads(file, scope.fn);
+  if (payloads.length === 0) return false;
+  const path = readPath(node, "prefix");
+  if (!path) return false;
+  return payloads.some((payload) => path === payload || path.startsWith(`${payload}.`));
+}
+
+/**
  * Caller data that keeps its own shape.
  *
  * A Mongo filter is only injectable when the caller controls an *object*: a
@@ -808,7 +1109,7 @@ function objectCapable(text: string): boolean {
  * scalar or rebuild it". A coercion, a validator, and a project helper that
  * copies known keys all break the flow; a body reader does not.
  */
-function callerShapedOrigin(node: ts.Node, scope: TaintScope, depth = 0): string | null {
+function callerShapedOrigin(file: ParsedFile, node: ts.Node, scope: TaintScope, depth = 0): string | null {
   if (depth > 6) return null;
   if (
     ts.isParenthesizedExpression(node) ||
@@ -816,12 +1117,12 @@ function callerShapedOrigin(node: ts.Node, scope: TaintScope, depth = 0): string
     ts.isAwaitExpression(node) ||
     ts.isAsExpression(node)
   ) {
-    return callerShapedOrigin(node.expression, scope, depth + 1);
+    return callerShapedOrigin(file, node.expression, scope, depth + 1);
   }
   if (ts.isIdentifier(node)) {
     if (scope.cleared.has(node.text)) return null;
     const initializer = scope.initializers.get(node.text);
-    if (initializer) return callerShapedOrigin(initializer, scope, depth + 1);
+    if (initializer) return callerShapedOrigin(file, initializer, scope, depth + 1);
     const root = scope.roots.get(node.text);
     if (!root) return null;
     return objectCapable(root.origin) ? root.origin : null;
@@ -832,28 +1133,43 @@ function callerShapedOrigin(node: ts.Node, scope: TaintScope, depth = 0): string
     if (!root || scope.cleared.has(root)) return null;
     // A property read off a local binding is only caller-shaped if the binding is.
     const initializer = scope.initializers.get(root);
-    if (initializer) return callerShapedOrigin(initializer, scope, depth + 1);
+    if (initializer) return callerShapedOrigin(file, initializer, scope, depth + 1);
     const entry = scope.roots.get(root);
     if (!entry) return null;
     // The request object itself is a mixture: `request.body` is the caller's, and
     // `request.user` is whatever the authentication middleware decorated it with.
     // Treating the whole object as attacker-controlled would report every lookup
     // by session id as an injection.
-    if (entry.declaration === scope.fn && !CALLER_DATA_SEGMENT.test(path)) return null;
+    // A payload the entry point declared is not a mixture: no middleware
+    // decorates a socket event, a queue job's data, or an IPC argument, so every
+    // field of one belongs to the caller under a name the caller chose. Without
+    // this, an event-driven handler that spreads its message into a filter is
+    // read as if the message were a request object with no recognised member,
+    // and the whole message-driven surface of an application stays silent.
+    if (
+      entry.declaration === scope.fn &&
+      !CALLER_DATA_SEGMENT.test(path) &&
+      !withinDeclaredPayload(file, node, scope)
+    ) {
+      return null;
+    }
     return objectCapable(path) && objectCapable(entry.origin) ? entry.origin : null;
   }
   if (ts.isBinaryExpression(node)) {
     const operator = node.operatorToken.kind;
     // `filter ?? {}` and `filter || {}` are still the caller's object.
     if (operator === ts.SyntaxKind.QuestionQuestionToken || operator === ts.SyntaxKind.BarBarToken) {
-      return callerShapedOrigin(node.left, scope, depth + 1) ?? callerShapedOrigin(node.right, scope, depth + 1);
+      return (
+        callerShapedOrigin(file, node.left, scope, depth + 1) ?? callerShapedOrigin(file, node.right, scope, depth + 1)
+      );
     }
     // Any arithmetic or concatenation produces a scalar.
     return null;
   }
   if (ts.isConditionalExpression(node)) {
     return (
-      callerShapedOrigin(node.whenTrue, scope, depth + 1) ?? callerShapedOrigin(node.whenFalse, scope, depth + 1)
+      callerShapedOrigin(file, node.whenTrue, scope, depth + 1) ??
+      callerShapedOrigin(file, node.whenFalse, scope, depth + 1)
     );
   }
   if (ts.isCallExpression(node)) {
@@ -863,7 +1179,7 @@ function callerShapedOrigin(node: ts.Node, scope: TaintScope, depth = 0): string
     // A body reader hands the payload back as it arrived, including its keys.
     if (RAW_BODY_READER.test(tail) || name === "JSON.parse") {
       for (const argument of node.arguments) {
-        const origin = callerShapedOrigin(argument, scope, depth + 1);
+        const origin = callerShapedOrigin(file, argument, scope, depth + 1);
         if (origin) return origin;
       }
       const receiver = ts.isPropertyAccessExpression(node.expression) ? node.expression.expression : null;
@@ -879,46 +1195,127 @@ function callerShapedOrigin(node: ts.Node, scope: TaintScope, depth = 0): string
   return null;
 }
 
+/**
+ * One key of a filter document, wherever in the handler it was written.
+ *
+ * The judgement does not depend on whether the key appears inside the object
+ * literal or is assigned onto the binding two lines later, so it lives in one
+ * place: if the two paths were written separately they would drift, and the
+ * assignment path is the one that carries the caller's optional criteria.
+ */
+function keyedFlows(
+  file: ParsedFile,
+  key: string,
+  value: ts.Expression,
+  node: ts.Node,
+  scope: TaintScope,
+  depth: number,
+  sink?: ts.Node
+): FilterFlow[] {
+  if (ts.isObjectLiteralExpression(value) && depth < 3) return filterFlows(file, value, scope, depth + 1, sink);
+  if (isConstantString(value) || value.kind === ts.SyntaxKind.NullKeyword) return [];
+  // `$where` and friends evaluate their argument, so even a string is code.
+  if (EVALUATED_OPERATORS.has(key)) {
+    const origin = taintOrigin(value, scope);
+    return origin ? [{ node, value, origin, kind: "value", key, evaluated: true }] : [];
+  }
+  const origin = callerShapedOrigin(file, value, scope);
+  return origin ? [{ node, value, origin, kind: "value", key }] : [];
+}
+
+/**
+ * Keys written onto the filter object after it was declared.
+ *
+ * A filter with optional criteria is built in steps — `const filter = { tenantId };`
+ * and then `if (body.team) filter.teamSlug = ...` — because that is the only way
+ * to express "narrow this only when the caller asked for it". Reading the
+ * declaration alone therefore sees the server's own scoping keys and none of the
+ * caller's, which makes the rule quietest on exactly the endpoints that accept
+ * the most input. The keys added under a condition are the request's keys.
+ *
+ * Only writes that precede the query count. A filter mutated after it has been
+ * handed to the driver cannot affect the query that already ran, and treating a
+ * later write as part of it would be inventing a flow.
+ */
+function assignedFlows(
+  file: ParsedFile,
+  binding: string,
+  scope: TaintScope,
+  depth: number,
+  sink?: ts.Node
+): FilterFlow[] {
+  const body = (scope.fn as ts.FunctionLikeDeclaration).body;
+  if (!body) return [];
+  const flows: FilterFlow[] = [];
+
+  walk(body, (node) => {
+    if (sink && node.getStart() >= sink.getStart()) return;
+
+    // `Object.assign(filter, req.body)` merges the caller's keys wholesale. It is
+    // a spread written as a call, and it carries the same defect: a key the
+    // caller chose can overwrite the condition that scopes the query.
+    if (ts.isCallExpression(node) && calleeName(node) === "Object.assign") {
+      const target = node.arguments[0];
+      if (!target || rootOf(target) !== binding) return;
+      for (const source of node.arguments.slice(1)) {
+        const origin = callerShapedOrigin(file, source, scope);
+        if (origin) flows.push({ node, value: source, origin, kind: "spread" });
+      }
+      return;
+    }
+
+    if (!ts.isBinaryExpression(node) || node.operatorToken.kind !== ts.SyntaxKind.EqualsToken) return;
+    const left = node.left;
+    if (!ts.isPropertyAccessExpression(left) && !ts.isElementAccessExpression(left)) return;
+    if (rootOf(left) !== binding) return;
+    // A computed key — `filter[field] = value` — is a different question, namely
+    // which field the caller may query, and the field is usually an allowlisted
+    // sort or search column. This rule leaves it alone rather than reporting the
+    // allowlist.
+    const key = ts.isPropertyAccessExpression(left) ? left.name.text : literalTextOf(left.argumentExpression);
+    if (key === null) return;
+    flows.push(...keyedFlows(file, key, node.right, node, scope, depth, sink));
+  });
+
+  return flows;
+}
+
 /** Caller-controlled parts of a filter or update document. */
-function filterFlows(argument: ts.Expression, scope: TaintScope, depth = 0): FilterFlow[] {
+function filterFlows(
+  file: ParsedFile,
+  argument: ts.Expression,
+  scope: TaintScope,
+  depth = 0,
+  sink?: ts.Node
+): FilterFlow[] {
   const flows: FilterFlow[] = [];
   const resolved = resolveExpression(argument, scope);
 
   if (ts.isObjectLiteralExpression(resolved)) {
     for (const property of resolved.properties) {
       if (ts.isSpreadAssignment(property)) {
-        const origin = callerShapedOrigin(property.expression, scope);
+        const origin = callerShapedOrigin(file, property.expression, scope);
         if (origin) flows.push({ node: property, value: property.expression, origin, kind: "spread" });
         continue;
       }
       if (ts.isShorthandPropertyAssignment(property)) {
-        const origin = callerShapedOrigin(property.name, scope);
+        const origin = callerShapedOrigin(file, property.name, scope);
         if (origin) flows.push({ node: property, value: property.name, origin, kind: "value", key: property.name.text });
         continue;
       }
       if (!ts.isPropertyAssignment(property)) continue;
       const key =
         ts.isIdentifier(property.name) || ts.isStringLiteralLike(property.name) ? property.name.text : "";
-      const value = property.initializer;
-      if (ts.isObjectLiteralExpression(value) && depth < 3) {
-        flows.push(...filterFlows(value, scope, depth + 1));
-        continue;
-      }
-      if (isConstantString(value) || value.kind === ts.SyntaxKind.NullKeyword) continue;
-      // `$where` and friends evaluate their argument, so even a string is code.
-      if (EVALUATED_OPERATORS.has(key)) {
-        const origin = taintOrigin(value, scope);
-        if (origin) flows.push({ node: property, value, origin, kind: "value", key, evaluated: true });
-        continue;
-      }
-      const origin = callerShapedOrigin(value, scope);
-      if (origin) flows.push({ node: property, value, origin, kind: "value", key });
+      flows.push(...keyedFlows(file, key, property.initializer, property, scope, depth, sink));
     }
-    return flows;
+  } else {
+    const origin = callerShapedOrigin(file, resolved, scope) ?? callerShapedOrigin(file, argument, scope);
+    if (origin) flows.push({ node: argument, value: argument, origin, kind: "whole" });
   }
 
-  const origin = callerShapedOrigin(resolved, scope) ?? callerShapedOrigin(argument, scope);
-  if (origin) flows.push({ node: argument, value: argument, origin, kind: "whole" });
+  // The binding may have been filled in after it was declared, whether it started
+  // as a literal or as `{}`.
+  if (ts.isIdentifier(argument)) flows.push(...assignedFlows(file, argument.text, scope, depth, sink));
   return flows;
 }
 
@@ -1004,7 +1401,7 @@ export const nosqlInjection: Rule = {
         const scope = innermostScope(context, call);
         if (!scope) continue;
         const isUpdateDocument = position === 1 && tail !== "distinct";
-        const flows = filterFlows(argument, scope).filter((flow) =>
+        const flows = filterFlows(context.file, argument, scope, 0, call).filter((flow) =>
           // In an update document a fixed operator with caller-supplied values is
           // mass assignment, not injection; only a wholly caller-controlled
           // document lets the caller choose the operator.
@@ -1014,8 +1411,12 @@ export const nosqlInjection: Rule = {
         if (routeValidatesInput(call, context.file.source)) continue;
 
         // A `typeof x !== "string"` check that stops the handler makes the value a
-        // scalar as surely as a coercion does.
-        const reportable = flows.filter((flow) => !scalarGuarded(scope, rootOf(flow.value) ?? flow.key ?? null));
+        // scalar as surely as a coercion does, and so does the same check written
+        // the other way round, guarding the branch that copies the field across.
+        const reportable = flows.filter(
+          (flow) =>
+            !scalarGuarded(scope, rootOf(flow.value) ?? flow.key ?? null) && !scalarPinnedWhereUsed(flow.value)
+        );
         const flow = reportable[0];
         if (!flow) continue;
 
@@ -1062,6 +1463,86 @@ export const nosqlInjection: Rule = {
     }
   }
 };
+
+/** HTTP clients whose result is content this application did not write. */
+const NETWORK_CALL = /^(fetch|got|ky|superagent|undici\.request|request)$|(^|\.)(axios|http|https|client)\.(get|post|put|request|fetch)$|(^|\.)axios$/;
+
+/** Reading the body off a response keeps it remote. */
+const RESPONSE_READERS = new Set(["text", "json", "buffer", "arrayBuffer", "data"]);
+
+/**
+ * Did this value come off the network?
+ *
+ * Deliberately narrow, and used by exactly one rule. Marking every HTTP response
+ * as tainted everywhere would flag the ordinary act of consuming an API, which is
+ * most of what applications do. It is only when the response is *compiled* that
+ * its origin decides the outcome, and there the question is worth asking.
+ *
+ * One hop into a module-local helper, because `await fetchText(url)` is how this
+ * is written far more often than an inline `fetch`.
+ */
+function remoteOrigin(context: RuleContext, site: ts.Node, expression: ts.Node, hops = 1): string | null {
+  for (const entry of scopesContaining(context, site)) {
+    const resolved = resolveExpression(expression, entry.scope);
+    const call = unwrapCall(resolved);
+    if (!call) continue;
+
+    const name = calleeName(call);
+    const tail = calleeTail(call);
+
+    if (NETWORK_CALL.test(name)) return `${name}() (a response downloaded at run time)`;
+    if (RESPONSE_READERS.has(tail)) {
+      const inner = unwrapCall(call.expression);
+      if (inner && NETWORK_CALL.test(calleeName(inner))) {
+        return `${calleeName(inner)}() (a response downloaded at run time)`;
+      }
+    }
+
+    if (hops <= 0 || !ts.isIdentifier(call.expression)) continue;
+    const helper = moduleFunction(context, call.expression.text);
+    if (!helper) continue;
+    let found: string | null = null;
+    walk(helper, (node) => {
+      if (found || !ts.isCallExpression(node)) return;
+      if (NETWORK_CALL.test(calleeName(node))) found = `${call.expression.getText(context.file.source)}() (a response downloaded at run time)`;
+    });
+    if (found) return found;
+  }
+  return null;
+}
+
+/** The call inside an await, a parenthesis, or an assertion. */
+function unwrapCall(node: ts.Node): ts.CallExpression | null {
+  let current = node;
+  for (let depth = 0; depth < 4; depth += 1) {
+    if (ts.isCallExpression(current)) return current;
+    if (
+      ts.isAwaitExpression(current) ||
+      ts.isParenthesizedExpression(current) ||
+      ts.isNonNullExpression(current) ||
+      ts.isAsExpression(current)
+    ) {
+      current = current.expression;
+      continue;
+    }
+    return null;
+  }
+  return null;
+}
+
+/** A function declared at module scope in this file, by name. */
+function moduleFunction(context: RuleContext, name: string): ts.Node | null {
+  for (const statement of context.file.source.statements) {
+    if (ts.isFunctionDeclaration(statement) && statement.name?.text === name) return statement;
+    if (!ts.isVariableStatement(statement)) continue;
+    for (const declaration of statement.declarationList.declarations) {
+      if (!ts.isIdentifier(declaration.name) || declaration.name.text !== name) continue;
+      const initializer = declaration.initializer;
+      if (initializer && (ts.isArrowFunction(initializer) || ts.isFunctionExpression(initializer))) return initializer;
+    }
+  }
+  return null;
+}
 
 /* ------------------------------------------------------------------ *
  * unsafe_deserialization
@@ -1187,9 +1668,18 @@ const MERGE_LIBRARY_RECEIVER = /^(_|lodash|deepmerge|merge|mergeDeep|objectPath|
 const MERGE_LIBRARY_MODULE = /(lodash|deepmerge|merge-deep|deep-extend|object-path|dot-prop|assign-deep|defaults-deep|merge-options|ramda)/i;
 
 interface MergeFunction {
-  node: ts.Node;
   name: string;
   guarded: boolean;
+  /**
+   * The assignment that writes a caller-chosen key onto the target.
+   *
+   * This is the line a reader has to change, and it is not the line the function
+   * starts on: the declaration says only that a merge exists, while the dynamic
+   * write is where an untrusted key becomes a property of an object that already
+   * has a prototype. Anchoring the report on the declaration sends whoever reads
+   * it to the signature and leaves them to find the sink themselves.
+   */
+  write: ts.Node;
 }
 
 /**
@@ -1218,7 +1708,7 @@ function mergeFunctionsIn(context: RuleContext): MergeFunction[] {
     if (parameters.length < 2) continue;
 
     // A dynamic write onto one of the parameters.
-    let dynamicWrite = false;
+    let write: ts.Node | undefined;
     // Iteration over the keys of another parameter, or a split path.
     let walksKeys = false;
     let recurses = false;
@@ -1231,7 +1721,9 @@ function mergeFunctionsIn(context: RuleContext): MergeFunction[] {
         !ts.isStringLiteralLike(node.left.argumentExpression)
       ) {
         const target = rootOf(node.left);
-        if (target && parameters.includes(target)) dynamicWrite = true;
+        // The first such write in source order is the one to report: later writes
+        // in the same body are the same defect reached down a different branch.
+        if (target && parameters.includes(target)) write ??= node;
       }
       if (ts.isCallExpression(node)) {
         const callName = calleeName(node);
@@ -1256,9 +1748,9 @@ function mergeFunctionsIn(context: RuleContext): MergeFunction[] {
       }
     });
 
-    if (!dynamicWrite || !walksKeys || !recurses) continue;
+    if (!write || !walksKeys || !recurses) continue;
 
-    found.push({ node: fn, name, guarded: mergeIsGuarded(context, body) });
+    found.push({ name, guarded: mergeIsGuarded(context, body), write });
   }
 
   return found;
@@ -1315,7 +1807,10 @@ export const prototypePollutingMerge: Rule = {
       const origin = source.map((argument) => taintAt(context, call, argument)).find(Boolean);
       if (!origin) continue;
 
-      const site = local ? local.node : call;
+      // The merge's own dynamic write, not its declaration: a reader following the
+      // report needs the assignment that copies an untrusted key, because that is
+      // where the guard has to go.
+      const site = local ? local.write : call;
       const label = local ? `\`${local.name}\`` : `${name}()`;
 
       context.report({

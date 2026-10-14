@@ -1,0 +1,1618 @@
+{
+  "generatedAt": "2026-10-14T10:45:09.235Z",
+  "scannerCommit": "04ccbb3",
+  "engineDirty": false,
+  "engineHash": "066b4b48cff5",
+  "gates": {
+    "criticalHighRecall": 0.95,
+    "overallRecall": 0.9,
+    "precision": 0.9,
+    "safeFalsePositiveRate": 0.03
+  },
+  "totals": {
+    "cases": 56,
+    "vulnerable": 28,
+    "safe": 28,
+    "unsupported": 0,
+    "outOfScope": 0,
+    "outOfScopeRecall": null,
+    "recall": 1,
+    "classBlindRecall": 1,
+    "cweRecall": 1,
+    "cweRecallNear": 1,
+    "cweScored": 28,
+    "criticalHighRecall": 1,
+    "precision": 1,
+    "falsePositiveRate": 0,
+    "confidentFalsePositiveRate": 0,
+    "candidateFalsePositiveRate": 0,
+    "confidentPrecision": 1,
+    "intervals": {
+      "recall": [
+        0.8794,
+        1
+      ],
+      "classBlindRecall": [
+        0.8794,
+        1
+      ],
+      "cweRecall": [
+        0.8794,
+        1
+      ],
+      "cweRecallNear": [
+        0.8794,
+        1
+      ],
+      "falsePositiveRate": [
+        0,
+        0.1206
+      ],
+      "confidentFalsePositiveRate": [
+        0,
+        0.1206
+      ]
+    },
+    "sampleSize": {
+      "vulnerable": 28,
+      "safe": 28,
+      "cweScored": 28
+    }
+  },
+  "byClass": {
+    "sql_injection": {
+      "expected": 4,
+      "detected": 4,
+      "inBand": 4,
+      "misattributed": 0
+    },
+    "command_injection": {
+      "expected": 2,
+      "detected": 2,
+      "inBand": 2,
+      "misattributed": 0
+    },
+    "path_traversal": {
+      "expected": 2,
+      "detected": 2,
+      "inBand": 2,
+      "misattributed": 0
+    },
+    "server_side_request_forgery": {
+      "expected": 2,
+      "detected": 2,
+      "inBand": 2,
+      "misattributed": 0
+    },
+    "template_injection": {
+      "expected": 2,
+      "detected": 2,
+      "inBand": 2,
+      "misattributed": 0
+    },
+    "unsafe_deserialization": {
+      "expected": 2,
+      "detected": 2,
+      "inBand": 2,
+      "misattributed": 0
+    },
+    "hardcoded_secret": {
+      "expected": 2,
+      "detected": 2,
+      "inBand": 2,
+      "misattributed": 0
+    },
+    "debug_endpoint_exposure": {
+      "expected": 2,
+      "detected": 2,
+      "inBand": 2,
+      "misattributed": 0
+    },
+    "missing_authentication": {
+      "expected": 2,
+      "detected": 2,
+      "inBand": 2,
+      "misattributed": 0
+    },
+    "broken_object_level_authorization": {
+      "expected": 2,
+      "detected": 2,
+      "inBand": 2,
+      "misattributed": 0
+    },
+    "insecure_cookie_configuration": {
+      "expected": 2,
+      "detected": 2,
+      "inBand": 2,
+      "misattributed": 0
+    },
+    "open_redirect": {
+      "expected": 2,
+      "detected": 2,
+      "inBand": 2,
+      "misattributed": 0
+    },
+    "reflected_cross_site_scripting": {
+      "expected": 2,
+      "detected": 2,
+      "inBand": 2,
+      "misattributed": 0
+    }
+  },
+  "byFamily": {
+    "fastapi": {
+      "vulnerable": 14,
+      "detected": 14,
+      "safe": 14,
+      "falsePositives": 0
+    },
+    "flask": {
+      "vulnerable": 14,
+      "detected": 14,
+      "safe": 14,
+      "falsePositives": 0
+    }
+  },
+  "outcomes": [
+    {
+      "id": "py-dev-fastapi-invoice-search-percent",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter modules with Depends() session and current-user injection, Pydantic v2 request models, SQLAlchemy 2.0 or psycopg for persistence, httpx for outbound calls and Starlette response classes",
+      "language": "python",
+      "file": "fastapi/invoice_search.py",
+      "kind": "vulnerable",
+      "category": "sql_injection",
+      "cwe": "CWE-89",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "GET /invoices/search",
+      "line": 25,
+      "lineRange": [
+        21,
+        25
+      ],
+      "runtimeVerifiable": true,
+      "why": "The customer name from the query string is %-formatted into the ILIKE literal before cursor.execute runs the string, so a quote in the name rewrites the WHERE clause.",
+      "detected": true,
+      "anyClassInRange": true,
+      "cweMatched": true,
+      "cweMatchedNear": true,
+      "creditedBy": {
+        "ruleId": "py-sql-injection",
+        "line": 25,
+        "distanceFromLine": 0
+      },
+      "severityReported": "critical",
+      "severityInBand": true,
+      "routeReported": "GET /invoices/search",
+      "alsoReported": [],
+      "misattributed": [],
+      "unsupported": false,
+      "outOfScope": null
+    },
+    {
+      "id": "py-dev-fastapi-invoice-search-bound",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter modules with Depends() session and current-user injection, Pydantic v2 request models, SQLAlchemy 2.0 or psycopg for persistence, httpx for outbound calls and Starlette response classes",
+      "language": "python",
+      "file": "fastapi/invoice_lookup.py",
+      "kind": "safe",
+      "pairedWith": "py-dev-fastapi-invoice-search-percent",
+      "why": "The customer name is passed as a bound parameter in the params tuple; only placeholders appear in the statement text.",
+      "helperFindings": [],
+      "falsePositives": [],
+      "unsupported": false,
+      "outOfScope": null
+    },
+    {
+      "id": "py-dev-fastapi-ticket-filter-helper",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter modules with Depends() session and current-user injection, Pydantic v2 request models, SQLAlchemy 2.0 or psycopg for persistence, httpx for outbound calls and Starlette response classes",
+      "language": "python",
+      "file": "fastapi/ticket_queue.py",
+      "kind": "vulnerable",
+      "category": "sql_injection",
+      "cwe": "CWE-89",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "GET /support/tickets",
+      "line": 26,
+      "lineRange": [
+        16,
+        26
+      ],
+      "runtimeVerifiable": true,
+      "why": "A module helper formats the priority query parameter into a SQL fragment, and the handler concatenates that fragment into the text() statement it executes.",
+      "detected": true,
+      "anyClassInRange": true,
+      "cweMatched": true,
+      "cweMatchedNear": true,
+      "creditedBy": {
+        "ruleId": "py-sql-injection",
+        "line": 26,
+        "distanceFromLine": 0
+      },
+      "severityReported": "critical",
+      "severityInBand": true,
+      "routeReported": "GET /support/tickets",
+      "alsoReported": [],
+      "misattributed": [],
+      "unsupported": false,
+      "outOfScope": null
+    },
+    {
+      "id": "py-dev-fastapi-ticket-filter-bound",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter modules with Depends() session and current-user injection, Pydantic v2 request models, SQLAlchemy 2.0 or psycopg for persistence, httpx for outbound calls and Starlette response classes",
+      "language": "python",
+      "file": "fastapi/ticket_board.py",
+      "kind": "safe",
+      "pairedWith": "py-dev-fastapi-ticket-filter-helper",
+      "why": "The helper returns a clause with a named placeholder and the priority value travels in the params dict.",
+      "helperFindings": [],
+      "falsePositives": [],
+      "unsupported": false,
+      "outOfScope": null
+    },
+    {
+      "id": "py-dev-fastapi-backup-shell",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter modules with Depends() session and current-user injection, Pydantic v2 request models, SQLAlchemy 2.0 or psycopg for persistence, httpx for outbound calls and Starlette response classes",
+      "language": "python",
+      "file": "fastapi/backups.py",
+      "kind": "vulnerable",
+      "category": "command_injection",
+      "cwe": "CWE-78",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "POST /admin/backups",
+      "line": 26,
+      "lineRange": [
+        22,
+        26
+      ],
+      "runtimeVerifiable": true,
+      "why": "The database name from the request body is interpolated into a pg_dump command line that Popen runs through a shell.",
+      "detected": true,
+      "anyClassInRange": true,
+      "cweMatched": true,
+      "cweMatchedNear": true,
+      "creditedBy": {
+        "ruleId": "py-command-injection",
+        "line": 26,
+        "distanceFromLine": 0
+      },
+      "severityReported": "critical",
+      "severityInBand": true,
+      "routeReported": "POST /admin/backups",
+      "alsoReported": [],
+      "misattributed": [],
+      "unsupported": false,
+      "outOfScope": null
+    },
+    {
+      "id": "py-dev-fastapi-backup-argv",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter modules with Depends() session and current-user injection, Pydantic v2 request models, SQLAlchemy 2.0 or psycopg for persistence, httpx for outbound calls and Starlette response classes",
+      "language": "python",
+      "file": "fastapi/snapshots.py",
+      "kind": "safe",
+      "pairedWith": "py-dev-fastapi-backup-shell",
+      "why": "The database must be one of a fixed set of names, and pg_dump is started with an argument list and no shell.",
+      "helperFindings": [],
+      "falsePositives": [],
+      "unsupported": false,
+      "outOfScope": null
+    },
+    {
+      "id": "py-dev-fastapi-invoice-pdf-join",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter modules with Depends() session and current-user injection, Pydantic v2 request models, SQLAlchemy 2.0 or psycopg for persistence, httpx for outbound calls and Starlette response classes",
+      "language": "python",
+      "file": "fastapi/invoice_documents.py",
+      "kind": "vulnerable",
+      "category": "path_traversal",
+      "cwe": "CWE-22",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "GET /invoices/:invoice_number/pdf",
+      "line": 19,
+      "lineRange": [
+        16,
+        19
+      ],
+      "runtimeVerifiable": true,
+      "why": "The invoice number path parameter is a free string joined onto the PDF directory and streamed with no containment check, so encoded ../ segments read other .pdf files on the host.",
+      "detected": true,
+      "anyClassInRange": true,
+      "cweMatched": true,
+      "cweMatchedNear": true,
+      "creditedBy": {
+        "ruleId": "py-path-traversal",
+        "line": 19,
+        "distanceFromLine": 0
+      },
+      "severityReported": "high",
+      "severityInBand": true,
+      "routeReported": "GET /invoices/:invoice_number/pdf",
+      "alsoReported": [],
+      "misattributed": [],
+      "unsupported": false,
+      "outOfScope": null
+    },
+    {
+      "id": "py-dev-fastapi-invoice-pdf-contained",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter modules with Depends() session and current-user injection, Pydantic v2 request models, SQLAlchemy 2.0 or psycopg for persistence, httpx for outbound calls and Starlette response classes",
+      "language": "python",
+      "file": "fastapi/invoice_archive.py",
+      "kind": "safe",
+      "pairedWith": "py-dev-fastapi-invoice-pdf-join",
+      "why": "The joined path is resolved and refused unless it is still inside the account's resolved PDF directory.",
+      "helperFindings": [],
+      "falsePositives": [],
+      "unsupported": false,
+      "outOfScope": null
+    },
+    {
+      "id": "py-dev-fastapi-webhook-test-any-url",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter modules with Depends() session and current-user injection, Pydantic v2 request models, SQLAlchemy 2.0 or psycopg for persistence, httpx for outbound calls and Starlette response classes",
+      "language": "python",
+      "file": "fastapi/webhook_settings.py",
+      "kind": "vulnerable",
+      "category": "server_side_request_forgery",
+      "cwe": "CWE-918",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "POST /integrations/webhooks/test",
+      "line": 21,
+      "lineRange": [
+        21,
+        21
+      ],
+      "runtimeVerifiable": true,
+      "why": "The endpoint posts a test event to whatever callback URL the caller supplies, from inside the network, with no host check.",
+      "detected": true,
+      "anyClassInRange": true,
+      "cweMatched": true,
+      "cweMatchedNear": true,
+      "creditedBy": {
+        "ruleId": "py-server-side-request-forgery",
+        "line": 21,
+        "distanceFromLine": 0
+      },
+      "severityReported": "high",
+      "severityInBand": true,
+      "routeReported": "POST /integrations/webhooks/test",
+      "alsoReported": [],
+      "misattributed": [],
+      "unsupported": false,
+      "outOfScope": null
+    },
+    {
+      "id": "py-dev-fastapi-webhook-test-allowlisted",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter modules with Depends() session and current-user injection, Pydantic v2 request models, SQLAlchemy 2.0 or psycopg for persistence, httpx for outbound calls and Starlette response classes",
+      "language": "python",
+      "file": "fastapi/webhook_checks.py",
+      "kind": "safe",
+      "pairedWith": "py-dev-fastapi-webhook-test-any-url",
+      "why": "The callback host must be one of the partner hosts in a fixed allow-list before the request is sent.",
+      "helperFindings": [],
+      "falsePositives": [],
+      "unsupported": false,
+      "outOfScope": null
+    },
+    {
+      "id": "py-dev-fastapi-email-template-from-string",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter modules with Depends() session and current-user injection, Pydantic v2 request models, SQLAlchemy 2.0 or psycopg for persistence, httpx for outbound calls and Starlette response classes",
+      "language": "python",
+      "file": "fastapi/email_preview.py",
+      "kind": "vulnerable",
+      "category": "template_injection",
+      "cwe": "CWE-1336",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "POST /campaigns/preview",
+      "line": 21,
+      "lineRange": [
+        21,
+        21
+      ],
+      "runtimeVerifiable": true,
+      "why": "The campaign body submitted by the caller is compiled as a Jinja2 template by a regular Environment, so template expressions in it run on the server.",
+      "detected": true,
+      "anyClassInRange": true,
+      "cweMatched": true,
+      "cweMatchedNear": true,
+      "creditedBy": {
+        "ruleId": "py-template-injection",
+        "line": 21,
+        "distanceFromLine": 0
+      },
+      "severityReported": "critical",
+      "severityInBand": true,
+      "routeReported": "POST /campaigns/preview",
+      "alsoReported": [],
+      "misattributed": [],
+      "unsupported": false,
+      "outOfScope": null
+    },
+    {
+      "id": "py-dev-fastapi-email-template-fixed",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter modules with Depends() session and current-user injection, Pydantic v2 request models, SQLAlchemy 2.0 or psycopg for persistence, httpx for outbound calls and Starlette response classes",
+      "language": "python",
+      "file": "fastapi/email_render.py",
+      "kind": "safe",
+      "pairedWith": "py-dev-fastapi-email-template-from-string",
+      "why": "The template is a fixed file and the caller's text is passed as an autoescaped context variable.",
+      "helperFindings": [],
+      "falsePositives": [],
+      "unsupported": false,
+      "outOfScope": null
+    },
+    {
+      "id": "py-dev-fastapi-session-restore-pickle",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter modules with Depends() session and current-user injection, Pydantic v2 request models, SQLAlchemy 2.0 or psycopg for persistence, httpx for outbound calls and Starlette response classes",
+      "language": "python",
+      "file": "fastapi/session_state.py",
+      "kind": "vulnerable",
+      "category": "unsafe_deserialization",
+      "cwe": "CWE-502",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "POST /workspace/restore",
+      "line": 13,
+      "lineRange": [
+        13,
+        13
+      ],
+      "runtimeVerifiable": true,
+      "why": "A base64 header value supplied by the client is unpickled, which constructs arbitrary objects and can run code.",
+      "detected": true,
+      "anyClassInRange": true,
+      "cweMatched": true,
+      "cweMatchedNear": true,
+      "creditedBy": {
+        "ruleId": "py-unsafe-deserialization",
+        "line": 13,
+        "distanceFromLine": 0
+      },
+      "severityReported": "critical",
+      "severityInBand": true,
+      "routeReported": "POST /workspace/restore",
+      "alsoReported": [],
+      "misattributed": [],
+      "unsupported": false,
+      "outOfScope": null
+    },
+    {
+      "id": "py-dev-fastapi-session-restore-json",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter modules with Depends() session and current-user injection, Pydantic v2 request models, SQLAlchemy 2.0 or psycopg for persistence, httpx for outbound calls and Starlette response classes",
+      "language": "python",
+      "file": "fastapi/layout_state.py",
+      "kind": "safe",
+      "pairedWith": "py-dev-fastapi-session-restore-pickle",
+      "why": "The same header is decoded as JSON, which builds only plain data.",
+      "helperFindings": [],
+      "falsePositives": [],
+      "unsupported": false,
+      "outOfScope": null
+    },
+    {
+      "id": "py-dev-fastapi-settings-webhook-secret",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter modules with Depends() session and current-user injection, Pydantic v2 request models, SQLAlchemy 2.0 or psycopg for persistence, httpx for outbound calls and Starlette response classes",
+      "language": "python",
+      "file": "fastapi/settings.py",
+      "kind": "vulnerable",
+      "category": "hardcoded_secret",
+      "cwe": "CWE-798",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "line": 10,
+      "lineRange": [
+        10,
+        10
+      ],
+      "runtimeVerifiable": false,
+      "why": "The webhook signing secret has a committed high-entropy default, so it is live wherever the environment does not override it.",
+      "detected": true,
+      "anyClassInRange": true,
+      "cweMatched": true,
+      "cweMatchedNear": true,
+      "creditedBy": {
+        "ruleId": "py-hardcoded-secret",
+        "line": 10,
+        "distanceFromLine": 0
+      },
+      "severityReported": "high",
+      "severityInBand": true,
+      "routeReported": null,
+      "alsoReported": [],
+      "misattributed": [],
+      "unsupported": false,
+      "outOfScope": null
+    },
+    {
+      "id": "py-dev-fastapi-settings-webhook-secret-required",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter modules with Depends() session and current-user injection, Pydantic v2 request models, SQLAlchemy 2.0 or psycopg for persistence, httpx for outbound calls and Starlette response classes",
+      "language": "python",
+      "file": "fastapi/configuration.py",
+      "kind": "safe",
+      "pairedWith": "py-dev-fastapi-settings-webhook-secret",
+      "why": "The signing secret has no default, so the application refuses to start until the environment supplies it.",
+      "helperFindings": [],
+      "falsePositives": [],
+      "unsupported": false,
+      "outOfScope": null
+    },
+    {
+      "id": "py-dev-fastapi-main-debug",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter modules with Depends() session and current-user injection, Pydantic v2 request models, SQLAlchemy 2.0 or psycopg for persistence, httpx for outbound calls and Starlette response classes",
+      "language": "python",
+      "file": "fastapi/main.py",
+      "kind": "vulnerable",
+      "category": "debug_endpoint_exposure",
+      "cwe": "CWE-489",
+      "severityBand": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "line": 8,
+      "lineRange": [
+        8,
+        8
+      ],
+      "runtimeVerifiable": true,
+      "why": "The production application object is constructed with debug=True, so unhandled errors return full tracebacks to callers.",
+      "detected": true,
+      "anyClassInRange": true,
+      "cweMatched": true,
+      "cweMatchedNear": true,
+      "creditedBy": {
+        "ruleId": "py-debug-mode",
+        "line": 8,
+        "distanceFromLine": 0
+      },
+      "severityReported": "medium",
+      "severityInBand": true,
+      "routeReported": null,
+      "alsoReported": [],
+      "misattributed": [],
+      "unsupported": false,
+      "outOfScope": null
+    },
+    {
+      "id": "py-dev-fastapi-main-debug-from-settings",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter modules with Depends() session and current-user injection, Pydantic v2 request models, SQLAlchemy 2.0 or psycopg for persistence, httpx for outbound calls and Starlette response classes",
+      "language": "python",
+      "file": "fastapi/asgi.py",
+      "kind": "safe",
+      "pairedWith": "py-dev-fastapi-main-debug",
+      "why": "Debug is read from settings whose default is False.",
+      "helperFindings": [],
+      "falsePositives": [],
+      "unsupported": false,
+      "outOfScope": null
+    },
+    {
+      "id": "py-dev-fastapi-member-removal-open",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter modules with Depends() session and current-user injection, Pydantic v2 request models, SQLAlchemy 2.0 or psycopg for persistence, httpx for outbound calls and Starlette response classes",
+      "language": "python",
+      "file": "fastapi/project_members.py",
+      "kind": "vulnerable",
+      "category": "missing_authentication",
+      "cwe": "CWE-306",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "route": "DELETE /projects/:project_id/members/:member_id",
+      "line": 32,
+      "lineRange": [
+        32,
+        33
+      ],
+      "runtimeVerifiable": true,
+      "why": "Every other route in the module requires get_current_user; the member-removal route has no dependency at all and deletes rows.",
+      "detected": true,
+      "anyClassInRange": true,
+      "cweMatched": true,
+      "cweMatchedNear": true,
+      "creditedBy": {
+        "ruleId": "py-missing-authentication",
+        "line": 32,
+        "distanceFromLine": 0
+      },
+      "severityReported": "high",
+      "severityInBand": true,
+      "routeReported": "DELETE /projects/:project_id/members/:member_id",
+      "alsoReported": [],
+      "misattributed": [],
+      "unsupported": false,
+      "outOfScope": null
+    },
+    {
+      "id": "py-dev-fastapi-member-removal-guarded",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter modules with Depends() session and current-user injection, Pydantic v2 request models, SQLAlchemy 2.0 or psycopg for persistence, httpx for outbound calls and Starlette response classes",
+      "language": "python",
+      "file": "fastapi/project_access.py",
+      "kind": "safe",
+      "pairedWith": "py-dev-fastapi-member-removal-open",
+      "why": "The removal route takes the same current-user dependency and checks project ownership like its siblings.",
+      "helperFindings": [],
+      "falsePositives": [],
+      "unsupported": false,
+      "outOfScope": null
+    },
+    {
+      "id": "py-dev-fastapi-document-unscoped",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter modules with Depends() session and current-user injection, Pydantic v2 request models, SQLAlchemy 2.0 or psycopg for persistence, httpx for outbound calls and Starlette response classes",
+      "language": "python",
+      "file": "fastapi/documents.py",
+      "kind": "vulnerable",
+      "category": "broken_object_level_authorization",
+      "cwe": "CWE-639",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "GET /documents/:document_id",
+      "line": 23,
+      "lineRange": [
+        23,
+        23
+      ],
+      "runtimeVerifiable": true,
+      "why": "The document is selected by the path id alone; the authenticated user is injected but never used to scope or check the record.",
+      "detected": true,
+      "anyClassInRange": true,
+      "cweMatched": true,
+      "cweMatchedNear": true,
+      "creditedBy": {
+        "ruleId": "py-object-level-authorization",
+        "line": 23,
+        "distanceFromLine": 0
+      },
+      "severityReported": "high",
+      "severityInBand": true,
+      "routeReported": "GET /documents/:document_id",
+      "alsoReported": [],
+      "misattributed": [],
+      "unsupported": false,
+      "outOfScope": null
+    },
+    {
+      "id": "py-dev-fastapi-document-owner-scoped",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter modules with Depends() session and current-user injection, Pydantic v2 request models, SQLAlchemy 2.0 or psycopg for persistence, httpx for outbound calls and Starlette response classes",
+      "language": "python",
+      "file": "fastapi/vault.py",
+      "kind": "safe",
+      "pairedWith": "py-dev-fastapi-document-unscoped",
+      "why": "The select includes the owner column bound to the authenticated user's id, so another user's document is simply not found.",
+      "helperFindings": [],
+      "falsePositives": [],
+      "unsupported": false,
+      "outOfScope": null
+    },
+    {
+      "id": "py-dev-fastapi-refresh-cookie-flags",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter modules with Depends() session and current-user injection, Pydantic v2 request models, SQLAlchemy 2.0 or psycopg for persistence, httpx for outbound calls and Starlette response classes",
+      "language": "python",
+      "file": "fastapi/auth_tokens.py",
+      "kind": "vulnerable",
+      "category": "insecure_cookie_configuration",
+      "cwe": "CWE-614",
+      "severityBand": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "route": "POST /auth/token",
+      "line": 17,
+      "lineRange": [
+        17,
+        17
+      ],
+      "runtimeVerifiable": true,
+      "why": "The refresh token cookie is HttpOnly but not Secure, so it is sent over plain HTTP.",
+      "detected": true,
+      "anyClassInRange": true,
+      "cweMatched": true,
+      "cweMatchedNear": true,
+      "creditedBy": {
+        "ruleId": "py-insecure-cookie",
+        "line": 17,
+        "distanceFromLine": 0
+      },
+      "severityReported": "medium",
+      "severityInBand": true,
+      "routeReported": "POST /auth/token",
+      "alsoReported": [],
+      "misattributed": [],
+      "unsupported": false,
+      "outOfScope": null
+    },
+    {
+      "id": "py-dev-fastapi-refresh-cookie-hardened",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter modules with Depends() session and current-user injection, Pydantic v2 request models, SQLAlchemy 2.0 or psycopg for persistence, httpx for outbound calls and Starlette response classes",
+      "language": "python",
+      "file": "fastapi/auth_sessions.py",
+      "kind": "safe",
+      "pairedWith": "py-dev-fastapi-refresh-cookie-flags",
+      "why": "The refresh cookie is HttpOnly, Secure and SameSite=strict.",
+      "helperFindings": [],
+      "falsePositives": [],
+      "unsupported": false,
+      "outOfScope": null
+    },
+    {
+      "id": "py-dev-fastapi-oauth-return-to",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter modules with Depends() session and current-user injection, Pydantic v2 request models, SQLAlchemy 2.0 or psycopg for persistence, httpx for outbound calls and Starlette response classes",
+      "language": "python",
+      "file": "fastapi/oauth_return.py",
+      "kind": "vulnerable",
+      "category": "open_redirect",
+      "cwe": "CWE-601",
+      "severityBand": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "route": "GET /oauth/complete",
+      "line": 14,
+      "lineRange": [
+        14,
+        14
+      ],
+      "runtimeVerifiable": true,
+      "why": "After sign-in the user is redirected to the return_to query parameter as given, which can name any external site.",
+      "detected": true,
+      "anyClassInRange": true,
+      "cweMatched": true,
+      "cweMatchedNear": true,
+      "creditedBy": {
+        "ruleId": "py-open-redirect",
+        "line": 14,
+        "distanceFromLine": 0
+      },
+      "severityReported": "medium",
+      "severityInBand": true,
+      "routeReported": "GET /oauth/complete",
+      "alsoReported": [],
+      "misattributed": [],
+      "unsupported": false,
+      "outOfScope": null
+    },
+    {
+      "id": "py-dev-fastapi-oauth-return-local",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter modules with Depends() session and current-user injection, Pydantic v2 request models, SQLAlchemy 2.0 or psycopg for persistence, httpx for outbound calls and Starlette response classes",
+      "language": "python",
+      "file": "fastapi/oauth_finish.py",
+      "kind": "safe",
+      "pairedWith": "py-dev-fastapi-oauth-return-to",
+      "why": "The return target is used only when it is a local path with no network location and no leading double slash.",
+      "helperFindings": [],
+      "falsePositives": [],
+      "unsupported": false,
+      "outOfScope": null
+    },
+    {
+      "id": "py-dev-fastapi-search-echo-html",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter modules with Depends() session and current-user injection, Pydantic v2 request models, SQLAlchemy 2.0 or psycopg for persistence, httpx for outbound calls and Starlette response classes",
+      "language": "python",
+      "file": "fastapi/help_search.py",
+      "kind": "vulnerable",
+      "category": "reflected_cross_site_scripting",
+      "cwe": "CWE-79",
+      "severityBand": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "route": "GET /help/search",
+      "line": 16,
+      "lineRange": [
+        14,
+        16
+      ],
+      "runtimeVerifiable": true,
+      "why": "The search term is placed into an HTML response built by string formatting, with no escaping.",
+      "detected": true,
+      "anyClassInRange": true,
+      "cweMatched": true,
+      "cweMatchedNear": true,
+      "creditedBy": {
+        "ruleId": "py-reflected-xss",
+        "line": 16,
+        "distanceFromLine": 0
+      },
+      "severityReported": "medium",
+      "severityInBand": true,
+      "routeReported": "GET /help/search",
+      "alsoReported": [],
+      "misattributed": [],
+      "unsupported": false,
+      "outOfScope": null
+    },
+    {
+      "id": "py-dev-fastapi-search-echo-escaped",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter modules with Depends() session and current-user injection, Pydantic v2 request models, SQLAlchemy 2.0 or psycopg for persistence, httpx for outbound calls and Starlette response classes",
+      "language": "python",
+      "file": "fastapi/help_index.py",
+      "kind": "safe",
+      "pairedWith": "py-dev-fastapi-search-echo-html",
+      "why": "The search term is passed through html.escape before it is placed in the markup.",
+      "helperFindings": [],
+      "falsePositives": [],
+      "unsupported": false,
+      "outOfScope": null
+    },
+    {
+      "id": "py-dev-flask-customer-like-concat",
+      "family": "flask",
+      "architecture": "Flask 3 blueprints and application factories with flask-login sessions, request.args/form/get_json input, sqlite3 or Flask-SQLAlchemy persistence, requests/urllib for outbound calls and Jinja2 rendering",
+      "language": "python",
+      "file": "flask/customers.py",
+      "kind": "vulnerable",
+      "category": "sql_injection",
+      "cwe": "CWE-89",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "GET /customers/search",
+      "line": 20,
+      "lineRange": [
+        20,
+        20
+      ],
+      "runtimeVerifiable": true,
+      "why": "The search term from request.args is concatenated into a LIKE literal executed by sqlite3.",
+      "detected": true,
+      "anyClassInRange": true,
+      "cweMatched": true,
+      "cweMatchedNear": true,
+      "creditedBy": {
+        "ruleId": "py-sql-injection",
+        "line": 20,
+        "distanceFromLine": 0
+      },
+      "severityReported": "critical",
+      "severityInBand": true,
+      "routeReported": "GET /customers/search",
+      "alsoReported": [],
+      "misattributed": [],
+      "unsupported": false,
+      "outOfScope": null
+    },
+    {
+      "id": "py-dev-flask-customer-like-bound",
+      "family": "flask",
+      "architecture": "Flask 3 blueprints and application factories with flask-login sessions, request.args/form/get_json input, sqlite3 or Flask-SQLAlchemy persistence, requests/urllib for outbound calls and Jinja2 rendering",
+      "language": "python",
+      "file": "flask/directory.py",
+      "kind": "safe",
+      "pairedWith": "py-dev-flask-customer-like-concat",
+      "why": "The LIKE pattern is built in Python and bound to a ? placeholder.",
+      "helperFindings": [],
+      "falsePositives": [],
+      "unsupported": false,
+      "outOfScope": null
+    },
+    {
+      "id": "py-dev-flask-report-order-by",
+      "family": "flask",
+      "architecture": "Flask 3 blueprints and application factories with flask-login sessions, request.args/form/get_json input, sqlite3 or Flask-SQLAlchemy persistence, requests/urllib for outbound calls and Jinja2 rendering",
+      "language": "python",
+      "file": "flask/reports.py",
+      "kind": "vulnerable",
+      "category": "sql_injection",
+      "cwe": "CWE-89",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "GET /reports/products",
+      "line": 19,
+      "lineRange": [
+        16,
+        19
+      ],
+      "runtimeVerifiable": true,
+      "why": "The sort column from the query string is concatenated into ORDER BY of a text() statement; ORDER BY cannot be bound, and nothing restricts the value.",
+      "detected": true,
+      "anyClassInRange": true,
+      "cweMatched": true,
+      "cweMatchedNear": true,
+      "creditedBy": {
+        "ruleId": "py-sql-injection",
+        "line": 16,
+        "distanceFromLine": 3
+      },
+      "severityReported": "critical",
+      "severityInBand": true,
+      "routeReported": "GET /reports/products",
+      "alsoReported": [],
+      "misattributed": [],
+      "unsupported": false,
+      "outOfScope": null
+    },
+    {
+      "id": "py-dev-flask-report-order-by-mapped",
+      "family": "flask",
+      "architecture": "Flask 3 blueprints and application factories with flask-login sessions, request.args/form/get_json input, sqlite3 or Flask-SQLAlchemy persistence, requests/urllib for outbound calls and Jinja2 rendering",
+      "language": "python",
+      "file": "flask/product_stats.py",
+      "kind": "safe",
+      "pairedWith": "py-dev-flask-report-order-by",
+      "why": "The caller's sort key selects a column name from a fixed dictionary; only dictionary values reach the statement.",
+      "helperFindings": [],
+      "falsePositives": [],
+      "unsupported": false,
+      "outOfScope": null
+    },
+    {
+      "id": "py-dev-flask-whois-popen",
+      "family": "flask",
+      "architecture": "Flask 3 blueprints and application factories with flask-login sessions, request.args/form/get_json input, sqlite3 or Flask-SQLAlchemy persistence, requests/urllib for outbound calls and Jinja2 rendering",
+      "language": "python",
+      "file": "flask/domain_tools.py",
+      "kind": "vulnerable",
+      "category": "command_injection",
+      "cwe": "CWE-78",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "POST /tools/whois",
+      "line": 15,
+      "lineRange": [
+        15,
+        15
+      ],
+      "runtimeVerifiable": true,
+      "why": "The domain from the form is formatted into a whois command run by os.popen, which uses a shell.",
+      "detected": true,
+      "anyClassInRange": true,
+      "cweMatched": true,
+      "cweMatchedNear": true,
+      "creditedBy": {
+        "ruleId": "py-command-injection",
+        "line": 15,
+        "distanceFromLine": 0
+      },
+      "severityReported": "critical",
+      "severityInBand": true,
+      "routeReported": "POST /tools/whois",
+      "alsoReported": [],
+      "misattributed": [],
+      "unsupported": false,
+      "outOfScope": null
+    },
+    {
+      "id": "py-dev-flask-whois-argv",
+      "family": "flask",
+      "architecture": "Flask 3 blueprints and application factories with flask-login sessions, request.args/form/get_json input, sqlite3 or Flask-SQLAlchemy persistence, requests/urllib for outbound calls and Jinja2 rendering",
+      "language": "python",
+      "file": "flask/dns_tools.py",
+      "kind": "safe",
+      "pairedWith": "py-dev-flask-whois-popen",
+      "why": "The domain must match an anchored hostname pattern and whois is run with an argument list.",
+      "helperFindings": [],
+      "falsePositives": [],
+      "unsupported": false,
+      "outOfScope": null
+    },
+    {
+      "id": "py-dev-flask-upload-download-open",
+      "family": "flask",
+      "architecture": "Flask 3 blueprints and application factories with flask-login sessions, request.args/form/get_json input, sqlite3 or Flask-SQLAlchemy persistence, requests/urllib for outbound calls and Jinja2 rendering",
+      "language": "python",
+      "file": "flask/uploads.py",
+      "kind": "vulnerable",
+      "category": "path_traversal",
+      "cwe": "CWE-22",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "GET /files/:filename",
+      "line": 15,
+      "lineRange": [
+        14,
+        15
+      ],
+      "runtimeVerifiable": true,
+      "why": "The path converter admits slashes, and the joined path is opened without a containment check.",
+      "detected": true,
+      "anyClassInRange": true,
+      "cweMatched": true,
+      "cweMatchedNear": true,
+      "creditedBy": {
+        "ruleId": "py-path-traversal",
+        "line": 15,
+        "distanceFromLine": 0
+      },
+      "severityReported": "high",
+      "severityInBand": true,
+      "routeReported": "GET /files/:filename",
+      "alsoReported": [],
+      "misattributed": [],
+      "unsupported": false,
+      "outOfScope": null
+    },
+    {
+      "id": "py-dev-flask-upload-download-directory",
+      "family": "flask",
+      "architecture": "Flask 3 blueprints and application factories with flask-login sessions, request.args/form/get_json input, sqlite3 or Flask-SQLAlchemy persistence, requests/urllib for outbound calls and Jinja2 rendering",
+      "language": "python",
+      "file": "flask/attachments.py",
+      "kind": "safe",
+      "pairedWith": "py-dev-flask-upload-download-open",
+      "why": "send_from_directory joins with werkzeug's safe_join and refuses paths that leave the directory.",
+      "helperFindings": [],
+      "falsePositives": [],
+      "unsupported": false,
+      "outOfScope": null
+    },
+    {
+      "id": "py-dev-flask-feed-urlopen",
+      "family": "flask",
+      "architecture": "Flask 3 blueprints and application factories with flask-login sessions, request.args/form/get_json input, sqlite3 or Flask-SQLAlchemy persistence, requests/urllib for outbound calls and Jinja2 rendering",
+      "language": "python",
+      "file": "flask/feeds.py",
+      "kind": "vulnerable",
+      "category": "server_side_request_forgery",
+      "cwe": "CWE-918",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "POST /feeds/preview",
+      "line": 15,
+      "lineRange": [
+        15,
+        15
+      ],
+      "runtimeVerifiable": true,
+      "why": "The feed URL posted by the caller is opened by the server with no restriction on scheme or host.",
+      "detected": true,
+      "anyClassInRange": true,
+      "cweMatched": true,
+      "cweMatchedNear": true,
+      "creditedBy": {
+        "ruleId": "py-server-side-request-forgery",
+        "line": 15,
+        "distanceFromLine": 0
+      },
+      "severityReported": "high",
+      "severityInBand": true,
+      "routeReported": "POST /feeds/preview",
+      "alsoReported": [],
+      "misattributed": [],
+      "unsupported": false,
+      "outOfScope": null
+    },
+    {
+      "id": "py-dev-flask-feed-fixed-origin",
+      "family": "flask",
+      "architecture": "Flask 3 blueprints and application factories with flask-login sessions, request.args/form/get_json input, sqlite3 or Flask-SQLAlchemy persistence, requests/urllib for outbound calls and Jinja2 rendering",
+      "language": "python",
+      "file": "flask/feed_catalog.py",
+      "kind": "safe",
+      "pairedWith": "py-dev-flask-feed-urlopen",
+      "why": "The request always goes to the fixed feed-catalogue origin; the caller only picks a path segment.",
+      "helperFindings": [],
+      "falsePositives": [],
+      "unsupported": false,
+      "outOfScope": null
+    },
+    {
+      "id": "py-dev-flask-greeting-template",
+      "family": "flask",
+      "architecture": "Flask 3 blueprints and application factories with flask-login sessions, request.args/form/get_json input, sqlite3 or Flask-SQLAlchemy persistence, requests/urllib for outbound calls and Jinja2 rendering",
+      "language": "python",
+      "file": "flask/greetings.py",
+      "kind": "vulnerable",
+      "category": "template_injection",
+      "cwe": "CWE-1336",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "GET /cards/render",
+      "line": 13,
+      "lineRange": [
+        13,
+        13
+      ],
+      "runtimeVerifiable": true,
+      "why": "The greeting from the query string is compiled as a Jinja2 Template and rendered, so template expressions in it execute.",
+      "detected": true,
+      "anyClassInRange": true,
+      "cweMatched": true,
+      "cweMatchedNear": true,
+      "creditedBy": {
+        "ruleId": "py-template-injection",
+        "line": 13,
+        "distanceFromLine": 0
+      },
+      "severityReported": "critical",
+      "severityInBand": true,
+      "routeReported": "GET /cards/render",
+      "alsoReported": [],
+      "misattributed": [],
+      "unsupported": false,
+      "outOfScope": null
+    },
+    {
+      "id": "py-dev-flask-greeting-context",
+      "family": "flask",
+      "architecture": "Flask 3 blueprints and application factories with flask-login sessions, request.args/form/get_json input, sqlite3 or Flask-SQLAlchemy persistence, requests/urllib for outbound calls and Jinja2 rendering",
+      "language": "python",
+      "file": "flask/card_render.py",
+      "kind": "safe",
+      "pairedWith": "py-dev-flask-greeting-template",
+      "why": "The template is fixed; the caller's greeting is a context variable and is autoescaped.",
+      "helperFindings": [],
+      "falsePositives": [],
+      "unsupported": false,
+      "outOfScope": null
+    },
+    {
+      "id": "py-dev-flask-pipeline-yaml-loader",
+      "family": "flask",
+      "architecture": "Flask 3 blueprints and application factories with flask-login sessions, request.args/form/get_json input, sqlite3 or Flask-SQLAlchemy persistence, requests/urllib for outbound calls and Jinja2 rendering",
+      "language": "python",
+      "file": "flask/pipelines.py",
+      "kind": "vulnerable",
+      "category": "unsafe_deserialization",
+      "cwe": "CWE-502",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "POST /pipelines/import",
+      "line": 15,
+      "lineRange": [
+        15,
+        15
+      ],
+      "runtimeVerifiable": true,
+      "why": "The request body is parsed with yaml.load and the full Loader, which can instantiate arbitrary Python objects.",
+      "detected": true,
+      "anyClassInRange": true,
+      "cweMatched": true,
+      "cweMatchedNear": true,
+      "creditedBy": {
+        "ruleId": "py-unsafe-deserialization",
+        "line": 15,
+        "distanceFromLine": 0
+      },
+      "severityReported": "critical",
+      "severityInBand": true,
+      "routeReported": "POST /pipelines/import",
+      "alsoReported": [],
+      "misattributed": [],
+      "unsupported": false,
+      "outOfScope": null
+    },
+    {
+      "id": "py-dev-flask-pipeline-safe-load",
+      "family": "flask",
+      "architecture": "Flask 3 blueprints and application factories with flask-login sessions, request.args/form/get_json input, sqlite3 or Flask-SQLAlchemy persistence, requests/urllib for outbound calls and Jinja2 rendering",
+      "language": "python",
+      "file": "flask/pipeline_specs.py",
+      "kind": "safe",
+      "pairedWith": "py-dev-flask-pipeline-yaml-loader",
+      "why": "yaml.safe_load builds only plain data types.",
+      "helperFindings": [],
+      "falsePositives": [],
+      "unsupported": false,
+      "outOfScope": null
+    },
+    {
+      "id": "py-dev-flask-factory-secret-key",
+      "family": "flask",
+      "architecture": "Flask 3 blueprints and application factories with flask-login sessions, request.args/form/get_json input, sqlite3 or Flask-SQLAlchemy persistence, requests/urllib for outbound calls and Jinja2 rendering",
+      "language": "python",
+      "file": "flask/factory.py",
+      "kind": "vulnerable",
+      "category": "hardcoded_secret",
+      "cwe": "CWE-798",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "line": 11,
+      "lineRange": [
+        11,
+        11
+      ],
+      "runtimeVerifiable": false,
+      "why": "The session signing key is a committed literal, so anyone with the source can forge session cookies.",
+      "detected": true,
+      "anyClassInRange": true,
+      "cweMatched": true,
+      "cweMatchedNear": true,
+      "creditedBy": {
+        "ruleId": "py-hardcoded-secret",
+        "line": 11,
+        "distanceFromLine": 0
+      },
+      "severityReported": "high",
+      "severityInBand": true,
+      "routeReported": null,
+      "alsoReported": [],
+      "misattributed": [],
+      "unsupported": false,
+      "outOfScope": null
+    },
+    {
+      "id": "py-dev-flask-factory-secret-env",
+      "family": "flask",
+      "architecture": "Flask 3 blueprints and application factories with flask-login sessions, request.args/form/get_json input, sqlite3 or Flask-SQLAlchemy persistence, requests/urllib for outbound calls and Jinja2 rendering",
+      "language": "python",
+      "file": "flask/bootstrap.py",
+      "kind": "safe",
+      "pairedWith": "py-dev-flask-factory-secret-key",
+      "why": "The key is read from the environment with no fallback, so a missing value stops start-up.",
+      "helperFindings": [],
+      "falsePositives": [],
+      "unsupported": false,
+      "outOfScope": null
+    },
+    {
+      "id": "py-dev-flask-run-debug",
+      "family": "flask",
+      "architecture": "Flask 3 blueprints and application factories with flask-login sessions, request.args/form/get_json input, sqlite3 or Flask-SQLAlchemy persistence, requests/urllib for outbound calls and Jinja2 rendering",
+      "language": "python",
+      "file": "flask/serve.py",
+      "kind": "vulnerable",
+      "category": "debug_endpoint_exposure",
+      "cwe": "CWE-489",
+      "severityBand": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "line": 11,
+      "lineRange": [
+        11,
+        11
+      ],
+      "runtimeVerifiable": true,
+      "why": "The service starts the Werkzeug development server with debug=True on every interface, exposing the interactive debugger.",
+      "detected": true,
+      "anyClassInRange": true,
+      "cweMatched": true,
+      "cweMatchedNear": true,
+      "creditedBy": {
+        "ruleId": "py-debug-mode",
+        "line": 11,
+        "distanceFromLine": 0
+      },
+      "severityReported": "high",
+      "severityInBand": true,
+      "routeReported": null,
+      "alsoReported": [],
+      "misattributed": [],
+      "unsupported": false,
+      "outOfScope": null
+    },
+    {
+      "id": "py-dev-flask-run-debug-env",
+      "family": "flask",
+      "architecture": "Flask 3 blueprints and application factories with flask-login sessions, request.args/form/get_json input, sqlite3 or Flask-SQLAlchemy persistence, requests/urllib for outbound calls and Jinja2 rendering",
+      "language": "python",
+      "file": "flask/runserver.py",
+      "kind": "safe",
+      "pairedWith": "py-dev-flask-run-debug",
+      "why": "Debug is enabled only when FLASK_DEBUG is explicitly set to 1.",
+      "helperFindings": [],
+      "falsePositives": [],
+      "unsupported": false,
+      "outOfScope": null
+    },
+    {
+      "id": "py-dev-flask-billing-export-open",
+      "family": "flask",
+      "architecture": "Flask 3 blueprints and application factories with flask-login sessions, request.args/form/get_json input, sqlite3 or Flask-SQLAlchemy persistence, requests/urllib for outbound calls and Jinja2 rendering",
+      "language": "python",
+      "file": "flask/billing.py",
+      "kind": "vulnerable",
+      "category": "missing_authentication",
+      "cwe": "CWE-306",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "route": "GET /billing/export",
+      "line": 27,
+      "lineRange": [
+        27,
+        28
+      ],
+      "runtimeVerifiable": true,
+      "why": "The other billing views require @login_required; the CSV export of payments has no decorator and no other check.",
+      "detected": true,
+      "anyClassInRange": true,
+      "cweMatched": true,
+      "cweMatchedNear": true,
+      "creditedBy": {
+        "ruleId": "py-missing-authentication",
+        "line": 27,
+        "distanceFromLine": 0
+      },
+      "severityReported": "medium",
+      "severityInBand": true,
+      "routeReported": "GET /billing/export",
+      "alsoReported": [],
+      "misattributed": [],
+      "unsupported": false,
+      "outOfScope": null
+    },
+    {
+      "id": "py-dev-flask-billing-export-guarded",
+      "family": "flask",
+      "architecture": "Flask 3 blueprints and application factories with flask-login sessions, request.args/form/get_json input, sqlite3 or Flask-SQLAlchemy persistence, requests/urllib for outbound calls and Jinja2 rendering",
+      "language": "python",
+      "file": "flask/billing_pages.py",
+      "kind": "safe",
+      "pairedWith": "py-dev-flask-billing-export-open",
+      "why": "The export view carries @login_required and exports only the caller's own payments.",
+      "helperFindings": [],
+      "falsePositives": [],
+      "unsupported": false,
+      "outOfScope": null
+    },
+    {
+      "id": "py-dev-flask-note-any-owner",
+      "family": "flask",
+      "architecture": "Flask 3 blueprints and application factories with flask-login sessions, request.args/form/get_json input, sqlite3 or Flask-SQLAlchemy persistence, requests/urllib for outbound calls and Jinja2 rendering",
+      "language": "python",
+      "file": "flask/notes.py",
+      "kind": "vulnerable",
+      "category": "broken_object_level_authorization",
+      "cwe": "CWE-639",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "GET /notes/:note_id",
+      "line": 14,
+      "lineRange": [
+        14,
+        14
+      ],
+      "runtimeVerifiable": true,
+      "why": "Signed-in users can read any note by id: the lookup uses the path id alone and current_user is never consulted.",
+      "detected": true,
+      "anyClassInRange": true,
+      "cweMatched": true,
+      "cweMatchedNear": true,
+      "creditedBy": {
+        "ruleId": "py-object-level-authorization",
+        "line": 14,
+        "distanceFromLine": 0
+      },
+      "severityReported": "high",
+      "severityInBand": true,
+      "routeReported": "GET /notes/:note_id",
+      "alsoReported": [],
+      "misattributed": [],
+      "unsupported": false,
+      "outOfScope": null
+    },
+    {
+      "id": "py-dev-flask-note-owner-filter",
+      "family": "flask",
+      "architecture": "Flask 3 blueprints and application factories with flask-login sessions, request.args/form/get_json input, sqlite3 or Flask-SQLAlchemy persistence, requests/urllib for outbound calls and Jinja2 rendering",
+      "language": "python",
+      "file": "flask/journal.py",
+      "kind": "safe",
+      "pairedWith": "py-dev-flask-note-any-owner",
+      "why": "The query filters on both the note id and the signed-in user's id.",
+      "helperFindings": [],
+      "falsePositives": [],
+      "unsupported": false,
+      "outOfScope": null
+    },
+    {
+      "id": "py-dev-flask-remember-cookie",
+      "family": "flask",
+      "architecture": "Flask 3 blueprints and application factories with flask-login sessions, request.args/form/get_json input, sqlite3 or Flask-SQLAlchemy persistence, requests/urllib for outbound calls and Jinja2 rendering",
+      "language": "python",
+      "file": "flask/sessions.py",
+      "kind": "vulnerable",
+      "category": "insecure_cookie_configuration",
+      "cwe": "CWE-1004",
+      "severityBand": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "route": "POST /session",
+      "line": 16,
+      "lineRange": [
+        16,
+        16
+      ],
+      "runtimeVerifiable": true,
+      "why": "The long-lived remember token is set with no HttpOnly, Secure or SameSite flag.",
+      "detected": true,
+      "anyClassInRange": true,
+      "cweMatched": true,
+      "cweMatchedNear": true,
+      "creditedBy": {
+        "ruleId": "py-insecure-cookie",
+        "line": 16,
+        "distanceFromLine": 0
+      },
+      "severityReported": "medium",
+      "severityInBand": true,
+      "routeReported": "POST /session",
+      "alsoReported": [],
+      "misattributed": [],
+      "unsupported": false,
+      "outOfScope": null
+    },
+    {
+      "id": "py-dev-flask-remember-cookie-hardened",
+      "family": "flask",
+      "architecture": "Flask 3 blueprints and application factories with flask-login sessions, request.args/form/get_json input, sqlite3 or Flask-SQLAlchemy persistence, requests/urllib for outbound calls and Jinja2 rendering",
+      "language": "python",
+      "file": "flask/signin.py",
+      "kind": "safe",
+      "pairedWith": "py-dev-flask-remember-cookie",
+      "why": "The remember token is set HttpOnly, Secure and SameSite=Lax.",
+      "helperFindings": [],
+      "falsePositives": [],
+      "unsupported": false,
+      "outOfScope": null
+    },
+    {
+      "id": "py-dev-flask-login-next",
+      "family": "flask",
+      "architecture": "Flask 3 blueprints and application factories with flask-login sessions, request.args/form/get_json input, sqlite3 or Flask-SQLAlchemy persistence, requests/urllib for outbound calls and Jinja2 rendering",
+      "language": "python",
+      "file": "flask/login.py",
+      "kind": "vulnerable",
+      "category": "open_redirect",
+      "cwe": "CWE-601",
+      "severityBand": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "route": "POST /login",
+      "line": 17,
+      "lineRange": [
+        17,
+        17
+      ],
+      "runtimeVerifiable": true,
+      "why": "After a successful sign-in the view redirects to the next parameter verbatim.",
+      "detected": true,
+      "anyClassInRange": true,
+      "cweMatched": true,
+      "cweMatchedNear": true,
+      "creditedBy": {
+        "ruleId": "py-open-redirect",
+        "line": 17,
+        "distanceFromLine": 0
+      },
+      "severityReported": "medium",
+      "severityInBand": true,
+      "routeReported": "POST /login",
+      "alsoReported": [],
+      "misattributed": [],
+      "unsupported": false,
+      "outOfScope": null
+    },
+    {
+      "id": "py-dev-flask-login-next-checked",
+      "family": "flask",
+      "architecture": "Flask 3 blueprints and application factories with flask-login sessions, request.args/form/get_json input, sqlite3 or Flask-SQLAlchemy persistence, requests/urllib for outbound calls and Jinja2 rendering",
+      "language": "python",
+      "file": "flask/signon.py",
+      "kind": "safe",
+      "pairedWith": "py-dev-flask-login-next",
+      "why": "The next target is used only after is_safe_url confirms it stays on this host.",
+      "helperFindings": [],
+      "falsePositives": [],
+      "unsupported": false,
+      "outOfScope": null
+    },
+    {
+      "id": "py-dev-flask-search-empty-state",
+      "family": "flask",
+      "architecture": "Flask 3 blueprints and application factories with flask-login sessions, request.args/form/get_json input, sqlite3 or Flask-SQLAlchemy persistence, requests/urllib for outbound calls and Jinja2 rendering",
+      "language": "python",
+      "file": "flask/search.py",
+      "kind": "vulnerable",
+      "category": "reflected_cross_site_scripting",
+      "cwe": "CWE-79",
+      "severityBand": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "route": "GET /search",
+      "line": 15,
+      "lineRange": [
+        15,
+        15
+      ],
+      "runtimeVerifiable": true,
+      "why": "The empty-state view returns an HTML string with the query concatenated in; Flask serves it as text/html.",
+      "detected": true,
+      "anyClassInRange": true,
+      "cweMatched": true,
+      "cweMatchedNear": true,
+      "creditedBy": {
+        "ruleId": "py-reflected-xss",
+        "line": 15,
+        "distanceFromLine": 0
+      },
+      "severityReported": "medium",
+      "severityInBand": true,
+      "routeReported": "GET /search",
+      "alsoReported": [],
+      "misattributed": [],
+      "unsupported": false,
+      "outOfScope": null
+    },
+    {
+      "id": "py-dev-flask-search-empty-state-escaped",
+      "family": "flask",
+      "architecture": "Flask 3 blueprints and application factories with flask-login sessions, request.args/form/get_json input, sqlite3 or Flask-SQLAlchemy persistence, requests/urllib for outbound calls and Jinja2 rendering",
+      "language": "python",
+      "file": "flask/site_search.py",
+      "kind": "safe",
+      "pairedWith": "py-dev-flask-search-empty-state",
+      "why": "The query is escaped with markupsafe.escape before being concatenated into the markup.",
+      "helperFindings": [],
+      "falsePositives": [],
+      "unsupported": false,
+      "outOfScope": null
+    }
+  ]
+}

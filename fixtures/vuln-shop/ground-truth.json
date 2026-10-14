@@ -58,7 +58,8 @@
         "critical"
       ],
       "verification": "verified",
-      "remediationTest": "cross-account order read returns 403 or 404"
+      "remediationTest": "cross-account order read returns 403 or 404",
+      "staticVisible": true
     },
     {
       "id": "GT-02",
@@ -76,7 +77,8 @@
         "critical"
       ],
       "verification": "verified",
-      "remediationTest": "non-admin request to the admin listing is refused"
+      "remediationTest": "non-admin request to the admin listing is refused",
+      "staticVisible": true
     },
     {
       "id": "GT-03",
@@ -94,7 +96,8 @@
         "critical"
       ],
       "verification": "verified",
-      "remediationTest": "search filter is parameterized and cannot alter the predicate"
+      "remediationTest": "search filter is parameterized and cannot alter the predicate",
+      "staticVisible": true
     },
     {
       "id": "GT-04",
@@ -112,7 +115,8 @@
         "medium"
       ],
       "verification": "verified",
-      "remediationTest": "import rejects a destination outside the configured allowlist"
+      "remediationTest": "import rejects a destination outside the configured allowlist",
+      "staticVisible": true
     },
     {
       "id": "GT-05",
@@ -130,7 +134,8 @@
         "critical"
       ],
       "verification": "verified",
-      "remediationTest": "traversal outside the base directory is refused"
+      "remediationTest": "traversal outside the base directory is refused",
+      "staticVisible": true
     },
     {
       "id": "GT-06",
@@ -147,7 +152,8 @@
         "medium"
       ],
       "verification": "strong_evidence",
-      "remediationTest": "no credential literal remains in source and the key is rotated"
+      "remediationTest": "no credential literal remains in source and the key is rotated",
+      "staticVisible": true
     },
     {
       "id": "GT-07",
@@ -165,7 +171,8 @@
         "medium"
       ],
       "verification": "verified",
-      "remediationTest": "quantity is validated as a positive integer"
+      "remediationTest": "quantity is validated as a positive integer",
+      "staticVisible": true
     },
     {
       "id": "GT-08",
@@ -183,7 +190,8 @@
         "high"
       ],
       "verification": "verified",
-      "remediationTest": "debug configuration route is absent or requires administrative authorization"
+      "remediationTest": "debug configuration route is absent or requires administrative authorization",
+      "staticVisible": true
     },
     {
       "id": "GT-09",
@@ -201,7 +209,8 @@
         "high"
       ],
       "verification": "verified",
-      "remediationTest": "search term is escaped before it reaches the HTML response"
+      "remediationTest": "search term is escaped before it reaches the HTML response",
+      "staticVisible": true
     },
     {
       "id": "GT-10",
@@ -219,7 +228,8 @@
         "high"
       ],
       "verification": "strong_evidence",
-      "remediationTest": "session identifiers come from a cryptographic random source"
+      "remediationTest": "session identifiers come from a cryptographic random source",
+      "staticVisible": true
     },
     {
       "id": "GT-11",
@@ -236,7 +246,8 @@
         "low"
       ],
       "verification": "needs_review",
-      "remediationTest": "dependency is upgraded past the advisory range"
+      "remediationTest": "dependency is upgraded past the advisory range",
+      "staticVisible": true
     },
     {
       "id": "GT-12",
@@ -253,11 +264,13 @@
         "medium"
       ],
       "verification": "strong_evidence",
-      "remediationTest": "handler returns a generic error and logs detail server-side"
+      "remediationTest": "handler returns a generic error and logs detail server-side",
+      "staticVisible": true
     },
     {
       "id": "GT-13",
       "category": "code_injection",
+      "verification": "strong_evidence",
       "severityBand": [
         "high",
         "critical"
@@ -269,11 +282,13 @@
           "source"
         ]
       },
-      "note": "The query helper compiles its where parameter with new Function. Distinct from GT-03: a different sink, in a different file, with a different remediation, and a strictly higher class than predicate manipulation."
+      "note": "The query helper compiles its where parameter with new Function. Distinct from GT-03: a different sink, in a different file, with a different remediation, and a strictly higher class than predicate manipulation.",
+      "staticVisible": true
     },
     {
       "id": "GT-14",
       "category": "insecure_cookie_configuration",
+      "verification": "verified",
       "severityBand": [
         "low",
         "medium"
@@ -285,7 +300,68 @@
           "source"
         ]
       },
-      "note": "The session cookie carries no HttpOnly, Secure, or SameSite. Orthogonal to GT-10, which is about token entropy. Chainable with GT-09 into session theft."
+      "note": "The session cookie carries no HttpOnly, Secure, or SameSite. Orthogonal to GT-10, which is about token entropy. Chainable with GT-09 into session theft.",
+      "staticVisible": true
+    },
+    {
+      "id": "GT-15",
+      "category": "broken_object_level_authorization",
+      "route": "GET /api/invoices/:reference",
+      "file": "src/invoices.js",
+      "staticVisible": false,
+      "whyNotStatic": "The handler authenticates and delegates; the ownership predicate belongs in invoiceByReference, one module boundary away. The static pass does not decide whether an ownership check is missing across a module boundary, and states its limits in its own coverage output.",
+      "minimumEvidence": {
+        "count": 1,
+        "kinds": [
+          "identity_differential"
+        ]
+      },
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "verification": "verified",
+      "remediationTest": "a customer requesting another customer's invoice reference is refused"
+    },
+    {
+      "id": "GT-16",
+      "category": "account_enumeration",
+      "route": "POST /api/password-reset",
+      "file": "src/server.js",
+      "staticVisible": false,
+      "whyNotStatic": "Every line reads correctly. The defect is the pair of outcomes \u2014 404 for an unknown address, 200 for a known one \u2014 and no rule in the engine models a response that differs by account existence.",
+      "minimumEvidence": {
+        "count": 1,
+        "kinds": [
+          "runtime"
+        ]
+      },
+      "severityBand": [
+        "low",
+        "medium"
+      ],
+      "verification": "verified",
+      "remediationTest": "the same response is returned whether or not the address has an account"
+    },
+    {
+      "id": "GT-17",
+      "category": "replayable_promotion_redemption",
+      "route": "POST /api/promotions/redeem",
+      "file": "src/invoices.js",
+      "staticVisible": false,
+      "whyNotStatic": "Redemption is never recorded, so the code applies again on every request. The code is correct line by line; the flaw is the absence of an idempotency record, which is only visible by doing it twice.",
+      "minimumEvidence": {
+        "count": 1,
+        "kinds": [
+          "runtime"
+        ]
+      },
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "verification": "verified",
+      "remediationTest": "redeeming the same code twice changes the total once"
     }
   ]
 }

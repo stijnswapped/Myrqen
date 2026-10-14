@@ -1,4 +1,6 @@
 import ts from "typescript";
+
+import { IDENTITY_EVIDENCE } from "./records-origin.js";
 import {
   calleeName,
   calleeTail,
@@ -11,15 +13,7 @@ import {
 } from "../ast/helpers.js";
 import { lineOf, type ParsedFile } from "../ast/parse.js";
 import { analyzeFunction, functionsIn, resolveExpression, rootOf, taintOrigin, type TaintScope } from "../ast/taint.js";
-import {
-  describeSink,
-  locationOf,
-  sourceEvidence,
-  taintEvidence,
-  type Rule,
-  type RouteHint,
-  type RuleContext
-} from "./context.js";
+import { describeSink, formatRoute, locationOf, sourceEvidence, taintEvidence, type RouteHint, type Rule, type RuleContext } from "./context.js";
 
 /**
  * The application's perimeter: what it reads, writes, fetches and redirects to,
@@ -179,9 +173,53 @@ function localFunction(file: ParsedFile, name: string): ts.Node | undefined {
  * `resolveWithinRoot(root, prefix, name)`, `resolveProvider(url)`. Reading the
  * helper is the difference between agreeing with correct code and shouting at it.
  */
-function producingHelper(file: ParsedFile, expression: ts.Node, scope: TaintScope): ts.Node | undefined {
+function producingHelper(file: ParsedFile, expression: ts.Node, scope: TaintScope, depth = 0): ts.Node | undefined {
+  if (depth > 3) return undefined;
   const resolved = peel(resolveExpression(peel(expression), scope));
+
+  /*
+   * `previewTarget(raw)` returns a URL; the fetch is given `target.toString()`.
+   * Rendering a validated object back to a string is not a step away from the
+   * helper that validated it, so the search continues through the renderer
+   * rather than stopping at it — otherwise the correctly written form is the one
+   * the rule reports, because the sloppy version passes the string straight
+   * through and this one does not.
+   */
+  if (ts.isPropertyAccessExpression(resolved) && (resolved.name.text === "href" || resolved.name.text === "pathname")) {
+    return producingHelper(file, resolved.expression, scope, depth + 1);
+  }
+
+  /*
+   * `const target = raw ? previewTarget(raw) : null` — the helper sits inside a
+   * conditional, and the branch that is not the helper is the one the caller
+   * already refuses. Either branch may carry it, so both are tried.
+   */
+  if (ts.isConditionalExpression(resolved)) {
+    return (
+      producingHelper(file, resolved.whenTrue, scope, depth + 1) ??
+      producingHelper(file, resolved.whenFalse, scope, depth + 1)
+    );
+  }
+  if (ts.isBinaryExpression(resolved) && resolved.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken) {
+    return (
+      producingHelper(file, resolved.left, scope, depth + 1) ??
+      producingHelper(file, resolved.right, scope, depth + 1)
+    );
+  }
+
   if (!ts.isCallExpression(resolved)) return undefined;
+
+  if (
+    ts.isPropertyAccessExpression(resolved.expression) &&
+    resolved.expression.name.text === "toString" &&
+    resolved.arguments.length === 0
+  ) {
+    return producingHelper(file, resolved.expression.expression, scope, depth + 1);
+  }
+  if (ts.isIdentifier(resolved.expression) && resolved.expression.text === "String" && resolved.arguments[0]) {
+    return producingHelper(file, resolved.arguments[0], scope, depth + 1);
+  }
+
   if (ts.isIdentifier(resolved.expression)) return localFunction(file, resolved.expression.text);
   if (
     ts.isPropertyAccessExpression(resolved.expression) &&
@@ -261,6 +299,40 @@ function branchStops(statement: ts.Node): boolean {
     }
   });
   return stops;
+}
+
+/** Does one node sit inside another? */
+function containsNode(container: ts.Node, node: ts.Node): boolean {
+  return node.getStart() >= container.getStart() && node.getEnd() <= container.getEnd();
+}
+
+/**
+ * Does this check decide whether the code after it runs?
+ *
+ * `if (!ALLOWED.has(parsed.hostname)) { log("not on the list"); }` reads exactly
+ * like the correct guard and defends nothing: execution leaves the block and
+ * reaches the sink with the caller's own value. A comparison only constrains
+ * something when failing it stops the handler, or when the sink itself sits
+ * inside the branch the comparison permits — so it is the shape of the branch,
+ * and not the presence of the comparison, that the rule has to read.
+ */
+function checkDecidesFlow(check: ts.Node, region: ts.Node, sink: ts.Node | undefined): boolean {
+  let current: ts.Node | undefined = check.parent;
+  while (current && current !== region.parent) {
+    if (ts.isIfStatement(current) && containsNode(current.expression, check)) {
+      if (branchStops(current.thenStatement)) return true;
+      if (current.elseStatement && branchStops(current.elseStatement)) return true;
+      return sink !== undefined && containsNode(current, sink);
+    }
+    if (ts.isConditionalExpression(current) && containsNode(current.condition, check)) {
+      return sink !== undefined && containsNode(current, sink);
+    }
+    current = current.parent;
+  }
+  // Not written as a condition at all: a table lookup whose miss yields undefined,
+  // or a helper whose return value is the checked one. Those constrain by
+  // construction rather than by branching, so there is no branch to inspect.
+  return true;
 }
 
 /** Conditions that gate a node, from the innermost outwards. */
@@ -428,9 +500,19 @@ function perimeterRoutes(context: RuleContext): RouteHint[] {
   return sorted;
 }
 
-/** `/tickets/:filename{.+}` is the same route a reader calls `/tickets/:filename`. */
+/**
+ * `/tickets/:filename{.+}` is the same route a reader calls `/tickets/:filename`.
+ *
+ * Only when the brace group is *attached* to the token before it, which is what makes
+ * it a constraint. A group standing as its own segment is Hapi's parameter syntax —
+ * `/api/notes/{noteId}` — and stripping it left `/api/notes/`, an address matching no
+ * route and greppable for nothing. Mirrors `normalizePath` in `ast/routes.ts`; both
+ * exist because the two stages resolve routes independently.
+ */
 function normalizePath(path: string): string {
-  return path.replace(/\{[^}]*\}/g, "");
+  // A capture group, not a lookbehind: see the note in `ast/routes.ts`. The
+  // lookbehind form cost more than half the scan time of a large file.
+  return path.replace(/([^/\s])\s*\{[^}]*\}/g, "$1");
 }
 
 /**
@@ -467,7 +549,7 @@ function routeOf(context: RuleContext, node: ts.Node): string | undefined {
   };
 
   const best = nearest(hints.filter((hint) => !isMount(hint))) ?? nearest(hints);
-  if (best) return best.method === "ANY" ? best.path : `${best.method} ${best.path}`;
+  if (best) return formatRoute(best.method, best.path);
 
   // A resolver map is reached through the GraphQL endpoint rather than through a
   // route of its own, and saying nothing is less true than saying that.
@@ -642,6 +724,151 @@ function regexSource(file: ParsedFile, node: ts.Node): string | null {
   return null;
 }
 
+/** Properties of a URL object that decide which site it points at. */
+const ORIGIN_PROPERTIES = /^(href|host|hostname|origin|protocol|port|username|password)$/;
+
+/**
+ * The value a destination ultimately is, past the accessors that only render it.
+ *
+ * `authorize.toString()` and `authorize.href` *are* the URL that was built rather
+ * than a new value derived from it, so the question "what fixed this origin" has
+ * to be asked of the binding behind them.
+ */
+function renderedValueOf(expression: ts.Node, scope: TaintScope): ts.Node {
+  let current = peel(resolveExpression(peel(expression), scope));
+  for (let depth = 0; depth < 4; depth += 1) {
+    if (ts.isCallExpression(current) && ts.isPropertyAccessExpression(current.expression)) {
+      const tail = calleeTail(current);
+      if (tail === "toString" || tail === "toJSON") {
+        current = peel(resolveExpression(peel(current.expression.expression), scope));
+        continue;
+      }
+    }
+    if (ts.isPropertyAccessExpression(current) && current.name.text === "href") {
+      current = peel(resolveExpression(peel(current.expression), scope));
+      continue;
+    }
+    break;
+  }
+  return current;
+}
+
+/** Was this URL binding re-pointed at another site after it was built? */
+function originReassigned(fn: ts.Node, name: string): boolean {
+  let reassigned = false;
+  walk(fn, (node) => {
+    if (reassigned) return;
+    if (!ts.isBinaryExpression(node) || node.operatorToken.kind !== ts.SyntaxKind.EqualsToken) return;
+    if (ts.isIdentifier(node.left) && node.left.text === name) reassigned = true;
+    if (
+      ts.isPropertyAccessExpression(node.left) &&
+      rootOf(node.left) === name &&
+      ORIGIN_PROPERTIES.test(node.left.name.text)
+    ) {
+      reassigned = true;
+    }
+  });
+  return reassigned;
+}
+
+/**
+ * Is this destination a URL whose origin was fixed when it was constructed?
+ *
+ * `new URL("https://idp.example/oauth/authorize")` decides scheme and host at
+ * construction, and the `searchParams.set(...)` calls that follow write only the
+ * query — a query string cannot move the browser to another site. Taint tracking
+ * has to treat a receiver that accumulates caller data as tainted, which makes
+ * the redirect to the identity provider, the correct half of every OAuth flow,
+ * look caller-chosen. Reading how the URL was built is what tells the two apart,
+ * so the check refuses a binding that anything later re-points.
+ */
+function urlOriginFixedAtConstruction(fn: ts.Node, expression: ts.Node, scope: TaintScope): boolean {
+  const value = renderedValueOf(expression, scope);
+  if (!ts.isNewExpression(value) || expressionName(value.expression) !== "URL") return false;
+  const first = value.arguments?.[0];
+  // With a base argument the reference decides whether the origin holds, which is
+  // a different question; here only a self-contained absolute URL counts.
+  if (value.arguments && value.arguments.length > 1) return false;
+  if (!first || !isConstantString(first)) return false;
+  if (!/^https?:\/\/[^/\s]+/.test(literalTextOf(peel(first)) ?? "")) return false;
+  const binding = rootOf(peel(expression));
+  return binding === null || !originReassigned(fn, binding);
+}
+
+/** Response statuses whose Location header moves the browser. */
+const REDIRECT_STATUSES = new Set(["301", "302", "303", "307", "308"]);
+
+const LOCATION_HEADER = /^location$/i;
+
+/** The name a header map or an options object gives a property, quotes removed. */
+function propertyKey(file: ParsedFile, property: ts.PropertyAssignment): string {
+  return property.name.getText(file.source).replace(/["'`]/g, "");
+}
+
+/** The `location` entry of a header map written as an object literal. */
+function locationHeaderOf(file: ParsedFile, headers: ts.Expression): ts.Expression | undefined {
+  const node = peel(headers);
+  if (!ts.isObjectLiteralExpression(node)) return undefined;
+  for (const property of node.properties) {
+    if (!ts.isPropertyAssignment(property)) continue;
+    if (LOCATION_HEADER.test(propertyKey(file, property))) return property.initializer;
+  }
+  return undefined;
+}
+
+/**
+ * A redirect written as a response rather than as a call.
+ *
+ * Outside Express there is no `res.redirect`: an edge worker, a fetch handler and
+ * a web-platform route all move the browser by returning a 3xx response with a
+ * Location header. It is the same defect in a different spelling, and a rule that
+ * only knows the method call is blind to it in every runtime that builds its own
+ * response — which is most of them.
+ */
+function responseRedirectDestination(file: ParsedFile, node: ts.Node): ts.Expression | undefined {
+  if (!ts.isNewExpression(node) || expressionName(node.expression) !== "Response") return undefined;
+  const init = node.arguments?.[1] ? peel(node.arguments[1]!) : undefined;
+  if (!init || !ts.isObjectLiteralExpression(init)) return undefined;
+
+  let redirects = false;
+  let location: ts.Expression | undefined;
+  for (const property of init.properties) {
+    if (!ts.isPropertyAssignment(property)) continue;
+    const key = propertyKey(file, property);
+    if (key === "status" && REDIRECT_STATUSES.has(peel(property.initializer).getText(file.source))) redirects = true;
+    if (key === "headers") location = locationHeaderOf(file, property.initializer);
+  }
+  // Without a 3xx status the Location header is inert, and without the header the
+  // status moves nothing; only the pair is a redirect.
+  return redirects ? location : undefined;
+}
+
+interface RedirectSite {
+  /** The node the finding is reported at. */
+  node: ts.Node;
+  /** The value that decides where the browser ends up. */
+  destination: ts.Expression;
+  /** How the sink is named in the finding's own prose. */
+  sink: string;
+}
+
+/** Every place this function sends the browser somewhere. */
+function redirectSites(file: ParsedFile, fn: ts.Node): RedirectSite[] {
+  const sites: RedirectSite[] = [];
+  walk(fn, (node) => {
+    if (ts.isCallExpression(node) && REDIRECT_TAILS.has(calleeTail(node))) {
+      const first = node.arguments[0];
+      if (first) sites.push({ node, destination: redirectDestination(first), sink: describeSink(node) });
+      return;
+    }
+    const location = responseRedirectDestination(file, node);
+    if (location) {
+      sites.push({ node, destination: redirectDestination(location), sink: "the Location header of a 3xx response" });
+    }
+  });
+  return sites;
+}
+
 export const redirectDestinationUnvalidated: Rule = {
   id: "perimeter-open-redirect",
   category: "open_redirect",
@@ -653,14 +880,12 @@ export const redirectDestinationUnvalidated: Rule = {
     for (const fn of handlersIn(context.file)) {
       const scope = scopeFor(context.file, fn);
 
-      for (const call of collect(fn, ts.isCallExpression)) {
-        if (!REDIRECT_TAILS.has(calleeTail(call))) continue;
-        const first = call.arguments[0];
-        if (!first) continue;
-
-        const destination = redirectDestination(first);
+      for (const site of redirectSites(context.file, fn)) {
+        const call = site.node;
+        const destination = site.destination;
         if (isConstantString(destination)) continue;
         if (hasSameSitePrefix(destination)) continue;
+        if (urlOriginFixedAtConstruction(fn, destination, scope)) continue;
 
         const origin = taintOrigin(destination, scope);
         if (!origin) continue;
@@ -686,8 +911,8 @@ export const redirectDestinationUnvalidated: Rule = {
           severity: "medium",
           verification: "strong_evidence",
           summary: weak
-            ? `The destination passed to ${describeSink(call)} comes from ${origin} and the only check on it is a leading-slash test. A value beginning with two slashes is a protocol-relative URL: it passes that test and still sends the browser to another origin.`
-            : `The destination passed to ${describeSink(call)} comes from ${origin}. Nothing between the read and the redirect requires it to be a path on this site — no allowlist, no single-leading-slash test, and no comparison of the resolved origin against this application's own.`,
+            ? `The destination given to ${site.sink} comes from ${origin} and the only check on it is a leading-slash test. A value beginning with two slashes is a protocol-relative URL: it passes that test and still sends the browser to another origin.`
+            : `The destination given to ${site.sink} comes from ${origin}. Nothing between the read and the redirect requires it to be a path on this site — no allowlist, no single-leading-slash test, and no comparison of the resolved origin against this application's own.`,
           impact:
             "A link on this application's own domain sends the visitor to a site the attacker controls. Placed at the end of a sign-in flow it is a credential-phishing primitive of unusual quality, because the hop happens from the origin the victim has just trusted with a password.",
           remediation:
@@ -699,11 +924,11 @@ export const redirectDestinationUnvalidated: Rule = {
           ...withRoute(context, call),
           evidence: [
             sourceEvidence(context, call, "The redirect target is derived from caller input."),
-            taintEvidence(origin, describeSink(call))
+            taintEvidence(origin, site.sink)
           ],
           reasoning: weak
-            ? `Taint from ${origin} reaches ${describeSink(call)}; the only guard found on its root binding is startsWith("/"), which a protocol-relative URL satisfies.`
-            : `Taint from ${origin} reaches ${describeSink(call)}; no allowlist, leading-slash-plus-double-slash test, or resolved-origin comparison was found on its root binding or in the helper that produced it.`
+            ? `Taint from ${origin} reaches ${site.sink}; the only guard found on its root binding is startsWith("/"), which a protocol-relative URL satisfies.`
+            : `Taint from ${origin} reaches ${site.sink}; no allowlist, leading-slash-plus-double-slash test, or resolved-origin comparison was found on its root binding or in the helper that produced it.`
         });
       }
     }
@@ -745,6 +970,7 @@ const PATH_SINKS = new Map<string, number[]>([
   ["sendFile", [0]],
   ["download", [0]]
 ]);
+
 
 const PATH_JOINERS = new Set(["join", "resolve", "normalize"]);
 
@@ -827,7 +1053,32 @@ function segmentIsContained(
       return segmentIsContained(context, fn, node.expression.expression, scope, depth + 1);
     }
     const helper = producingHelper(context.file, node, scope);
-    if (helper && (helperContainsPaths(helper) || returnsOnlyFixedValues(context.file, helper))) return true;
+    if (
+      helper &&
+      (helperContainsPaths(helper) ||
+        helperPinsParameters(context.file, helper) ||
+        returnsOnlyFixedValues(context.file, helper))
+    ) {
+      return true;
+    }
+
+    /*
+     * A path built inside a function is confined when every tainted argument is confined.
+     *
+     * Without this the guard is lost the moment the join moves into a helper: the finding
+     * lands at the call site, on the binding the call produced — a fresh name no guard ever
+     * touched — and the rule answers "not contained" for a value that was validated one line
+     * earlier. Extracting path resolution into a confining helper is the single most
+     * recommended fix for traversal, so the engine reported the advice it gives.
+     *
+     * A helper cannot invent a traversal out of constrained inputs. If it does, that is a
+     * defect in the helper and belongs to the helper's own case, reported where the unsafe
+     * join actually is rather than at every call site that passes a validated string.
+     */
+    const carried = node.arguments.filter((argument) => taintOrigin(argument, scope) !== null);
+    if (carried.length > 0) {
+      return carried.every((argument) => segmentIsContained(context, fn, argument, scope, depth + 1));
+    }
   }
 
   // A multipart parser chose this path, not the caller: the client controls the
@@ -841,6 +1092,7 @@ function segmentIsContained(
     const root = node.text;
     if (scope.containmentChecked.has(root) || scope.allowlisted.has(root) || scope.cleared.has(root)) return true;
     if (hasCharsetGuard(context.file, fn, root)) return true;
+    if (establishedByAuthentication(context, scope, root)) return true;
 
     const initializer = scope.initializers.get(root);
     if (!initializer) return false;
@@ -861,6 +1113,47 @@ function segmentIsContained(
   return false;
 }
 
+/**
+ * Was this binding produced by the call that establishes who is asking?
+ *
+ * `const { tenantId } = requireTenant(req)` reads the tenant off `req.user`, which the
+ * authentication layer sets and no client can supply. The taint model treats everything
+ * reachable from `req` as caller-controlled — right by default, and wrong here — so the
+ * tenant read as attacker-chosen and a correctly scoped download became the reported defect.
+ * That is the worst way for this rule to be wrong: a confident finding on code doing the
+ * right thing.
+ *
+ * `IDENTITY_EVIDENCE` is the vocabulary the ownership rules already use for this exact
+ * question, and it already lists the call. Reused rather than reinvented, and general rather
+ * than shaped to one case — a list of identity-establishing calls applied uniformly.
+ *
+ * Deliberately narrow: only a binding whose own declaration *is* that call. A value merely
+ * derived from the subject further down is not covered, because widening this is how a rule
+ * stops seeing paths that really are attacker-chosen.
+ */
+function establishedByAuthentication(context: RuleContext, scope: TaintScope, root: string): boolean {
+  const declaration = scope.roots.get(root)?.declaration;
+  if (!declaration || !ts.isVariableDeclaration(declaration) || !declaration.initializer) return false;
+  const initializer = peel(declaration.initializer);
+  const call = ts.isAwaitExpression(initializer) ? peel(initializer.expression) : initializer;
+  if (!ts.isCallExpression(call)) return false;
+  const callee = ts.isPropertyAccessExpression(call.expression) ? call.expression.name.text : call.expression;
+  const name = typeof callee === "string" ? callee : ts.isIdentifier(callee) ? callee.text : null;
+  if (name === null) return false;
+
+  /*
+   * The shape answer first: this call was traced, in the file that defines it, to a return
+   * built only from server-owned properties of its own parameters. That holds whatever the
+   * function is called.
+   *
+   * `IDENTITY_EVIDENCE` stays as a fallback for the calls the index cannot reach — a helper
+   * in a file the scan did not parse, or one re-exported through a chain. It is the narrower
+   * answer, because it only ever knows the names on its list.
+   */
+  if (context.serverOwnedCalls?.has(name)) return true;
+  return IDENTITY_EVIDENCE.test(name);
+}
+
 /** Does this helper resolve a path and confine it, or reduce it to a basename? */
 function helperContainsPaths(helper: ts.Node): boolean {
   let reducesToBasename = false;
@@ -877,6 +1170,164 @@ function helperContainsPaths(helper: ts.Node): boolean {
 }
 
 /**
+ * Regular-expression escapes that cannot stand for a path separator.
+ *
+ * `\.` is a dot and `\w` is a word character; neither can be a slash. An escape
+ * outside this list — a code point, a back-reference, `\S`, `\W`, `\D` — either is
+ * a separator or can match one, and an escape the rule cannot read has to count
+ * against the guard rather than for it.
+ */
+const SEPARATOR_FREE_ESCAPES = /^[dwsbBnrtfv.^$*+?()[\]{}|\-]$/;
+
+/**
+ * Can a value matching this pattern carry a path separator?
+ *
+ * The question is not whether the source text contains a slash or a backslash.
+ * `^[A-Za-z0-9_-]{1,64}\.csv$` contains a backslash and matches only a dot, so
+ * reading the text rejects an entirely correct guard and the route it protects
+ * gets reported. What decides containment is which characters the pattern can
+ * match, so the pattern has to be read as a pattern.
+ */
+function patternAdmitsSeparator(source: string): boolean {
+  let index = 0;
+  while (index < source.length) {
+    const char = source[index];
+    if (char === "\\") {
+      const escaped = source[index + 1];
+      if (escaped === undefined || !SEPARATOR_FREE_ESCAPES.test(escaped)) return true;
+      index += 2;
+      continue;
+    }
+    // An unescaped dot matches every character but a line break, separators
+    // included, which is what makes `.` and `.*` worthless in a containment guard.
+    if (char === "/" || char === ".") return true;
+    if (char === "[") {
+      const end = characterClassEnd(source, index);
+      if (end === -1) return true;
+      if (classAdmitsSeparator(source.slice(index + 1, end))) return true;
+      index = end + 1;
+      continue;
+    }
+    index += 1;
+  }
+  return false;
+}
+
+/** The index of the `]` that closes the character class opening at `start`. */
+function characterClassEnd(source: string, start: number): number {
+  let index = start + 1;
+  if (source[index] === "^") index += 1;
+  // A `]` written first in a class is a literal bracket, not the terminator.
+  if (source[index] === "]") index += 1;
+  while (index < source.length) {
+    if (source[index] === "\\") {
+      index += 2;
+      continue;
+    }
+    if (source[index] === "]") return index;
+    index += 1;
+  }
+  return -1;
+}
+
+/** Does this character class body match `/` or `\`? */
+function classAdmitsSeparator(body: string): boolean {
+  const negated = body.startsWith("^");
+  const members = negated ? body.slice(1) : body;
+
+  const matches = (code: number): boolean => {
+    let index = 0;
+    while (index < members.length) {
+      if (members[index] === "\\") {
+        const escaped = members[index + 1];
+        if (escaped === undefined) return true;
+        if (escaped === "/" || escaped === "\\") {
+          if (code === escaped.charCodeAt(0)) return true;
+        } else if (!SEPARATOR_FREE_ESCAPES.test(escaped)) {
+          return true;
+        }
+        index += 2;
+        continue;
+      }
+      const first = members.charCodeAt(index);
+      if (members[index + 1] === "-" && index + 2 < members.length) {
+        if (code >= first && code <= members.charCodeAt(index + 2)) return true;
+        index += 3;
+        continue;
+      }
+      if (code === first) return true;
+      index += 1;
+    }
+    return false;
+  };
+
+  const slash = matches("/".charCodeAt(0));
+  const backslash = matches("\\".charCodeAt(0));
+  // A negated class admits everything it does not list, so it carries a separator
+  // unless it excludes both spellings of one.
+  return negated ? !(slash && backslash) : slash || backslash;
+}
+
+/**
+ * Does an anchored pattern hold a value to one name inside its directory?
+ *
+ * Two things take a joined value out of the base directory: a separator, and a
+ * parent-directory hop written without one. The first is answered by reading the
+ * pattern; the second by asking the pattern itself whether it accepts `..`, which
+ * is exact and needs no reasoning about what the character classes contain.
+ */
+function patternConfinesToOneSegment(source: string): boolean {
+  if (patternAdmitsSeparator(source)) return false;
+  try {
+    return !new RegExp(source).test("..");
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The binding a guard is really testing, past the coercions written around it.
+ *
+ * `PATTERN.test(String(id))` and `PATTERN.test(id.trim())` test exactly the value
+ * that is about to be joined onto the base directory. Reading only the outermost
+ * expression finds `String` where the subject is `id`, and a correct validation
+ * then counts for nothing.
+ */
+function guardSubjectRoot(expression: ts.Node, depth = 0): string | null {
+  const node = peel(expression);
+  if (depth < 4 && ts.isCallExpression(node)) {
+    const tail = calleeTail(node);
+    const first = node.arguments[0];
+    // A free coercion takes the value as its argument, a method as its receiver.
+    if (first && ts.isIdentifier(node.expression) && (tail === "String" || SEPARATOR_SAFE_METHODS.has(tail))) {
+      return guardSubjectRoot(first, depth + 1);
+    }
+    if (SEPARATOR_SAFE_METHODS.has(tail) && ts.isPropertyAccessExpression(node.expression)) {
+      return guardSubjectRoot(node.expression.expression, depth + 1);
+    }
+  }
+  return rootOf(node);
+}
+
+/**
+ * Does this helper refuse anything its callers could use to leave the base
+ * directory?
+ *
+ * A directory resolver is normally written once and reused: `libraryDir(id)`
+ * rejects an id that is not an anchored slug and only then joins it onto the
+ * root, so the value handed back could never have carried a separator. The guard
+ * lives in the helper rather than at the sink, and a check that reads only the
+ * calling function sees a composed path with no validation anywhere near it.
+ */
+function helperPinsParameters(file: ParsedFile, helper: ts.Node): boolean {
+  const parameters = [...parameterNames(helper)];
+  if (parameters.length === 0) return false;
+  // Every parameter, not merely one: an unpinned parameter is a way in, and the
+  // rule cannot tell from here which of them reaches the join.
+  return parameters.every((name) => hasCharsetGuard(file, helper, name));
+}
+
+/**
  * A terminating guard that pins a value to a character set with no separators.
  *
  * `if (!LABEL_PATTERN.test(label)) return res.status(400)...` where the pattern is
@@ -884,6 +1335,38 @@ function helperContainsPaths(helper: ts.Node): boolean {
  * cannot contain a slash, a backslash, or a dot. Treating it as no defence at all
  * is how a scanner ends up reporting a correctly written export route.
  */
+/**
+ * Does this condition reject a parent-directory hop outright?
+ *
+ * Only `||` disjuncts count, and only in a condition that stops the handler: in
+ * `if (!PATTERN.test(leaf) || leaf.includes("..")) return`, either disjunct being true ends
+ * the request, so the `includes` closes the parent-segment hole on its own. Under `&&` it
+ * would close nothing, because the handler continues whenever the other side is false.
+ */
+function conditionRejectsParent(condition: ts.Node, name: string): boolean {
+  const disjuncts: ts.Node[] = [];
+  const flatten = (node: ts.Node): void => {
+    const inner = peel(node);
+    if (ts.isBinaryExpression(inner) && inner.operatorToken.kind === ts.SyntaxKind.BarBarToken) {
+      flatten(inner.left);
+      flatten(inner.right);
+      return;
+    }
+    disjuncts.push(inner);
+  };
+  flatten(condition);
+
+  return disjuncts.some((disjunct) => {
+    if (!ts.isCallExpression(disjunct)) return false;
+    const tail = calleeTail(disjunct);
+    if (tail !== "includes" && tail !== "startsWith" && tail !== "indexOf") return false;
+    if (!ts.isPropertyAccessExpression(disjunct.expression)) return false;
+    if (guardSubjectRoot(disjunct.expression.expression) !== name) return false;
+    const argument = disjunct.arguments[0];
+    return Boolean(argument && ts.isStringLiteral(argument) && argument.text.includes(".."));
+  });
+}
+
 function hasCharsetGuard(file: ParsedFile, fn: ts.Node, name: string): boolean {
   let guarded = false;
   walk(fn, (node) => {
@@ -895,13 +1378,23 @@ function hasCharsetGuard(file: ParsedFile, fn: ts.Node, name: string): boolean {
       if (!ts.isCallExpression(inner)) return;
       if (calleeTail(inner) !== "test" || !ts.isPropertyAccessExpression(inner.expression)) return;
       const argument = inner.arguments[0];
-      if (!argument || rootOf(argument) !== name) return;
+      if (!argument || guardSubjectRoot(argument) !== name) return;
       const source = regexSource(file, inner.expression.expression);
       if (!source) return;
+      // The pattern has to be anchored at both ends *and* unable to express a
+      // separator or a parent-directory hop; an unanchored pattern says only that
+      // the value contains something acceptable, not that it is nothing else.
       if (!source.startsWith("^") || !source.endsWith("$")) return;
-      // The pattern has to be anchored *and* unable to express a separator or a
-      // parent-directory hop. A `.` or a `.*` in it makes it worthless here.
-      if (/\\?[/\\]|\.\*|\.\+|\[\^/.test(source)) return;
+      /*
+       * The pattern alone is enough when it can express neither a separator nor a parent hop.
+       * When it merely excludes separators — which any character class containing `.` does —
+       * the condition beside it has to close the `..` hole explicitly. Reading the regex on
+       * its own discards half of a guard that is sound as a whole.
+       */
+      if (!patternConfinesToOneSegment(source)) {
+        if (patternAdmitsSeparator(source)) return;
+        if (!conditionRejectsParent(node.expression, name)) return;
+      }
       guarded = true;
     });
   });
@@ -936,11 +1429,17 @@ export const filesystemPathTraversal: Rule = {
           if (root && (scope.containmentChecked.has(root) || scope.allowlisted.has(root))) continue;
 
           const helper = producingHelper(context.file, argument, scope);
-          if (helper && helperContainsPaths(helper)) continue;
+          if (helper && (helperContainsPaths(helper) || helperPinsParameters(context.file, helper))) continue;
 
           const segments = pathSegments(argument, scope).filter((segment) => taintOrigin(segment, scope) !== null);
           const escaping = segments.filter((segment) => !segmentIsContained(context, fn, segment, scope));
-          if (segments.length > 0 && escaping.length === 0) continue;
+          // Nothing caller-supplied survives the decomposition: every part of the
+          // path is either the application's own or one a guard already reduced to
+          // a bare name. A binding can still carry taint from a read that a later
+          // check narrowed to a single property, and reporting on that alone is a
+          // claim about a segment the rule cannot name — which is the shape of an
+          // accusation a reader cannot check.
+          if (escaping.length === 0) continue;
           if (reported.has(lineOf(context.file, call))) continue;
           reported.add(lineOf(context.file, call));
 
@@ -963,7 +1462,7 @@ export const filesystemPathTraversal: Rule = {
             verificationPlan:
               "Request the same route with a segment of `../../etc/passwd`, then with its URL-encoded and double-encoded forms, and confirm each is refused with no file contents and no difference in timing that reveals whether the path exists.",
             taxonomy: ["CWE-22", "CWE-23", "OWASP-A01"],
-            location: locationOf(context, call),
+            location: locationOf(context, pathCompositionSite(argument, scope) ?? call),
             ...withRoute(context, call),
             evidence: [
               sourceEvidence(context, call, `${name} receives a path built from caller input with no containment check.`),
@@ -981,6 +1480,27 @@ export const filesystemPathTraversal: Rule = {
 function joinerUsedFor(argument: ts.Node, scope: TaintScope): string | null {
   const resolved = peel(resolveExpression(peel(argument), scope));
   if (ts.isCallExpression(resolved) && PATH_JOINERS.has(calleeTail(resolved))) return `${calleeName(resolved)}()`;
+  return null;
+}
+
+/**
+ * Where the caller's segment was accepted, which is where the fix goes.
+ *
+ * `createReadStream(absolute)` is the read. There is nothing to change on that
+ * line: `absolute` is already wrong by the time it arrives. The defect, and the
+ * remediation, are at the join that accepted a caller-supplied segment without
+ * confining it —
+ *
+ *     const absolute = path.join(bundleRoot, params.key);   // the finding
+ *     ...
+ *     createReadStream(absolute)                            // reported here before
+ *
+ * Falls back to the sink when the path was not composed locally, because then the
+ * sink really is the most specific thing this rule can point at.
+ */
+function pathCompositionSite(argument: ts.Node, scope: TaintScope): ts.Node | null {
+  const resolved = peel(resolveExpression(peel(argument), scope));
+  if (ts.isCallExpression(resolved) && PATH_JOINERS.has(calleeTail(resolved))) return resolved;
   return null;
 }
 
@@ -1419,21 +1939,32 @@ function hasFixedOrigin(expression: ts.Node): boolean {
   return false;
 }
 
-/** Does this region pin the destination's host to something the server chose? */
-function hostConstrained(file: ParsedFile, region: ts.Node, subject: string | null): boolean {
+/**
+ * Does this region pin the destination's host to something the server chose?
+ *
+ * The check has to *decide* the request, not merely appear before it. An
+ * allow-list comparison whose failing branch logs a warning and falls through is
+ * the most convincing-looking way to get this wrong, and it leaves the caller in
+ * charge of the host exactly as if the comparison were not there.
+ */
+function hostConstrained(file: ParsedFile, region: ts.Node, subject: string | null, sink?: ts.Node): boolean {
   let constrained = false;
+  const accept = (node: ts.Node): void => {
+    if (checkDecidesFlow(node, region, sink)) constrained = true;
+  };
+
   walk(region, (node) => {
     if (constrained) return;
 
     if (ts.isElementAccessExpression(node) && isConstantTable(file, node.expression)) {
-      if (/hostname|host|origin|domain/i.test(node.argumentExpression.getText(file.source))) constrained = true;
+      if (/hostname|host|origin|domain/i.test(node.argumentExpression.getText(file.source))) accept(node);
       return;
     }
     if (ts.isBinaryExpression(node)) {
       const isEquality =
         node.operatorToken.kind === ts.SyntaxKind.EqualsEqualsEqualsToken ||
         node.operatorToken.kind === ts.SyntaxKind.ExclamationEqualsEqualsToken;
-      if (isEquality && /\.(hostname|host|origin)\b/.test(node.getText(file.source))) constrained = true;
+      if (isEquality && /\.(hostname|host|origin)\b/.test(node.getText(file.source))) accept(node);
       return;
     }
     if (!ts.isCallExpression(node)) return;
@@ -1441,12 +1972,12 @@ function hostConstrained(file: ParsedFile, region: ts.Node, subject: string | nu
     if (!MEMBERSHIP_METHODS.has(tail) && tail !== "test") return;
     const argumentText = node.arguments.map((argument) => argument.getText(file.source)).join(", ");
     if (/hostname|host|origin|domain/i.test(argumentText)) {
-      constrained = true;
+      accept(node);
       return;
     }
     if (subject && node.arguments.some((argument) => rootOf(argument) === subject)) {
       const receiver = ts.isPropertyAccessExpression(node.expression) ? node.expression.expression : null;
-      if (receiver && isConstantTable(file, receiver)) constrained = true;
+      if (receiver && isConstantTable(file, receiver)) accept(node);
     }
   });
   return constrained;
@@ -1465,6 +1996,7 @@ function hostConstrained(file: ParsedFile, region: ts.Node, subject: string | nu
 function helperFixesOrigin(file: ParsedFile, helper: ts.Node): boolean {
   const parameters = parameterNames(helper);
   const scope = scopeFor(file, helper);
+  const callerSupplied = (node: ts.Node) => mentionsNames(node, parameters);
   let composed = false;
   let fixed = false;
 
@@ -1475,18 +2007,55 @@ function helperFixesOrigin(file: ParsedFile, helper: ts.Node): boolean {
     if (!reference || !base) return;
     composed = true;
     // A base the caller chose is no base at all.
-    if (mentionsNames(base, parameters)) return;
-    if (staysRelative(file, reference, scope, parameters)) fixed = true;
+    if (callerSupplied(base)) return;
+    if (staysRelative(file, reference, scope, callerSupplied)) fixed = true;
   });
 
   return composed && fixed;
 }
 
+/**
+ * Is this destination a reference resolved against an origin the caller cannot
+ * name?
+ *
+ * `new URL(`/oembed/${slug}.json`, "https://docs.example.com")` reaches a fixed
+ * upstream over a caller-chosen path, which is not request forgery: the base
+ * decides scheme and host and the caller only extends the path. Written inline in
+ * the handler rather than inside a resolver it is the same construction, and a
+ * rule that only reads it through a helper reports every correct upstream call on
+ * a web-platform runtime. The condition stays exact, because an *absolute*
+ * reference discards the base entirely.
+ */
+function resolvedOnFixedOrigin(file: ParsedFile, expression: ts.Node, scope: TaintScope): boolean {
+  const resolved = peel(resolveExpression(peel(expression), scope));
+  if (!ts.isNewExpression(resolved) || expressionName(resolved.expression) !== "URL") return false;
+  const reference = resolved.arguments?.[0];
+  const base = resolved.arguments?.[1];
+  if (!reference || !base) return false;
+  const callerSupplied = (node: ts.Node) => taintOrigin(node, scope) !== null;
+  // A base the caller can influence is no base at all.
+  if (callerSupplied(base)) return false;
+  return staysRelative(file, reference, scope, callerSupplied);
+}
+
 /** Can this reference never be read as absolute or protocol-relative? */
-function staysRelative(file: ParsedFile, reference: ts.Node, scope: TaintScope, parameters: Set<string>): boolean {
+function staysRelative(
+  file: ParsedFile,
+  reference: ts.Node,
+  scope: TaintScope,
+  callerSupplied: (node: ts.Node) => boolean
+): boolean {
   const node = peel(resolveExpression(peel(reference), scope));
   const literal = literalTextOf(node);
   if (literal !== null) return isSameSiteLiteral(literal);
+  // `"/oembed/" + slug + ".json"` is the same construction as the template, and
+  // the leading literal decides it in exactly the same way. Reading only
+  // templates loses the half of the codebases that concatenate.
+  if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+    const head = literalTextOf(peel(node.left));
+    if (head !== null) return isSameSiteLiteral(head);
+    return staysRelative(file, node.left, scope, callerSupplied);
+  }
   if (!ts.isTemplateExpression(node)) return false;
   const head = node.head.text;
   if (!head.startsWith("/")) return false;
@@ -1496,7 +2065,7 @@ function staysRelative(file: ParsedFile, reference: ts.Node, scope: TaintScope, 
   // supply that part, or when it went through an encoder that escapes slashes.
   const first = node.templateSpans[0]?.expression;
   if (!first) return false;
-  if (!mentionsNames(first, parameters)) return true;
+  if (!callerSupplied(first)) return true;
   return escapesSeparators(file, first, scope);
 }
 
@@ -1538,13 +2107,14 @@ export const outboundRequestForgery: Rule = {
         if (!destination) continue;
         if (isConstantString(destination)) continue;
         if (hasFixedOrigin(destination)) continue;
+        if (resolvedOnFixedOrigin(context.file, destination, scope)) continue;
 
         const origin = taintOrigin(destination, scope);
         if (!origin) continue;
 
         const root = rootOf(destination);
         if (root && (scope.allowlisted.has(root) || scope.cleared.has(root))) continue;
-        if (root && hostConstrained(context.file, fn, root)) continue;
+        if (root && hostConstrained(context.file, fn, root, call)) continue;
 
         // The correct form is often a resolver: parse the URL, look the host up in
         // a table of the endpoints this feature is allowed to reach, return null
@@ -1598,8 +2168,16 @@ function allowsCredentials(file: ParsedFile, region: ts.Node): boolean {
   let allows = false;
   walk(region, (node) => {
     if (allows) return;
-    if (ts.isPropertyAssignment(node) && /^credentials$/.test(node.name.getText(file.source).replace(/["']/g, ""))) {
-      if (node.initializer.kind === ts.SyntaxKind.TrueKeyword) allows = true;
+    if (ts.isPropertyAssignment(node)) {
+      const key = propertyKey(file, node);
+      if (/^credentials$/.test(key) && node.initializer.kind === ts.SyntaxKind.TrueKeyword) allows = true;
+      // A header map spells the same decision as a header name and a value, and a
+      // runtime that returns its headers as an object literal never calls a setter
+      // at all.
+      if (ALLOW_CREDENTIALS.test(key)) {
+        const text = literalTextOf(peel(node.initializer));
+        if (text === null || text === "true") allows = true;
+      }
     }
     if (!ts.isCallExpression(node)) return;
     const first = node.arguments[0];
@@ -1622,6 +2200,71 @@ function corsOriginOption(call: ts.CallExpression): ts.Expression | undefined {
   return undefined;
 }
 
+/** The innermost function whose taint scope owns this node. */
+function enclosingHandler(context: RuleContext, node: ts.Node): ts.Node {
+  const handlers = handlersIn(context.file);
+  let current: ts.Node | undefined = node;
+  while (current) {
+    if (handlers.includes(current)) return current;
+    current = current.parent;
+  }
+  return context.file.source;
+}
+
+/** The name a function is declared under, however it is written. */
+function declaredFunctionName(fn: ts.Node): string | null {
+  if ((ts.isFunctionDeclaration(fn) || ts.isFunctionExpression(fn)) && fn.name) return fn.name.text;
+  const parent = fn.parent;
+  if (parent && ts.isVariableDeclaration(parent) && ts.isIdentifier(parent.name)) return parent.name.text;
+  return null;
+}
+
+/**
+ * What this file passes into one parameter of a locally declared function.
+ *
+ * The engine follows data inside a single function and says so. That is the right
+ * scope almost everywhere, but a cross-origin decision is normally written once —
+ * `corsHeaders(origin)` — and called from every route with
+ * `request.headers.get("origin")`. Inside the helper the value is an ordinary
+ * parameter, so reasoning within one function cannot see that it is the request's
+ * own Origin, and the commonest spelling of reflected CORS is invisible. Reading
+ * the call sites in the same file is a single, bounded step that connects them.
+ */
+function argumentOriginAtCallSites(context: RuleContext, fn: ts.Node, parameter: string): string | null {
+  const parameters = (fn as ts.FunctionLikeDeclaration).parameters ?? [];
+  const index = parameters.findIndex((entry) => ts.isIdentifier(entry.name) && entry.name.text === parameter);
+  if (index < 0) return null;
+  const name = declaredFunctionName(fn);
+  if (!name) return null;
+
+  const handlers = handlersIn(context.file);
+  for (const call of collect(context.file.source, ts.isCallExpression)) {
+    if (!ts.isIdentifier(call.expression) || call.expression.text !== name) continue;
+    const argument = call.arguments[index];
+    if (!argument) continue;
+    let owner: ts.Node | undefined = call;
+    while (owner && !handlers.includes(owner)) owner = owner.parent;
+    if (!owner || owner === fn) continue;
+    const origin = taintOrigin(argument, scopeFor(context.file, owner));
+    if (origin) return origin;
+  }
+  return null;
+}
+
+/** Where an allowed-origin value came from, following one call into its decider. */
+function reflectedOrigin(
+  context: RuleContext,
+  owner: ts.Node,
+  scope: TaintScope,
+  value: ts.Expression
+): string | null {
+  const direct = taintOrigin(value, scope);
+  if (direct) return direct;
+  const name = rootOf(value);
+  if (!name || !parameterNames(owner).has(name)) return null;
+  return argumentOriginAtCallSites(context, owner, name);
+}
+
 export const crossOriginPolicy: Rule = {
   id: "perimeter-cors",
   category: "insecure_cors_configuration",
@@ -1629,9 +2272,121 @@ export const crossOriginPolicy: Rule = {
   run(context: RuleContext) {
     const reported = new Set<number>();
     reportReflectedHeaders(context, reported);
+    reportHeaderMapOrigins(context, reported);
     reportCorsConfiguration(context, reported);
   }
 };
+
+/**
+ * Cross-origin policy written as a header map rather than as a setter.
+ *
+ * `new Response(body, { headers })` and `Response.json(row, { headers })` are how
+ * every web-platform runtime answers a request — an edge worker has no `res`
+ * object to set a header on. The decision is identical and so is the defect, and
+ * a rule that only understands `res.setHeader` and `cors()` middleware sees none
+ * of it.
+ */
+function reportHeaderMapOrigins(context: RuleContext, reported: Set<number>): void {
+  for (const entry of collect(context.file.source, ts.isPropertyAssignment)) {
+    if (!ALLOW_ORIGIN.test(propertyKey(context.file, entry))) continue;
+
+    const owner = enclosingHandler(context, entry);
+    const scope = scopeFor(context.file, owner);
+    const value = entry.initializer;
+    const credentials = allowsCredentials(context.file, owner);
+    const literal = literalTextOf(peel(value));
+
+    if (literal === "*") {
+      report(context, entry, "wildcard", credentials, reported);
+      continue;
+    }
+    // A fixed origin is the correct answer and needs no further reasoning.
+    if (literal !== null) continue;
+
+    const origin = reflectedOrigin(context, owner, scope, value);
+    if (!origin) continue;
+
+    const root = rootOf(value);
+    // A membership test whose failing branch stops the function is the correct
+    // fix, and so is one that gates the branch the headers are written in: the
+    // headers are simply not produced for an origin that is not on the list.
+    if (root && (scope.allowlisted.has(root) || scope.cleared.has(root))) continue;
+    const gated = gatingConditions(entry, owner).some(
+      (condition) =>
+        root !== null &&
+        (testsMembershipOf(context.file, condition, root) ||
+          originPredicateConstrains(context.file, condition, root))
+    );
+    if (gated) continue;
+
+    report(context, entry, "reflected", credentials, reported, origin);
+  }
+}
+
+/**
+ * Does an `if` around a reflection call a local predicate that constrains the
+ * origin to this application's own?
+ *
+ * The correct form of a credentialed CORS policy over customer subdomains is a
+ * named predicate: parse the Origin, require https, and require the parsed
+ * hostname either to equal the root domain or to end at a label boundary below
+ * it. There is no fixed list to be a member of — the subdomains are per customer
+ * — so the membership test the rule already understands is not available, and
+ * without this the engine reports the one implementation that gets it right.
+ *
+ * The label boundary is the whole precision argument and is required, not
+ * inferred: `hostname.endsWith("pulse.dev")` also accepts `notpulse.dev`, which
+ * is the bug this shape exists to avoid. Only a suffix that begins with a dot
+ * counts, alongside equality and membership in a constant table.
+ */
+function originPredicateConstrains(file: ParsedFile, condition: ts.Node, name: string): boolean {
+  let constrained = false;
+  walk(condition, (node) => {
+    if (constrained) return;
+    if (!ts.isCallExpression(node) || !ts.isIdentifier(node.expression)) return;
+    if (!node.arguments.some((argument) => rootOf(argument) === name)) return;
+
+    const declaration = localFunction(file, node.expression.text);
+    if (!declaration) return;
+
+    const parameter = ts.isFunctionLike(declaration) ? declaration.parameters[0] : undefined;
+    const subject = parameter && ts.isIdentifier(parameter.name) ? parameter.name.text : null;
+    if (!subject) return;
+
+    let parses = false;
+    let anchored = false;
+    walk(declaration, (inner) => {
+      if (ts.isNewExpression(inner) && expressionName(inner.expression) === "URL") parses = true;
+
+      if (ts.isCallExpression(inner) && calleeTail(inner) === "endsWith") {
+        const argument = inner.arguments[0];
+        if (!argument) return;
+        const suffix = ts.isStringLiteralLike(argument)
+          ? argument.text
+          : ts.isTemplateExpression(argument)
+            ? argument.head.text
+            : null;
+        if (suffix !== null && suffix.startsWith(".")) anchored = true;
+      }
+
+      if (ts.isBinaryExpression(inner)) {
+        const isEquality =
+          inner.operatorToken.kind === ts.SyntaxKind.EqualsEqualsEqualsToken ||
+          inner.operatorToken.kind === ts.SyntaxKind.ExclamationEqualsEqualsToken;
+        if (!isEquality) return;
+        for (const side of [inner.left, inner.right]) {
+          if (ts.isPropertyAccessExpression(side) && /^(origin|host|hostname)$/.test(side.name.text)) anchored = true;
+        }
+      }
+    });
+
+    // A predicate that reaches its own decision through the membership test the
+    // rule already reads is equally correct and does not need to parse anything.
+    if (testsMembershipOf(file, declaration, subject)) constrained = true;
+    if (parses && anchored) constrained = true;
+  });
+  return constrained;
+}
 
 function reportReflectedHeaders(context: RuleContext, reported: Set<number>): void {
   for (const fn of handlersIn(context.file)) {
@@ -1647,7 +2402,7 @@ function reportReflectedHeaders(context: RuleContext, reported: Set<number>): vo
 
       const literal = literalTextOf(peel(value));
       const credentials = allowsCredentials(context.file, fn);
-      const origin = taintOrigin(value, scope);
+      const origin = reflectedOrigin(context, fn, scope, value);
       const root = rootOf(value);
 
       let reflected = false;
@@ -1664,7 +2419,10 @@ function reportReflectedHeaders(context: RuleContext, reported: Set<number>): vo
       // gates rather than terminates: the headers are simply not set for an
       // origin that is not on the list.
       const gated = gatingConditions(call, fn).some(
-        (condition) => root !== null && testsMembershipOf(context.file, condition, root)
+        (condition) =>
+          root !== null &&
+          (testsMembershipOf(context.file, condition, root) ||
+            originPredicateConstrains(context.file, condition, root))
       );
       if (gated) continue;
       if (root && (scope.allowlisted.has(root) || scope.cleared.has(root))) continue;
@@ -1812,6 +2570,36 @@ function importedModules(file: ParsedFile): string[] {
 }
 
 /** Does this registration or handler carry a rate limit of its own? */
+/**
+ * Does this identifier hold a limiter built elsewhere in the file?
+ *
+ *     const loginLimiter = rateLimit({ windowMs: 900000, max: 10 });
+ *     router.post("/session", loginLimiter, handler);
+ *
+ * That is the documented Express pattern and the reason to use it is to share one
+ * limiter across several routes, so it is what a careful application looks like.
+ * Reading only the registration sees a bare identifier, concludes no limiter, and
+ * reports the route that is actually protected — quietly, as a candidate, on the
+ * commonest correct shape there is.
+ */
+function resolvesToRateLimiter(file: ParsedFile, node: ts.Node): boolean {
+  if (!ts.isIdentifier(node)) return false;
+  let found = false;
+  walk(file.source, (candidate) => {
+    if (found) return;
+    if (!ts.isVariableDeclaration(candidate)) return;
+    if (!ts.isIdentifier(candidate.name) || candidate.name.text !== node.text) return;
+    const initializer = candidate.initializer;
+    if (!initializer) return;
+    if (ts.isCallExpression(initializer) && RATE_LIMIT_EXPRESSION.test(calleeName(initializer))) found = true;
+    // `const limiter = { windowMs, max }` handed to a framework that takes options.
+    if (ts.isObjectLiteralExpression(initializer) && RATE_LIMIT_EXPRESSION.test(initializer.getText(file.source))) {
+      found = true;
+    }
+  });
+  return found;
+}
+
 function hasOwnRateLimit(file: ParsedFile, region: ts.Node): boolean {
   let limited = false;
   walk(region, (node) => {
@@ -1819,6 +2607,7 @@ function hasOwnRateLimit(file: ParsedFile, region: ts.Node): boolean {
     if (ts.isPropertyAssignment(node) && /rate.?limit|throttl/i.test(node.name.getText(file.source))) limited = true;
     if (ts.isCallExpression(node) && RATE_LIMIT_EXPRESSION.test(calleeName(node))) limited = true;
     if (ts.isNumericLiteral(node) && node.text === "429") limited = true;
+    if (resolvesToRateLimiter(file, node)) limited = true;
   });
   return limited;
 }
@@ -1828,12 +2617,6 @@ export const credentialRouteRateLimit: Rule = {
   category: "missing_rate_limit_on_credentials",
   describes: "credential-checking routes with no rate limit in a module that rate-limits others",
   run(context: RuleContext) {
-    // The contrast is the evidence. Without any rate limiting in the module there
-    // is nothing here that distinguishes an application whose limiter lives in a
-    // gateway from one that has none, and guessing would report every correctly
-    // written sign-in handler in the corpus.
-    if (!fileMentionsRateLimiting(context.file)) return;
-
     for (const call of collect(context.file.source, ts.isCallExpression)) {
       if (!ts.isPropertyAccessExpression(call.expression)) continue;
       const method = call.expression.name.text.toLowerCase();
@@ -1857,8 +2640,61 @@ export const credentialRouteRateLimit: Rule = {
       // object, in a middleware argument, or inside the handler body.
       if (hasOwnRateLimit(context.file, call)) continue;
 
+      /*
+       * With a limited sibling this is a gap; without one it is a question.
+       *
+       * The rule used to return outright when the module mentioned no rate limiting at
+       * all, because the contrast is what distinguishes an application whose limiter
+       * lives in a gateway from one that has none — and guessing would report every
+       * correctly written sign-in handler.
+       *
+       * That reasoning is sound and its consequence was never written down: **an
+       * application with no rate limiting anywhere got no finding at all.** The one
+       * shape most likely to be genuinely unprotected was the one shape guaranteed
+       * silence. Reporting it as `needs_review` says what is actually known — no
+       * limiter is visible in this module, and the engine cannot see a gateway — which
+       * is a question a reader can answer in seconds and dismiss.
+       *
+       * This became shippable once `benchmark/score-corpus.mjs` stopped counting an
+       * unsettled candidate as a false claim. Before that, emitting it would have read
+       * as a precision collapse on every corpus.
+       */
       const siblings = limitedSiblings(context.file, call);
-      if (siblings.length === 0) continue;
+      const contrasted = siblings.length > 0;
+      const moduleLimitsSomething = fileMentionsRateLimiting(context.file);
+
+      if (!contrasted) {
+        context.report({
+          ruleId: "perimeter-credential-rate-limit",
+          category: "missing_rate_limit_on_credentials",
+          title: `${method.toUpperCase()} ${path} verifies a credential and no rate limit is visible`,
+          severity: "medium",
+          verification: "needs_review",
+          summary:
+            `This route checks a secret the caller supplied, so every request to it is a guess that either succeeds or does not. No rate limit appears in its options, as middleware, or inside the handler${moduleLimitsSomething ? ", and no other route in this module declares one either" : ", and nothing in this module mentions rate limiting at all"}. ` +
+            "A limiter enforced by a gateway, a proxy, or a platform edge would not be visible to a static reading, so this is reported as a question rather than a defect: confirm where yours runs.",
+          impact:
+            "If nothing throttles this endpoint, an attacker can test passwords, one-time codes, or tokens as fast as the network allows. A six-digit code is exhausted in minutes and a credential-stuffing list runs unimpeded. If a limiter does run in front of this service, there is nothing to fix here.",
+          remediation:
+            "Confirm whether a limiter covers this route. If one does, record where it runs so the next reader does not have to ask. If none does, add one keyed on both the client address and the account being addressed, count failures rather than requests, keep the counter server-side, and return the same response and timing whether or not the account exists.",
+          verificationPlan:
+            "Send twenty failed attempts in quick succession from one address against one account. A 429, or a growing delay, means a limiter covers this route and this finding can be dismissed. Twenty clean rejections at full speed means it does not.",
+          taxonomy: ["CWE-307", "CWE-799", "OWASP-A07"],
+          location: locationOf(context, call),
+          ...withRoute(context, call),
+          evidence: [
+            sourceEvidence(context, call, "Credential-verifying route registered with no visible rate limit."),
+            {
+              kind: "source",
+              description: moduleLimitsSomething
+                ? "Rate limiting is mentioned in this module but no route declares one, so the convention cannot be read from the code."
+                : "Nothing in this module mentions rate limiting, so whether a limiter exists cannot be determined from this file."
+            }
+          ],
+          reasoning: `Handler for ${method.toUpperCase()} ${path} contains a credential-verification expression and no rate-limit option, middleware, or in-handler limiter appears in its registration. No sibling route establishes the module's convention, so the absence is unsettled rather than established.`
+        });
+        continue;
+      }
 
       context.report({
         ruleId: "perimeter-credential-rate-limit",

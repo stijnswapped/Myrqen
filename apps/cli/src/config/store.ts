@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import { configDirectory, configFile } from "./paths.js";
+import { BRAND } from "@myrqen/brand";
 
 export interface GlobalConfig {
   version: 1;
@@ -23,9 +24,18 @@ export interface GlobalConfig {
   telemetry?: { enabled: boolean };
 }
 
+/**
+ * The hosted API, not localhost.
+ *
+ * A published CLI whose default endpoint is a development server fails for every
+ * user on their first `link`, with a connection error that reads like their own
+ * network being broken. Development points elsewhere through
+ * MYRQEN_API_BASE_URL or `--url`, which is the direction that should require an
+ * explicit act.
+ */
 const DEFAULTS: GlobalConfig = {
   version: 1,
-  apiBaseUrl: "http://localhost:3000",
+  apiBaseUrl: BRAND.apiBaseUrl,
   telemetry: { enabled: true }
 };
 

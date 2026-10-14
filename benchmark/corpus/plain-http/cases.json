@@ -265,6 +265,29 @@
       "kind": "safe",
       "pairedWith": "plain-http-wallet-withdrawal-debit",
       "why": "The debit is a single conditional UPDATE carrying balance_cents >= $1 in its WHERE clause whose rowCount decides the outcome, it runs inside the transaction that queues the payout and writes the ledger entry, and a uniquely constrained request key makes a retried tap replay the original transfer instead of creating a second one."
+    },
+    {
+      "id": "plain-http-newsletter-click-redirect",
+      "family": "plain-http",
+      "architecture": "Hand-rolled Node 20 node:http server: http.createServer with an async request handler, a manual dispatcher over `${request.method} ${url.pathname}`, manual body reading and hand-written JSON responses (CommonJS, no framework).",
+      "language": "javascript",
+      "file": "plain-http/link-tracker.js",
+      "kind": "vulnerable",
+      "category": "open_redirect",
+      "severityBand": ["low", "medium"],
+      "line": 27,
+      "lineRange": [27, 27],
+      "runtimeVerifiable": true,
+      "why": "The Location header is the `to` query parameter as given, so a link on this domain can send a reader to any site, which makes the domain a convincing first hop for phishing."
+    },
+    {
+      "id": "plain-http-newsletter-article-redirect",
+      "family": "plain-http",
+      "language": "javascript",
+      "file": "plain-http/article-links.js",
+      "kind": "safe",
+      "pairedWith": "plain-http-newsletter-click-redirect",
+      "why": "The same click-tracking redirect, but the link carries an article id that must match a pattern and exist, and the Location is a fixed /articles/ path with the id URL-encoded, so the destination is always on this site."
     }
   ]
 }

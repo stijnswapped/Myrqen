@@ -1,0 +1,511 @@
+{
+  "family": "ticketing-elysia",
+  "cases": [
+    {
+      "id": "h6-ticketing-elysia-event-relevance-search",
+      "family": "ticketing-elysia",
+      "architecture": "Elysia 1.3 on Bun with Prisma 6 for data access; caller identity comes from a bearer session token whose HMAC is verified in a scoped Elysia derive plugin (src/lib/identity.ts).",
+      "language": "typescript",
+      "file": "ticketing-elysia/src/routes/events.ts",
+      "scanAs": "src/routes/events.ts",
+      "kind": "vulnerable",
+      "category": "raw_sql_string_interpolation",
+      "cwe": "CWE-89",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 92,
+      "lineRange": [
+        82,
+        109
+      ],
+      "route": "GET /api/events/search",
+      "runtimeVerifiable": true,
+      "why": "The search term, sort column, direction and limit taken off the query string are concatenated straight into the SQL text handed to prisma.$queryRawUnsafe; escaping the LIKE wildcards does nothing for the surrounding quotes and the ORDER BY clause is unquoted, so a public search request can append arbitrary SQL that runs with the API's database role.",
+      "packageJson": {
+        "name": "gatefold-ticketing-api",
+        "version": "1.6.2",
+        "private": true,
+        "type": "module",
+        "module": "src/index.ts",
+        "scripts": {
+          "dev": "bun run --watch src/index.ts",
+          "start": "bun run src/index.ts",
+          "db:generate": "prisma generate",
+          "db:deploy": "prisma migrate deploy"
+        },
+        "dependencies": {
+          "@elysiajs/cors": "^1.3.0",
+          "@prisma/client": "^6.7.0",
+          "elysia": "^1.3.5"
+        },
+        "devDependencies": {
+          "@types/bun": "^1.2.12",
+          "prisma": "^6.7.0",
+          "typescript": "^5.8.3"
+        }
+      },
+      "extraFiles": {
+        "src/config/env.ts": "/**\n * Runtime configuration for the Gatefold ticketing API.\n *\n * Everything is read once at boot so a missing secret takes the container down\n * on start instead of failing the first request that happens to need it.\n */\n\nfunction required(name: string): string {\n  const value = Bun.env[name]\n\n  if (value === undefined || value.trim() === '') {\n    throw new Error(`Missing required environment variable: ${name}`)\n  }\n\n  return value.trim()\n}\n\nfunction numeric(name: string, fallback: number): number {\n  const raw = Bun.env[name]\n\n  if (raw === undefined || raw.trim() === '') {\n    return fallback\n  }\n\n  const parsed = Number.parseInt(raw, 10)\n\n  if (!Number.isFinite(parsed) || parsed <= 0) {\n    throw new Error(`Environment variable ${name} must be a positive integer`)\n  }\n\n  return parsed\n}\n\nexport const env = {\n  nodeEnv: Bun.env.NODE_ENV ?? 'development',\n  port: numeric('PORT', 3000),\n  databaseUrl: required('DATABASE_URL'),\n\n  /** Signs the attendee/organiser session tokens issued by the accounts service. */\n  sessionTokenSecret: required('SESSION_TOKEN_SECRET'),\n\n  /** Signs the compact pass tokens that end up inside the ticket QR code. */\n  gatePassSecret: required('GATE_PASS_SECRET'),\n\n  /** Where the nightly payout statement generator writes its output tree. */\n  statementDir: Bun.env.PAYOUT_STATEMENT_DIR ?? '/srv/gatefold/payout-statements',\n\n  /** How long after the door time a pass still scans, in minutes. */\n  gateGraceMinutes: numeric('GATE_GRACE_MINUTES', 45),\n\n  /** Ceiling on a single self-service order. */\n  maxTicketsPerOrder: numeric('MAX_TICKETS_PER_ORDER', 8),\n\n  /** Refunds at or below this figure skip the support queue. */\n  refundAutoApproveCents: numeric('REFUND_AUTO_APPROVE_CENTS', 5000),\n\n  allowedOrigins: (Bun.env.ALLOWED_ORIGINS ?? 'https://gatefold.events').split(',').map((origin) => origin.trim()),\n} as const\n\nexport type AppConfig = typeof env\n",
+        "src/lib/prisma.ts": "import { PrismaClient } from '@prisma/client'\n\nimport { env } from '../config/env'\n\n/**\n * Bun's watch mode re-evaluates modules on every save, which used to leave a\n * fan of orphaned pools behind. Keeping the client on globalThis outside of\n * production fixes that.\n */\nconst globalForPrisma = globalThis as unknown as { prismaClient?: PrismaClient }\n\nexport const prisma =\n  globalForPrisma.prismaClient ??\n  new PrismaClient({\n    datasources: { db: { url: env.databaseUrl } },\n    log: env.nodeEnv === 'production' ? ['warn', 'error'] : ['query', 'warn', 'error'],\n  })\n\nif (env.nodeEnv !== 'production') {\n  globalForPrisma.prismaClient = prisma\n}\n\nexport async function disconnectPrisma(): Promise<void> {\n  await prisma.$disconnect()\n}\n"
+      }
+    },
+    {
+      "id": "h6-ticketing-elysia-organiser-attendance-report",
+      "family": "ticketing-elysia",
+      "architecture": "Elysia 1.3 on Bun with Prisma 6 for data access; caller identity comes from a bearer session token whose HMAC is verified in a scoped Elysia derive plugin (src/lib/identity.ts).",
+      "language": "typescript",
+      "file": "ticketing-elysia/src/routes/organiser-events.ts",
+      "scanAs": "src/routes/organiser-events.ts",
+      "kind": "safe",
+      "route": "GET /api/organiser/events/attendance",
+      "runtimeVerifiable": true,
+      "pairedWith": "h6-ticketing-elysia-event-relevance-search",
+      "why": "The same hand-written aggregate, but the search term is bound as a Prisma.sql parameter and the ORDER BY fragment is picked out of the SORT_FRAGMENTS allowlist, so no request value ever reaches the query text; the rows are additionally scoped to the caller's organiserId.",
+      "packageJson": {
+        "name": "gatefold-ticketing-api",
+        "version": "1.6.2",
+        "private": true,
+        "type": "module",
+        "module": "src/index.ts",
+        "scripts": {
+          "dev": "bun run --watch src/index.ts",
+          "start": "bun run src/index.ts",
+          "db:generate": "prisma generate",
+          "db:deploy": "prisma migrate deploy"
+        },
+        "dependencies": {
+          "@elysiajs/cors": "^1.3.0",
+          "@prisma/client": "^6.7.0",
+          "elysia": "^1.3.5"
+        },
+        "devDependencies": {
+          "@types/bun": "^1.2.12",
+          "prisma": "^6.7.0",
+          "typescript": "^5.8.3"
+        }
+      },
+      "extraFiles": {
+        "src/config/env.ts": "/**\n * Runtime configuration for the Gatefold ticketing API.\n *\n * Everything is read once at boot so a missing secret takes the container down\n * on start instead of failing the first request that happens to need it.\n */\n\nfunction required(name: string): string {\n  const value = Bun.env[name]\n\n  if (value === undefined || value.trim() === '') {\n    throw new Error(`Missing required environment variable: ${name}`)\n  }\n\n  return value.trim()\n}\n\nfunction numeric(name: string, fallback: number): number {\n  const raw = Bun.env[name]\n\n  if (raw === undefined || raw.trim() === '') {\n    return fallback\n  }\n\n  const parsed = Number.parseInt(raw, 10)\n\n  if (!Number.isFinite(parsed) || parsed <= 0) {\n    throw new Error(`Environment variable ${name} must be a positive integer`)\n  }\n\n  return parsed\n}\n\nexport const env = {\n  nodeEnv: Bun.env.NODE_ENV ?? 'development',\n  port: numeric('PORT', 3000),\n  databaseUrl: required('DATABASE_URL'),\n\n  /** Signs the attendee/organiser session tokens issued by the accounts service. */\n  sessionTokenSecret: required('SESSION_TOKEN_SECRET'),\n\n  /** Signs the compact pass tokens that end up inside the ticket QR code. */\n  gatePassSecret: required('GATE_PASS_SECRET'),\n\n  /** Where the nightly payout statement generator writes its output tree. */\n  statementDir: Bun.env.PAYOUT_STATEMENT_DIR ?? '/srv/gatefold/payout-statements',\n\n  /** How long after the door time a pass still scans, in minutes. */\n  gateGraceMinutes: numeric('GATE_GRACE_MINUTES', 45),\n\n  /** Ceiling on a single self-service order. */\n  maxTicketsPerOrder: numeric('MAX_TICKETS_PER_ORDER', 8),\n\n  /** Refunds at or below this figure skip the support queue. */\n  refundAutoApproveCents: numeric('REFUND_AUTO_APPROVE_CENTS', 5000),\n\n  allowedOrigins: (Bun.env.ALLOWED_ORIGINS ?? 'https://gatefold.events').split(',').map((origin) => origin.trim()),\n} as const\n\nexport type AppConfig = typeof env\n",
+        "src/lib/prisma.ts": "import { PrismaClient } from '@prisma/client'\n\nimport { env } from '../config/env'\n\n/**\n * Bun's watch mode re-evaluates modules on every save, which used to leave a\n * fan of orphaned pools behind. Keeping the client on globalThis outside of\n * production fixes that.\n */\nconst globalForPrisma = globalThis as unknown as { prismaClient?: PrismaClient }\n\nexport const prisma =\n  globalForPrisma.prismaClient ??\n  new PrismaClient({\n    datasources: { db: { url: env.databaseUrl } },\n    log: env.nodeEnv === 'production' ? ['warn', 'error'] : ['query', 'warn', 'error'],\n  })\n\nif (env.nodeEnv !== 'production') {\n  globalForPrisma.prismaClient = prisma\n}\n\nexport async function disconnectPrisma(): Promise<void> {\n  await prisma.$disconnect()\n}\n",
+        "src/lib/identity.ts": "import { createHmac, timingSafeEqual } from 'node:crypto'\nimport { Elysia } from 'elysia'\n\nimport { env } from '../config/env'\nimport { prisma } from './prisma'\n\n/**\n * Two kinds of compact token exist in this system and both are minted with the\n * same `<base64url(claims)>.<base64url(hmac)>` layout:\n *\n *   - session tokens, handed to the web app and the organiser console\n *   - gate pass tokens, printed into the QR code on a ticket\n *\n * Both are bearer credentials, so both get verified here before anything reads\n * a claim out of them.\n */\n\nexport type Identity = {\n  accountId: string\n  email: string\n  roles: string[]\n  organiserId: string | null\n}\n\nexport type SessionClaims = {\n  sub: string\n  scope: string\n  iat: number\n  exp: number\n}\n\nexport type PassClaims = {\n  ticketId: string\n  eventId: string\n  serial: number\n  iat: number\n  exp: number\n}\n\nconst MAX_TOKEN_BYTES = 2048\n\nfunction decodeClaims<T>(segment: string): T | null {\n  try {\n    return JSON.parse(Buffer.from(segment, 'base64url').toString('utf8')) as T\n  } catch {\n    return null\n  }\n}\n\n/**\n * Verifies the HMAC over the claim segment and only then decodes it. The\n * comparison runs through timingSafeEqual on equal-length buffers so a caller\n * cannot walk the signature out of us one byte at a time.\n */\nfunction readSignedToken<T extends { iat: number; exp: number }>(token: string, secret: string): T | null {\n  if (token.length === 0 || Buffer.byteLength(token, 'utf8') > MAX_TOKEN_BYTES) {\n    return null\n  }\n\n  const parts = token.split('.')\n\n  if (parts.length !== 2) {\n    return null\n  }\n\n  const [claimSegment, signature] = parts\n\n  if (!claimSegment || !signature) {\n    return null\n  }\n\n  const expected = Buffer.from(createHmac('sha256', secret).update(claimSegment).digest('base64url'), 'utf8')\n  const provided = Buffer.from(signature, 'utf8')\n\n  if (expected.length !== provided.length || !timingSafeEqual(expected, provided)) {\n    return null\n  }\n\n  const claims = decodeClaims<T>(claimSegment)\n\n  if (!claims || typeof claims.exp !== 'number' || typeof claims.iat !== 'number') {\n    return null\n  }\n\n  if (claims.exp * 1000 <= Date.now()) {\n    return null\n  }\n\n  return claims\n}\n\nexport function readSessionToken(token: string): SessionClaims | null {\n  const claims = readSignedToken<SessionClaims>(token, env.sessionTokenSecret)\n\n  if (!claims || typeof claims.sub !== 'string' || claims.sub.length === 0) {\n    return null\n  }\n\n  return claims\n}\n\nexport function readPassToken(token: string): PassClaims | null {\n  const claims = readSignedToken<PassClaims>(token, env.gatePassSecret)\n\n  if (!claims || typeof claims.ticketId !== 'string' || typeof claims.eventId !== 'string') {\n    return null\n  }\n\n  return claims\n}\n\nexport function signPassToken(claims: Omit<PassClaims, 'iat' | 'exp'>, ttlSeconds: number): string {\n  const now = Math.floor(Date.now() / 1000)\n  const payload: PassClaims = { ...claims, iat: now, exp: now + ttlSeconds }\n  const segment = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url')\n  const signature = createHmac('sha256', env.gatePassSecret).update(segment).digest('base64url')\n\n  return `${segment}.${signature}`\n}\n\nfunction bearerToken(header: string | undefined): string | null {\n  if (!header) {\n    return null\n  }\n\n  const [scheme, ...rest] = header.split(' ')\n\n  if (scheme?.toLowerCase() !== 'bearer' || rest.length === 0) {\n    return null\n  }\n\n  const token = rest.join(' ').trim()\n\n  return token.length > 0 ? token : null\n}\n\n/**\n * Scoped so every route group that mounts it gets its own resolved identity and\n * nothing leaks into sibling groups.\n */\nexport const identityPlugin = new Elysia({ name: 'identity' }).derive(\n  { as: 'scoped' },\n  async ({ headers }): Promise<{ identity: Identity | null }> => {\n    const token = bearerToken(headers.authorization)\n\n    if (!token) {\n      return { identity: null }\n    }\n\n    const claims = readSessionToken(token)\n\n    if (!claims) {\n      return { identity: null }\n    }\n\n    const account = await prisma.account.findUnique({\n      where: { id: claims.sub },\n      select: { id: true, email: true, roles: true, organiserId: true, suspendedAt: true },\n    })\n\n    if (!account || account.suspendedAt !== null) {\n      return { identity: null }\n    }\n\n    return {\n      identity: {\n        accountId: account.id,\n        email: account.email,\n        roles: account.roles,\n        organiserId: account.organiserId,\n      },\n    }\n  },\n)\n\ntype GuardContext = {\n  identity: Identity | null\n  status: (code: number, body: unknown) => unknown\n}\n\nexport function requireAccount({ identity, status }: GuardContext) {\n  if (!identity) {\n    return status(401, { error: 'authentication_required' })\n  }\n}\n\nexport function requireOrganiser({ identity, status }: GuardContext) {\n  if (!identity) {\n    return status(401, { error: 'authentication_required' })\n  }\n\n  if (!identity.organiserId || !identity.roles.includes('organiser')) {\n    return status(403, { error: 'organiser_membership_required' })\n  }\n}\n\nexport function requirePromoter({ identity, status }: GuardContext) {\n  if (!identity) {\n    return status(401, { error: 'authentication_required' })\n  }\n\n  if (!identity.roles.includes('promoter') && !identity.roles.includes('organiser')) {\n    return status(403, { error: 'promoter_role_required' })\n  }\n}\n\nexport function requireGateStaff({ identity, status }: GuardContext) {\n  if (!identity) {\n    return status(401, { error: 'authentication_required' })\n  }\n\n  if (!identity.roles.includes('gate')) {\n    return status(403, { error: 'gate_role_required' })\n  }\n}\n"
+      }
+    },
+    {
+      "id": "h6-ticketing-elysia-ticket-handover",
+      "family": "ticketing-elysia",
+      "architecture": "Elysia 1.3 on Bun with Prisma 6 for data access; caller identity comes from a bearer session token whose HMAC is verified in a scoped Elysia derive plugin (src/lib/identity.ts).",
+      "language": "typescript",
+      "file": "ticketing-elysia/src/routes/tickets.ts",
+      "scanAs": "src/routes/tickets.ts",
+      "kind": "vulnerable",
+      "category": "missing_ticket_ownership_check",
+      "cwe": "CWE-639",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 59,
+      "lineRange": [
+        55,
+        117
+      ],
+      "route": "POST /api/tickets/:ticketId/transfer",
+      "runtimeVerifiable": true,
+      "why": "The transfer resolves the ticket from the path id alone and never compares ticket.ownerId with identity.accountId, so any authenticated attendee can hand somebody else's ticket to an address they control; the only checks made are on event and ticket state.",
+      "packageJson": {
+        "name": "gatefold-ticketing-api",
+        "version": "1.6.2",
+        "private": true,
+        "type": "module",
+        "module": "src/index.ts",
+        "scripts": {
+          "dev": "bun run --watch src/index.ts",
+          "start": "bun run src/index.ts",
+          "db:generate": "prisma generate",
+          "db:deploy": "prisma migrate deploy"
+        },
+        "dependencies": {
+          "@elysiajs/cors": "^1.3.0",
+          "@prisma/client": "^6.7.0",
+          "elysia": "^1.3.5"
+        },
+        "devDependencies": {
+          "@types/bun": "^1.2.12",
+          "prisma": "^6.7.0",
+          "typescript": "^5.8.3"
+        }
+      },
+      "extraFiles": {
+        "src/config/env.ts": "/**\n * Runtime configuration for the Gatefold ticketing API.\n *\n * Everything is read once at boot so a missing secret takes the container down\n * on start instead of failing the first request that happens to need it.\n */\n\nfunction required(name: string): string {\n  const value = Bun.env[name]\n\n  if (value === undefined || value.trim() === '') {\n    throw new Error(`Missing required environment variable: ${name}`)\n  }\n\n  return value.trim()\n}\n\nfunction numeric(name: string, fallback: number): number {\n  const raw = Bun.env[name]\n\n  if (raw === undefined || raw.trim() === '') {\n    return fallback\n  }\n\n  const parsed = Number.parseInt(raw, 10)\n\n  if (!Number.isFinite(parsed) || parsed <= 0) {\n    throw new Error(`Environment variable ${name} must be a positive integer`)\n  }\n\n  return parsed\n}\n\nexport const env = {\n  nodeEnv: Bun.env.NODE_ENV ?? 'development',\n  port: numeric('PORT', 3000),\n  databaseUrl: required('DATABASE_URL'),\n\n  /** Signs the attendee/organiser session tokens issued by the accounts service. */\n  sessionTokenSecret: required('SESSION_TOKEN_SECRET'),\n\n  /** Signs the compact pass tokens that end up inside the ticket QR code. */\n  gatePassSecret: required('GATE_PASS_SECRET'),\n\n  /** Where the nightly payout statement generator writes its output tree. */\n  statementDir: Bun.env.PAYOUT_STATEMENT_DIR ?? '/srv/gatefold/payout-statements',\n\n  /** How long after the door time a pass still scans, in minutes. */\n  gateGraceMinutes: numeric('GATE_GRACE_MINUTES', 45),\n\n  /** Ceiling on a single self-service order. */\n  maxTicketsPerOrder: numeric('MAX_TICKETS_PER_ORDER', 8),\n\n  /** Refunds at or below this figure skip the support queue. */\n  refundAutoApproveCents: numeric('REFUND_AUTO_APPROVE_CENTS', 5000),\n\n  allowedOrigins: (Bun.env.ALLOWED_ORIGINS ?? 'https://gatefold.events').split(',').map((origin) => origin.trim()),\n} as const\n\nexport type AppConfig = typeof env\n",
+        "src/lib/prisma.ts": "import { PrismaClient } from '@prisma/client'\n\nimport { env } from '../config/env'\n\n/**\n * Bun's watch mode re-evaluates modules on every save, which used to leave a\n * fan of orphaned pools behind. Keeping the client on globalThis outside of\n * production fixes that.\n */\nconst globalForPrisma = globalThis as unknown as { prismaClient?: PrismaClient }\n\nexport const prisma =\n  globalForPrisma.prismaClient ??\n  new PrismaClient({\n    datasources: { db: { url: env.databaseUrl } },\n    log: env.nodeEnv === 'production' ? ['warn', 'error'] : ['query', 'warn', 'error'],\n  })\n\nif (env.nodeEnv !== 'production') {\n  globalForPrisma.prismaClient = prisma\n}\n\nexport async function disconnectPrisma(): Promise<void> {\n  await prisma.$disconnect()\n}\n",
+        "src/lib/identity.ts": "import { createHmac, timingSafeEqual } from 'node:crypto'\nimport { Elysia } from 'elysia'\n\nimport { env } from '../config/env'\nimport { prisma } from './prisma'\n\n/**\n * Two kinds of compact token exist in this system and both are minted with the\n * same `<base64url(claims)>.<base64url(hmac)>` layout:\n *\n *   - session tokens, handed to the web app and the organiser console\n *   - gate pass tokens, printed into the QR code on a ticket\n *\n * Both are bearer credentials, so both get verified here before anything reads\n * a claim out of them.\n */\n\nexport type Identity = {\n  accountId: string\n  email: string\n  roles: string[]\n  organiserId: string | null\n}\n\nexport type SessionClaims = {\n  sub: string\n  scope: string\n  iat: number\n  exp: number\n}\n\nexport type PassClaims = {\n  ticketId: string\n  eventId: string\n  serial: number\n  iat: number\n  exp: number\n}\n\nconst MAX_TOKEN_BYTES = 2048\n\nfunction decodeClaims<T>(segment: string): T | null {\n  try {\n    return JSON.parse(Buffer.from(segment, 'base64url').toString('utf8')) as T\n  } catch {\n    return null\n  }\n}\n\n/**\n * Verifies the HMAC over the claim segment and only then decodes it. The\n * comparison runs through timingSafeEqual on equal-length buffers so a caller\n * cannot walk the signature out of us one byte at a time.\n */\nfunction readSignedToken<T extends { iat: number; exp: number }>(token: string, secret: string): T | null {\n  if (token.length === 0 || Buffer.byteLength(token, 'utf8') > MAX_TOKEN_BYTES) {\n    return null\n  }\n\n  const parts = token.split('.')\n\n  if (parts.length !== 2) {\n    return null\n  }\n\n  const [claimSegment, signature] = parts\n\n  if (!claimSegment || !signature) {\n    return null\n  }\n\n  const expected = Buffer.from(createHmac('sha256', secret).update(claimSegment).digest('base64url'), 'utf8')\n  const provided = Buffer.from(signature, 'utf8')\n\n  if (expected.length !== provided.length || !timingSafeEqual(expected, provided)) {\n    return null\n  }\n\n  const claims = decodeClaims<T>(claimSegment)\n\n  if (!claims || typeof claims.exp !== 'number' || typeof claims.iat !== 'number') {\n    return null\n  }\n\n  if (claims.exp * 1000 <= Date.now()) {\n    return null\n  }\n\n  return claims\n}\n\nexport function readSessionToken(token: string): SessionClaims | null {\n  const claims = readSignedToken<SessionClaims>(token, env.sessionTokenSecret)\n\n  if (!claims || typeof claims.sub !== 'string' || claims.sub.length === 0) {\n    return null\n  }\n\n  return claims\n}\n\nexport function readPassToken(token: string): PassClaims | null {\n  const claims = readSignedToken<PassClaims>(token, env.gatePassSecret)\n\n  if (!claims || typeof claims.ticketId !== 'string' || typeof claims.eventId !== 'string') {\n    return null\n  }\n\n  return claims\n}\n\nexport function signPassToken(claims: Omit<PassClaims, 'iat' | 'exp'>, ttlSeconds: number): string {\n  const now = Math.floor(Date.now() / 1000)\n  const payload: PassClaims = { ...claims, iat: now, exp: now + ttlSeconds }\n  const segment = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url')\n  const signature = createHmac('sha256', env.gatePassSecret).update(segment).digest('base64url')\n\n  return `${segment}.${signature}`\n}\n\nfunction bearerToken(header: string | undefined): string | null {\n  if (!header) {\n    return null\n  }\n\n  const [scheme, ...rest] = header.split(' ')\n\n  if (scheme?.toLowerCase() !== 'bearer' || rest.length === 0) {\n    return null\n  }\n\n  const token = rest.join(' ').trim()\n\n  return token.length > 0 ? token : null\n}\n\n/**\n * Scoped so every route group that mounts it gets its own resolved identity and\n * nothing leaks into sibling groups.\n */\nexport const identityPlugin = new Elysia({ name: 'identity' }).derive(\n  { as: 'scoped' },\n  async ({ headers }): Promise<{ identity: Identity | null }> => {\n    const token = bearerToken(headers.authorization)\n\n    if (!token) {\n      return { identity: null }\n    }\n\n    const claims = readSessionToken(token)\n\n    if (!claims) {\n      return { identity: null }\n    }\n\n    const account = await prisma.account.findUnique({\n      where: { id: claims.sub },\n      select: { id: true, email: true, roles: true, organiserId: true, suspendedAt: true },\n    })\n\n    if (!account || account.suspendedAt !== null) {\n      return { identity: null }\n    }\n\n    return {\n      identity: {\n        accountId: account.id,\n        email: account.email,\n        roles: account.roles,\n        organiserId: account.organiserId,\n      },\n    }\n  },\n)\n\ntype GuardContext = {\n  identity: Identity | null\n  status: (code: number, body: unknown) => unknown\n}\n\nexport function requireAccount({ identity, status }: GuardContext) {\n  if (!identity) {\n    return status(401, { error: 'authentication_required' })\n  }\n}\n\nexport function requireOrganiser({ identity, status }: GuardContext) {\n  if (!identity) {\n    return status(401, { error: 'authentication_required' })\n  }\n\n  if (!identity.organiserId || !identity.roles.includes('organiser')) {\n    return status(403, { error: 'organiser_membership_required' })\n  }\n}\n\nexport function requirePromoter({ identity, status }: GuardContext) {\n  if (!identity) {\n    return status(401, { error: 'authentication_required' })\n  }\n\n  if (!identity.roles.includes('promoter') && !identity.roles.includes('organiser')) {\n    return status(403, { error: 'promoter_role_required' })\n  }\n}\n\nexport function requireGateStaff({ identity, status }: GuardContext) {\n  if (!identity) {\n    return status(401, { error: 'authentication_required' })\n  }\n\n  if (!identity.roles.includes('gate')) {\n    return status(403, { error: 'gate_role_required' })\n  }\n}\n"
+      }
+    },
+    {
+      "id": "h6-ticketing-elysia-wallet-holder-change",
+      "family": "ticketing-elysia",
+      "architecture": "Elysia 1.3 on Bun with Prisma 6 for data access; caller identity comes from a bearer session token whose HMAC is verified in a scoped Elysia derive plugin (src/lib/identity.ts).",
+      "language": "typescript",
+      "file": "ticketing-elysia/src/routes/wallet.ts",
+      "scanAs": "src/routes/wallet.ts",
+      "kind": "safe",
+      "route": "PATCH /api/wallet/tickets/:ticketId/holder",
+      "runtimeVerifiable": true,
+      "pairedWith": "h6-ticketing-elysia-ticket-handover",
+      "why": "The same path-id-addressed ticket mutation, but it runs as an updateMany whose where clause carries ownerId: actor.accountId, so a ticket belonging to another account matches nothing and the zero count is returned as a 404 \u2014 the ownership predicate is the guard.",
+      "packageJson": {
+        "name": "gatefold-ticketing-api",
+        "version": "1.6.2",
+        "private": true,
+        "type": "module",
+        "module": "src/index.ts",
+        "scripts": {
+          "dev": "bun run --watch src/index.ts",
+          "start": "bun run src/index.ts",
+          "db:generate": "prisma generate",
+          "db:deploy": "prisma migrate deploy"
+        },
+        "dependencies": {
+          "@elysiajs/cors": "^1.3.0",
+          "@prisma/client": "^6.7.0",
+          "elysia": "^1.3.5"
+        },
+        "devDependencies": {
+          "@types/bun": "^1.2.12",
+          "prisma": "^6.7.0",
+          "typescript": "^5.8.3"
+        }
+      },
+      "extraFiles": {
+        "src/config/env.ts": "/**\n * Runtime configuration for the Gatefold ticketing API.\n *\n * Everything is read once at boot so a missing secret takes the container down\n * on start instead of failing the first request that happens to need it.\n */\n\nfunction required(name: string): string {\n  const value = Bun.env[name]\n\n  if (value === undefined || value.trim() === '') {\n    throw new Error(`Missing required environment variable: ${name}`)\n  }\n\n  return value.trim()\n}\n\nfunction numeric(name: string, fallback: number): number {\n  const raw = Bun.env[name]\n\n  if (raw === undefined || raw.trim() === '') {\n    return fallback\n  }\n\n  const parsed = Number.parseInt(raw, 10)\n\n  if (!Number.isFinite(parsed) || parsed <= 0) {\n    throw new Error(`Environment variable ${name} must be a positive integer`)\n  }\n\n  return parsed\n}\n\nexport const env = {\n  nodeEnv: Bun.env.NODE_ENV ?? 'development',\n  port: numeric('PORT', 3000),\n  databaseUrl: required('DATABASE_URL'),\n\n  /** Signs the attendee/organiser session tokens issued by the accounts service. */\n  sessionTokenSecret: required('SESSION_TOKEN_SECRET'),\n\n  /** Signs the compact pass tokens that end up inside the ticket QR code. */\n  gatePassSecret: required('GATE_PASS_SECRET'),\n\n  /** Where the nightly payout statement generator writes its output tree. */\n  statementDir: Bun.env.PAYOUT_STATEMENT_DIR ?? '/srv/gatefold/payout-statements',\n\n  /** How long after the door time a pass still scans, in minutes. */\n  gateGraceMinutes: numeric('GATE_GRACE_MINUTES', 45),\n\n  /** Ceiling on a single self-service order. */\n  maxTicketsPerOrder: numeric('MAX_TICKETS_PER_ORDER', 8),\n\n  /** Refunds at or below this figure skip the support queue. */\n  refundAutoApproveCents: numeric('REFUND_AUTO_APPROVE_CENTS', 5000),\n\n  allowedOrigins: (Bun.env.ALLOWED_ORIGINS ?? 'https://gatefold.events').split(',').map((origin) => origin.trim()),\n} as const\n\nexport type AppConfig = typeof env\n",
+        "src/lib/prisma.ts": "import { PrismaClient } from '@prisma/client'\n\nimport { env } from '../config/env'\n\n/**\n * Bun's watch mode re-evaluates modules on every save, which used to leave a\n * fan of orphaned pools behind. Keeping the client on globalThis outside of\n * production fixes that.\n */\nconst globalForPrisma = globalThis as unknown as { prismaClient?: PrismaClient }\n\nexport const prisma =\n  globalForPrisma.prismaClient ??\n  new PrismaClient({\n    datasources: { db: { url: env.databaseUrl } },\n    log: env.nodeEnv === 'production' ? ['warn', 'error'] : ['query', 'warn', 'error'],\n  })\n\nif (env.nodeEnv !== 'production') {\n  globalForPrisma.prismaClient = prisma\n}\n\nexport async function disconnectPrisma(): Promise<void> {\n  await prisma.$disconnect()\n}\n",
+        "src/lib/identity.ts": "import { createHmac, timingSafeEqual } from 'node:crypto'\nimport { Elysia } from 'elysia'\n\nimport { env } from '../config/env'\nimport { prisma } from './prisma'\n\n/**\n * Two kinds of compact token exist in this system and both are minted with the\n * same `<base64url(claims)>.<base64url(hmac)>` layout:\n *\n *   - session tokens, handed to the web app and the organiser console\n *   - gate pass tokens, printed into the QR code on a ticket\n *\n * Both are bearer credentials, so both get verified here before anything reads\n * a claim out of them.\n */\n\nexport type Identity = {\n  accountId: string\n  email: string\n  roles: string[]\n  organiserId: string | null\n}\n\nexport type SessionClaims = {\n  sub: string\n  scope: string\n  iat: number\n  exp: number\n}\n\nexport type PassClaims = {\n  ticketId: string\n  eventId: string\n  serial: number\n  iat: number\n  exp: number\n}\n\nconst MAX_TOKEN_BYTES = 2048\n\nfunction decodeClaims<T>(segment: string): T | null {\n  try {\n    return JSON.parse(Buffer.from(segment, 'base64url').toString('utf8')) as T\n  } catch {\n    return null\n  }\n}\n\n/**\n * Verifies the HMAC over the claim segment and only then decodes it. The\n * comparison runs through timingSafeEqual on equal-length buffers so a caller\n * cannot walk the signature out of us one byte at a time.\n */\nfunction readSignedToken<T extends { iat: number; exp: number }>(token: string, secret: string): T | null {\n  if (token.length === 0 || Buffer.byteLength(token, 'utf8') > MAX_TOKEN_BYTES) {\n    return null\n  }\n\n  const parts = token.split('.')\n\n  if (parts.length !== 2) {\n    return null\n  }\n\n  const [claimSegment, signature] = parts\n\n  if (!claimSegment || !signature) {\n    return null\n  }\n\n  const expected = Buffer.from(createHmac('sha256', secret).update(claimSegment).digest('base64url'), 'utf8')\n  const provided = Buffer.from(signature, 'utf8')\n\n  if (expected.length !== provided.length || !timingSafeEqual(expected, provided)) {\n    return null\n  }\n\n  const claims = decodeClaims<T>(claimSegment)\n\n  if (!claims || typeof claims.exp !== 'number' || typeof claims.iat !== 'number') {\n    return null\n  }\n\n  if (claims.exp * 1000 <= Date.now()) {\n    return null\n  }\n\n  return claims\n}\n\nexport function readSessionToken(token: string): SessionClaims | null {\n  const claims = readSignedToken<SessionClaims>(token, env.sessionTokenSecret)\n\n  if (!claims || typeof claims.sub !== 'string' || claims.sub.length === 0) {\n    return null\n  }\n\n  return claims\n}\n\nexport function readPassToken(token: string): PassClaims | null {\n  const claims = readSignedToken<PassClaims>(token, env.gatePassSecret)\n\n  if (!claims || typeof claims.ticketId !== 'string' || typeof claims.eventId !== 'string') {\n    return null\n  }\n\n  return claims\n}\n\nexport function signPassToken(claims: Omit<PassClaims, 'iat' | 'exp'>, ttlSeconds: number): string {\n  const now = Math.floor(Date.now() / 1000)\n  const payload: PassClaims = { ...claims, iat: now, exp: now + ttlSeconds }\n  const segment = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url')\n  const signature = createHmac('sha256', env.gatePassSecret).update(segment).digest('base64url')\n\n  return `${segment}.${signature}`\n}\n\nfunction bearerToken(header: string | undefined): string | null {\n  if (!header) {\n    return null\n  }\n\n  const [scheme, ...rest] = header.split(' ')\n\n  if (scheme?.toLowerCase() !== 'bearer' || rest.length === 0) {\n    return null\n  }\n\n  const token = rest.join(' ').trim()\n\n  return token.length > 0 ? token : null\n}\n\n/**\n * Scoped so every route group that mounts it gets its own resolved identity and\n * nothing leaks into sibling groups.\n */\nexport const identityPlugin = new Elysia({ name: 'identity' }).derive(\n  { as: 'scoped' },\n  async ({ headers }): Promise<{ identity: Identity | null }> => {\n    const token = bearerToken(headers.authorization)\n\n    if (!token) {\n      return { identity: null }\n    }\n\n    const claims = readSessionToken(token)\n\n    if (!claims) {\n      return { identity: null }\n    }\n\n    const account = await prisma.account.findUnique({\n      where: { id: claims.sub },\n      select: { id: true, email: true, roles: true, organiserId: true, suspendedAt: true },\n    })\n\n    if (!account || account.suspendedAt !== null) {\n      return { identity: null }\n    }\n\n    return {\n      identity: {\n        accountId: account.id,\n        email: account.email,\n        roles: account.roles,\n        organiserId: account.organiserId,\n      },\n    }\n  },\n)\n\ntype GuardContext = {\n  identity: Identity | null\n  status: (code: number, body: unknown) => unknown\n}\n\nexport function requireAccount({ identity, status }: GuardContext) {\n  if (!identity) {\n    return status(401, { error: 'authentication_required' })\n  }\n}\n\nexport function requireOrganiser({ identity, status }: GuardContext) {\n  if (!identity) {\n    return status(401, { error: 'authentication_required' })\n  }\n\n  if (!identity.organiserId || !identity.roles.includes('organiser')) {\n    return status(403, { error: 'organiser_membership_required' })\n  }\n}\n\nexport function requirePromoter({ identity, status }: GuardContext) {\n  if (!identity) {\n    return status(401, { error: 'authentication_required' })\n  }\n\n  if (!identity.roles.includes('promoter') && !identity.roles.includes('organiser')) {\n    return status(403, { error: 'promoter_role_required' })\n  }\n}\n\nexport function requireGateStaff({ identity, status }: GuardContext) {\n  if (!identity) {\n    return status(401, { error: 'authentication_required' })\n  }\n\n  if (!identity.roles.includes('gate')) {\n    return status(403, { error: 'gate_role_required' })\n  }\n}\n"
+      }
+    },
+    {
+      "id": "h6-ticketing-elysia-door-admission",
+      "family": "ticketing-elysia",
+      "architecture": "Elysia 1.3 on Bun with Prisma 6 for data access; caller identity comes from a bearer session token whose HMAC is verified in a scoped Elysia derive plugin (src/lib/identity.ts).",
+      "language": "typescript",
+      "file": "ticketing-elysia/src/routes/gate.ts",
+      "scanAs": "src/routes/gate.ts",
+      "kind": "vulnerable",
+      "category": "unverified_gate_pass_signature",
+      "cwe": "CWE-347",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 34,
+      "lineRange": [
+        26,
+        105
+      ],
+      "route": "POST /api/gate/check-in",
+      "runtimeVerifiable": true,
+      "why": "readScannedPass splits the compact pass token and JSON.parses its claim segment without ever recomputing the HMAC that readPassToken in src/lib/identity.ts exists to check, so ticketId, eventId and exp all come from an unauthenticated string and a hand-crafted QR code is admitted and written to the gate scan log as a valid pass.",
+      "packageJson": {
+        "name": "gatefold-ticketing-api",
+        "version": "1.6.2",
+        "private": true,
+        "type": "module",
+        "module": "src/index.ts",
+        "scripts": {
+          "dev": "bun run --watch src/index.ts",
+          "start": "bun run src/index.ts",
+          "db:generate": "prisma generate",
+          "db:deploy": "prisma migrate deploy"
+        },
+        "dependencies": {
+          "@elysiajs/cors": "^1.3.0",
+          "@prisma/client": "^6.7.0",
+          "elysia": "^1.3.5"
+        },
+        "devDependencies": {
+          "@types/bun": "^1.2.12",
+          "prisma": "^6.7.0",
+          "typescript": "^5.8.3"
+        }
+      },
+      "extraFiles": {
+        "src/config/env.ts": "/**\n * Runtime configuration for the Gatefold ticketing API.\n *\n * Everything is read once at boot so a missing secret takes the container down\n * on start instead of failing the first request that happens to need it.\n */\n\nfunction required(name: string): string {\n  const value = Bun.env[name]\n\n  if (value === undefined || value.trim() === '') {\n    throw new Error(`Missing required environment variable: ${name}`)\n  }\n\n  return value.trim()\n}\n\nfunction numeric(name: string, fallback: number): number {\n  const raw = Bun.env[name]\n\n  if (raw === undefined || raw.trim() === '') {\n    return fallback\n  }\n\n  const parsed = Number.parseInt(raw, 10)\n\n  if (!Number.isFinite(parsed) || parsed <= 0) {\n    throw new Error(`Environment variable ${name} must be a positive integer`)\n  }\n\n  return parsed\n}\n\nexport const env = {\n  nodeEnv: Bun.env.NODE_ENV ?? 'development',\n  port: numeric('PORT', 3000),\n  databaseUrl: required('DATABASE_URL'),\n\n  /** Signs the attendee/organiser session tokens issued by the accounts service. */\n  sessionTokenSecret: required('SESSION_TOKEN_SECRET'),\n\n  /** Signs the compact pass tokens that end up inside the ticket QR code. */\n  gatePassSecret: required('GATE_PASS_SECRET'),\n\n  /** Where the nightly payout statement generator writes its output tree. */\n  statementDir: Bun.env.PAYOUT_STATEMENT_DIR ?? '/srv/gatefold/payout-statements',\n\n  /** How long after the door time a pass still scans, in minutes. */\n  gateGraceMinutes: numeric('GATE_GRACE_MINUTES', 45),\n\n  /** Ceiling on a single self-service order. */\n  maxTicketsPerOrder: numeric('MAX_TICKETS_PER_ORDER', 8),\n\n  /** Refunds at or below this figure skip the support queue. */\n  refundAutoApproveCents: numeric('REFUND_AUTO_APPROVE_CENTS', 5000),\n\n  allowedOrigins: (Bun.env.ALLOWED_ORIGINS ?? 'https://gatefold.events').split(',').map((origin) => origin.trim()),\n} as const\n\nexport type AppConfig = typeof env\n",
+        "src/lib/prisma.ts": "import { PrismaClient } from '@prisma/client'\n\nimport { env } from '../config/env'\n\n/**\n * Bun's watch mode re-evaluates modules on every save, which used to leave a\n * fan of orphaned pools behind. Keeping the client on globalThis outside of\n * production fixes that.\n */\nconst globalForPrisma = globalThis as unknown as { prismaClient?: PrismaClient }\n\nexport const prisma =\n  globalForPrisma.prismaClient ??\n  new PrismaClient({\n    datasources: { db: { url: env.databaseUrl } },\n    log: env.nodeEnv === 'production' ? ['warn', 'error'] : ['query', 'warn', 'error'],\n  })\n\nif (env.nodeEnv !== 'production') {\n  globalForPrisma.prismaClient = prisma\n}\n\nexport async function disconnectPrisma(): Promise<void> {\n  await prisma.$disconnect()\n}\n",
+        "src/lib/identity.ts": "import { createHmac, timingSafeEqual } from 'node:crypto'\nimport { Elysia } from 'elysia'\n\nimport { env } from '../config/env'\nimport { prisma } from './prisma'\n\n/**\n * Two kinds of compact token exist in this system and both are minted with the\n * same `<base64url(claims)>.<base64url(hmac)>` layout:\n *\n *   - session tokens, handed to the web app and the organiser console\n *   - gate pass tokens, printed into the QR code on a ticket\n *\n * Both are bearer credentials, so both get verified here before anything reads\n * a claim out of them.\n */\n\nexport type Identity = {\n  accountId: string\n  email: string\n  roles: string[]\n  organiserId: string | null\n}\n\nexport type SessionClaims = {\n  sub: string\n  scope: string\n  iat: number\n  exp: number\n}\n\nexport type PassClaims = {\n  ticketId: string\n  eventId: string\n  serial: number\n  iat: number\n  exp: number\n}\n\nconst MAX_TOKEN_BYTES = 2048\n\nfunction decodeClaims<T>(segment: string): T | null {\n  try {\n    return JSON.parse(Buffer.from(segment, 'base64url').toString('utf8')) as T\n  } catch {\n    return null\n  }\n}\n\n/**\n * Verifies the HMAC over the claim segment and only then decodes it. The\n * comparison runs through timingSafeEqual on equal-length buffers so a caller\n * cannot walk the signature out of us one byte at a time.\n */\nfunction readSignedToken<T extends { iat: number; exp: number }>(token: string, secret: string): T | null {\n  if (token.length === 0 || Buffer.byteLength(token, 'utf8') > MAX_TOKEN_BYTES) {\n    return null\n  }\n\n  const parts = token.split('.')\n\n  if (parts.length !== 2) {\n    return null\n  }\n\n  const [claimSegment, signature] = parts\n\n  if (!claimSegment || !signature) {\n    return null\n  }\n\n  const expected = Buffer.from(createHmac('sha256', secret).update(claimSegment).digest('base64url'), 'utf8')\n  const provided = Buffer.from(signature, 'utf8')\n\n  if (expected.length !== provided.length || !timingSafeEqual(expected, provided)) {\n    return null\n  }\n\n  const claims = decodeClaims<T>(claimSegment)\n\n  if (!claims || typeof claims.exp !== 'number' || typeof claims.iat !== 'number') {\n    return null\n  }\n\n  if (claims.exp * 1000 <= Date.now()) {\n    return null\n  }\n\n  return claims\n}\n\nexport function readSessionToken(token: string): SessionClaims | null {\n  const claims = readSignedToken<SessionClaims>(token, env.sessionTokenSecret)\n\n  if (!claims || typeof claims.sub !== 'string' || claims.sub.length === 0) {\n    return null\n  }\n\n  return claims\n}\n\nexport function readPassToken(token: string): PassClaims | null {\n  const claims = readSignedToken<PassClaims>(token, env.gatePassSecret)\n\n  if (!claims || typeof claims.ticketId !== 'string' || typeof claims.eventId !== 'string') {\n    return null\n  }\n\n  return claims\n}\n\nexport function signPassToken(claims: Omit<PassClaims, 'iat' | 'exp'>, ttlSeconds: number): string {\n  const now = Math.floor(Date.now() / 1000)\n  const payload: PassClaims = { ...claims, iat: now, exp: now + ttlSeconds }\n  const segment = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url')\n  const signature = createHmac('sha256', env.gatePassSecret).update(segment).digest('base64url')\n\n  return `${segment}.${signature}`\n}\n\nfunction bearerToken(header: string | undefined): string | null {\n  if (!header) {\n    return null\n  }\n\n  const [scheme, ...rest] = header.split(' ')\n\n  if (scheme?.toLowerCase() !== 'bearer' || rest.length === 0) {\n    return null\n  }\n\n  const token = rest.join(' ').trim()\n\n  return token.length > 0 ? token : null\n}\n\n/**\n * Scoped so every route group that mounts it gets its own resolved identity and\n * nothing leaks into sibling groups.\n */\nexport const identityPlugin = new Elysia({ name: 'identity' }).derive(\n  { as: 'scoped' },\n  async ({ headers }): Promise<{ identity: Identity | null }> => {\n    const token = bearerToken(headers.authorization)\n\n    if (!token) {\n      return { identity: null }\n    }\n\n    const claims = readSessionToken(token)\n\n    if (!claims) {\n      return { identity: null }\n    }\n\n    const account = await prisma.account.findUnique({\n      where: { id: claims.sub },\n      select: { id: true, email: true, roles: true, organiserId: true, suspendedAt: true },\n    })\n\n    if (!account || account.suspendedAt !== null) {\n      return { identity: null }\n    }\n\n    return {\n      identity: {\n        accountId: account.id,\n        email: account.email,\n        roles: account.roles,\n        organiserId: account.organiserId,\n      },\n    }\n  },\n)\n\ntype GuardContext = {\n  identity: Identity | null\n  status: (code: number, body: unknown) => unknown\n}\n\nexport function requireAccount({ identity, status }: GuardContext) {\n  if (!identity) {\n    return status(401, { error: 'authentication_required' })\n  }\n}\n\nexport function requireOrganiser({ identity, status }: GuardContext) {\n  if (!identity) {\n    return status(401, { error: 'authentication_required' })\n  }\n\n  if (!identity.organiserId || !identity.roles.includes('organiser')) {\n    return status(403, { error: 'organiser_membership_required' })\n  }\n}\n\nexport function requirePromoter({ identity, status }: GuardContext) {\n  if (!identity) {\n    return status(401, { error: 'authentication_required' })\n  }\n\n  if (!identity.roles.includes('promoter') && !identity.roles.includes('organiser')) {\n    return status(403, { error: 'promoter_role_required' })\n  }\n}\n\nexport function requireGateStaff({ identity, status }: GuardContext) {\n  if (!identity) {\n    return status(401, { error: 'authentication_required' })\n  }\n\n  if (!identity.roles.includes('gate')) {\n    return status(403, { error: 'gate_role_required' })\n  }\n}\n"
+      }
+    },
+    {
+      "id": "h6-ticketing-elysia-session-token-check",
+      "family": "ticketing-elysia",
+      "architecture": "Elysia 1.3 on Bun with Prisma 6 for data access; caller identity comes from a bearer session token whose HMAC is verified in a scoped Elysia derive plugin (src/lib/identity.ts).",
+      "language": "typescript",
+      "file": "ticketing-elysia/src/lib/identity.ts",
+      "scanAs": "src/lib/identity.ts",
+      "kind": "safe",
+      "runtimeVerifiable": true,
+      "pairedWith": "h6-ticketing-elysia-door-admission",
+      "why": "The same `<claims>.<signature>` compact token shape, but readSignedToken recomputes the HMAC over the claim segment and compares it with timingSafeEqual on equal-length buffers before a single claim is decoded, and only then applies the expiry check, so a forged or edited token is rejected.",
+      "packageJson": {
+        "name": "gatefold-ticketing-api",
+        "version": "1.6.2",
+        "private": true,
+        "type": "module",
+        "module": "src/index.ts",
+        "scripts": {
+          "dev": "bun run --watch src/index.ts",
+          "start": "bun run src/index.ts",
+          "db:generate": "prisma generate",
+          "db:deploy": "prisma migrate deploy"
+        },
+        "dependencies": {
+          "@elysiajs/cors": "^1.3.0",
+          "@prisma/client": "^6.7.0",
+          "elysia": "^1.3.5"
+        },
+        "devDependencies": {
+          "@types/bun": "^1.2.12",
+          "prisma": "^6.7.0",
+          "typescript": "^5.8.3"
+        }
+      },
+      "extraFiles": {
+        "src/config/env.ts": "/**\n * Runtime configuration for the Gatefold ticketing API.\n *\n * Everything is read once at boot so a missing secret takes the container down\n * on start instead of failing the first request that happens to need it.\n */\n\nfunction required(name: string): string {\n  const value = Bun.env[name]\n\n  if (value === undefined || value.trim() === '') {\n    throw new Error(`Missing required environment variable: ${name}`)\n  }\n\n  return value.trim()\n}\n\nfunction numeric(name: string, fallback: number): number {\n  const raw = Bun.env[name]\n\n  if (raw === undefined || raw.trim() === '') {\n    return fallback\n  }\n\n  const parsed = Number.parseInt(raw, 10)\n\n  if (!Number.isFinite(parsed) || parsed <= 0) {\n    throw new Error(`Environment variable ${name} must be a positive integer`)\n  }\n\n  return parsed\n}\n\nexport const env = {\n  nodeEnv: Bun.env.NODE_ENV ?? 'development',\n  port: numeric('PORT', 3000),\n  databaseUrl: required('DATABASE_URL'),\n\n  /** Signs the attendee/organiser session tokens issued by the accounts service. */\n  sessionTokenSecret: required('SESSION_TOKEN_SECRET'),\n\n  /** Signs the compact pass tokens that end up inside the ticket QR code. */\n  gatePassSecret: required('GATE_PASS_SECRET'),\n\n  /** Where the nightly payout statement generator writes its output tree. */\n  statementDir: Bun.env.PAYOUT_STATEMENT_DIR ?? '/srv/gatefold/payout-statements',\n\n  /** How long after the door time a pass still scans, in minutes. */\n  gateGraceMinutes: numeric('GATE_GRACE_MINUTES', 45),\n\n  /** Ceiling on a single self-service order. */\n  maxTicketsPerOrder: numeric('MAX_TICKETS_PER_ORDER', 8),\n\n  /** Refunds at or below this figure skip the support queue. */\n  refundAutoApproveCents: numeric('REFUND_AUTO_APPROVE_CENTS', 5000),\n\n  allowedOrigins: (Bun.env.ALLOWED_ORIGINS ?? 'https://gatefold.events').split(',').map((origin) => origin.trim()),\n} as const\n\nexport type AppConfig = typeof env\n",
+        "src/lib/prisma.ts": "import { PrismaClient } from '@prisma/client'\n\nimport { env } from '../config/env'\n\n/**\n * Bun's watch mode re-evaluates modules on every save, which used to leave a\n * fan of orphaned pools behind. Keeping the client on globalThis outside of\n * production fixes that.\n */\nconst globalForPrisma = globalThis as unknown as { prismaClient?: PrismaClient }\n\nexport const prisma =\n  globalForPrisma.prismaClient ??\n  new PrismaClient({\n    datasources: { db: { url: env.databaseUrl } },\n    log: env.nodeEnv === 'production' ? ['warn', 'error'] : ['query', 'warn', 'error'],\n  })\n\nif (env.nodeEnv !== 'production') {\n  globalForPrisma.prismaClient = prisma\n}\n\nexport async function disconnectPrisma(): Promise<void> {\n  await prisma.$disconnect()\n}\n"
+      }
+    },
+    {
+      "id": "h6-ticketing-elysia-payout-export-download",
+      "family": "ticketing-elysia",
+      "architecture": "Elysia 1.3 on Bun with Prisma 6 for data access; caller identity comes from a bearer session token whose HMAC is verified in a scoped Elysia derive plugin (src/lib/identity.ts).",
+      "language": "typescript",
+      "file": "ticketing-elysia/src/routes/payouts.ts",
+      "scanAs": "src/routes/payouts.ts",
+      "kind": "vulnerable",
+      "category": "caller_controlled_export_file_path",
+      "cwe": "CWE-22",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 97,
+      "lineRange": [
+        89,
+        105
+      ],
+      "route": "GET /api/organiser/payouts/exports/*",
+      "runtimeVerifiable": true,
+      "why": "The wildcard segment params['*'] is joined onto env.statementDir and opened with Bun.file with no containment or allowlist check, so a request like GET /api/organiser/payouts/exports/../../../../etc/passwd streams a file from outside the statement tree back to any organiser account.",
+      "packageJson": {
+        "name": "gatefold-ticketing-api",
+        "version": "1.6.2",
+        "private": true,
+        "type": "module",
+        "module": "src/index.ts",
+        "scripts": {
+          "dev": "bun run --watch src/index.ts",
+          "start": "bun run src/index.ts",
+          "db:generate": "prisma generate",
+          "db:deploy": "prisma migrate deploy"
+        },
+        "dependencies": {
+          "@elysiajs/cors": "^1.3.0",
+          "@prisma/client": "^6.7.0",
+          "elysia": "^1.3.5"
+        },
+        "devDependencies": {
+          "@types/bun": "^1.2.12",
+          "prisma": "^6.7.0",
+          "typescript": "^5.8.3"
+        }
+      },
+      "extraFiles": {
+        "src/config/env.ts": "/**\n * Runtime configuration for the Gatefold ticketing API.\n *\n * Everything is read once at boot so a missing secret takes the container down\n * on start instead of failing the first request that happens to need it.\n */\n\nfunction required(name: string): string {\n  const value = Bun.env[name]\n\n  if (value === undefined || value.trim() === '') {\n    throw new Error(`Missing required environment variable: ${name}`)\n  }\n\n  return value.trim()\n}\n\nfunction numeric(name: string, fallback: number): number {\n  const raw = Bun.env[name]\n\n  if (raw === undefined || raw.trim() === '') {\n    return fallback\n  }\n\n  const parsed = Number.parseInt(raw, 10)\n\n  if (!Number.isFinite(parsed) || parsed <= 0) {\n    throw new Error(`Environment variable ${name} must be a positive integer`)\n  }\n\n  return parsed\n}\n\nexport const env = {\n  nodeEnv: Bun.env.NODE_ENV ?? 'development',\n  port: numeric('PORT', 3000),\n  databaseUrl: required('DATABASE_URL'),\n\n  /** Signs the attendee/organiser session tokens issued by the accounts service. */\n  sessionTokenSecret: required('SESSION_TOKEN_SECRET'),\n\n  /** Signs the compact pass tokens that end up inside the ticket QR code. */\n  gatePassSecret: required('GATE_PASS_SECRET'),\n\n  /** Where the nightly payout statement generator writes its output tree. */\n  statementDir: Bun.env.PAYOUT_STATEMENT_DIR ?? '/srv/gatefold/payout-statements',\n\n  /** How long after the door time a pass still scans, in minutes. */\n  gateGraceMinutes: numeric('GATE_GRACE_MINUTES', 45),\n\n  /** Ceiling on a single self-service order. */\n  maxTicketsPerOrder: numeric('MAX_TICKETS_PER_ORDER', 8),\n\n  /** Refunds at or below this figure skip the support queue. */\n  refundAutoApproveCents: numeric('REFUND_AUTO_APPROVE_CENTS', 5000),\n\n  allowedOrigins: (Bun.env.ALLOWED_ORIGINS ?? 'https://gatefold.events').split(',').map((origin) => origin.trim()),\n} as const\n\nexport type AppConfig = typeof env\n",
+        "src/lib/prisma.ts": "import { PrismaClient } from '@prisma/client'\n\nimport { env } from '../config/env'\n\n/**\n * Bun's watch mode re-evaluates modules on every save, which used to leave a\n * fan of orphaned pools behind. Keeping the client on globalThis outside of\n * production fixes that.\n */\nconst globalForPrisma = globalThis as unknown as { prismaClient?: PrismaClient }\n\nexport const prisma =\n  globalForPrisma.prismaClient ??\n  new PrismaClient({\n    datasources: { db: { url: env.databaseUrl } },\n    log: env.nodeEnv === 'production' ? ['warn', 'error'] : ['query', 'warn', 'error'],\n  })\n\nif (env.nodeEnv !== 'production') {\n  globalForPrisma.prismaClient = prisma\n}\n\nexport async function disconnectPrisma(): Promise<void> {\n  await prisma.$disconnect()\n}\n",
+        "src/lib/identity.ts": "import { createHmac, timingSafeEqual } from 'node:crypto'\nimport { Elysia } from 'elysia'\n\nimport { env } from '../config/env'\nimport { prisma } from './prisma'\n\n/**\n * Two kinds of compact token exist in this system and both are minted with the\n * same `<base64url(claims)>.<base64url(hmac)>` layout:\n *\n *   - session tokens, handed to the web app and the organiser console\n *   - gate pass tokens, printed into the QR code on a ticket\n *\n * Both are bearer credentials, so both get verified here before anything reads\n * a claim out of them.\n */\n\nexport type Identity = {\n  accountId: string\n  email: string\n  roles: string[]\n  organiserId: string | null\n}\n\nexport type SessionClaims = {\n  sub: string\n  scope: string\n  iat: number\n  exp: number\n}\n\nexport type PassClaims = {\n  ticketId: string\n  eventId: string\n  serial: number\n  iat: number\n  exp: number\n}\n\nconst MAX_TOKEN_BYTES = 2048\n\nfunction decodeClaims<T>(segment: string): T | null {\n  try {\n    return JSON.parse(Buffer.from(segment, 'base64url').toString('utf8')) as T\n  } catch {\n    return null\n  }\n}\n\n/**\n * Verifies the HMAC over the claim segment and only then decodes it. The\n * comparison runs through timingSafeEqual on equal-length buffers so a caller\n * cannot walk the signature out of us one byte at a time.\n */\nfunction readSignedToken<T extends { iat: number; exp: number }>(token: string, secret: string): T | null {\n  if (token.length === 0 || Buffer.byteLength(token, 'utf8') > MAX_TOKEN_BYTES) {\n    return null\n  }\n\n  const parts = token.split('.')\n\n  if (parts.length !== 2) {\n    return null\n  }\n\n  const [claimSegment, signature] = parts\n\n  if (!claimSegment || !signature) {\n    return null\n  }\n\n  const expected = Buffer.from(createHmac('sha256', secret).update(claimSegment).digest('base64url'), 'utf8')\n  const provided = Buffer.from(signature, 'utf8')\n\n  if (expected.length !== provided.length || !timingSafeEqual(expected, provided)) {\n    return null\n  }\n\n  const claims = decodeClaims<T>(claimSegment)\n\n  if (!claims || typeof claims.exp !== 'number' || typeof claims.iat !== 'number') {\n    return null\n  }\n\n  if (claims.exp * 1000 <= Date.now()) {\n    return null\n  }\n\n  return claims\n}\n\nexport function readSessionToken(token: string): SessionClaims | null {\n  const claims = readSignedToken<SessionClaims>(token, env.sessionTokenSecret)\n\n  if (!claims || typeof claims.sub !== 'string' || claims.sub.length === 0) {\n    return null\n  }\n\n  return claims\n}\n\nexport function readPassToken(token: string): PassClaims | null {\n  const claims = readSignedToken<PassClaims>(token, env.gatePassSecret)\n\n  if (!claims || typeof claims.ticketId !== 'string' || typeof claims.eventId !== 'string') {\n    return null\n  }\n\n  return claims\n}\n\nexport function signPassToken(claims: Omit<PassClaims, 'iat' | 'exp'>, ttlSeconds: number): string {\n  const now = Math.floor(Date.now() / 1000)\n  const payload: PassClaims = { ...claims, iat: now, exp: now + ttlSeconds }\n  const segment = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url')\n  const signature = createHmac('sha256', env.gatePassSecret).update(segment).digest('base64url')\n\n  return `${segment}.${signature}`\n}\n\nfunction bearerToken(header: string | undefined): string | null {\n  if (!header) {\n    return null\n  }\n\n  const [scheme, ...rest] = header.split(' ')\n\n  if (scheme?.toLowerCase() !== 'bearer' || rest.length === 0) {\n    return null\n  }\n\n  const token = rest.join(' ').trim()\n\n  return token.length > 0 ? token : null\n}\n\n/**\n * Scoped so every route group that mounts it gets its own resolved identity and\n * nothing leaks into sibling groups.\n */\nexport const identityPlugin = new Elysia({ name: 'identity' }).derive(\n  { as: 'scoped' },\n  async ({ headers }): Promise<{ identity: Identity | null }> => {\n    const token = bearerToken(headers.authorization)\n\n    if (!token) {\n      return { identity: null }\n    }\n\n    const claims = readSessionToken(token)\n\n    if (!claims) {\n      return { identity: null }\n    }\n\n    const account = await prisma.account.findUnique({\n      where: { id: claims.sub },\n      select: { id: true, email: true, roles: true, organiserId: true, suspendedAt: true },\n    })\n\n    if (!account || account.suspendedAt !== null) {\n      return { identity: null }\n    }\n\n    return {\n      identity: {\n        accountId: account.id,\n        email: account.email,\n        roles: account.roles,\n        organiserId: account.organiserId,\n      },\n    }\n  },\n)\n\ntype GuardContext = {\n  identity: Identity | null\n  status: (code: number, body: unknown) => unknown\n}\n\nexport function requireAccount({ identity, status }: GuardContext) {\n  if (!identity) {\n    return status(401, { error: 'authentication_required' })\n  }\n}\n\nexport function requireOrganiser({ identity, status }: GuardContext) {\n  if (!identity) {\n    return status(401, { error: 'authentication_required' })\n  }\n\n  if (!identity.organiserId || !identity.roles.includes('organiser')) {\n    return status(403, { error: 'organiser_membership_required' })\n  }\n}\n\nexport function requirePromoter({ identity, status }: GuardContext) {\n  if (!identity) {\n    return status(401, { error: 'authentication_required' })\n  }\n\n  if (!identity.roles.includes('promoter') && !identity.roles.includes('organiser')) {\n    return status(403, { error: 'promoter_role_required' })\n  }\n}\n\nexport function requireGateStaff({ identity, status }: GuardContext) {\n  if (!identity) {\n    return status(401, { error: 'authentication_required' })\n  }\n\n  if (!identity.roles.includes('gate')) {\n    return status(403, { error: 'gate_role_required' })\n  }\n}\n",
+        "src/domain/payout-statements.ts": "import { join, resolve, sep } from 'node:path'\n\nimport { env } from '../config/env'\nimport { prisma } from '../lib/prisma'\n\n/**\n * Payout statements are generated nightly into a tree under\n * PAYOUT_STATEMENT_DIR:\n *\n *   <year>-<period>/<organiser-reference>/statement-<uuid>.csv\n *\n * The key of each generated file is recorded on the Payout row, so nothing here\n * ever has to build a path out of something a caller typed.\n */\n\nconst STATEMENT_ROOT = resolve(env.statementDir)\n\nconst STORAGE_KEY_PATTERN = /^\\d{4}-(Q[1-4]|M(0[1-9]|1[0-2]))\\/[A-Z0-9]{6,20}\\/statement-[a-z0-9-]{8,40}\\.csv$/\n\nexport type StatementDownload = {\n  file: ReturnType<typeof Bun.file>\n  downloadName: string\n  sizeBytes: number\n}\n\n/**\n * Resolves the statement for one payout belonging to one organiser.\n *\n * Three things keep this inside the tree: the key comes off the Payout row\n * rather than the request, the key has to match the generator's own naming\n * pattern, and the resolved absolute path has to still sit under the statement\n * root before we hand the file to Bun.\n */\nexport async function loadPayoutStatement(payoutId: string, organiserId: string): Promise<StatementDownload | null> {\n  const payout = await prisma.payout.findFirst({\n    where: { id: payoutId, organiserId, status: { in: ['SETTLED', 'REPORTED'] } },\n    select: { id: true, periodLabel: true, storageKey: true, organiserId: true },\n  })\n\n  if (!payout?.storageKey) {\n    return null\n  }\n\n  if (!STORAGE_KEY_PATTERN.test(payout.storageKey)) {\n    console.warn('payout.statement.key_rejected', { payoutId: payout.id })\n    return null\n  }\n\n  const absolutePath = resolve(join(STATEMENT_ROOT, payout.storageKey))\n\n  if (absolutePath !== STATEMENT_ROOT && !absolutePath.startsWith(`${STATEMENT_ROOT}${sep}`)) {\n    console.warn('payout.statement.outside_root', { payoutId: payout.id })\n    return null\n  }\n\n  const file = Bun.file(absolutePath)\n\n  if (!(await file.exists())) {\n    return null\n  }\n\n  return {\n    file,\n    downloadName: `payout-${payout.periodLabel}-${payout.id}.csv`,\n    sizeBytes: file.size,\n  }\n}\n\n/**\n * Summary rows for the organiser console. Money never comes from the request:\n * every figure is aggregated out of the ticket rows we captured.\n */\nexport async function summarisePayout(payoutId: string, organiserId: string) {\n  const payout = await prisma.payout.findFirst({\n    where: { id: payoutId, organiserId },\n    select: {\n      id: true,\n      periodLabel: true,\n      status: true,\n      settledAt: true,\n      event: { select: { id: true, title: true, startsAt: true } },\n    },\n  })\n\n  if (!payout) {\n    return null\n  }\n\n  const totals = await prisma.ticket.aggregate({\n    where: { eventId: payout.event.id, status: 'ISSUED' },\n    _sum: { pricePaidCents: true, feeCents: true },\n    _count: { _all: true },\n  })\n\n  const gross = totals._sum.pricePaidCents ?? 0\n  const fees = totals._sum.feeCents ?? 0\n\n  return {\n    payoutId: payout.id,\n    periodLabel: payout.periodLabel,\n    status: payout.status,\n    settledAt: payout.settledAt,\n    event: payout.event,\n    ticketsSold: totals._count._all,\n    grossCents: gross,\n    feesCents: fees,\n    netCents: gross - fees,\n  }\n}\n"
+      }
+    },
+    {
+      "id": "h6-ticketing-elysia-payout-statement-file",
+      "family": "ticketing-elysia",
+      "architecture": "Elysia 1.3 on Bun with Prisma 6 for data access; caller identity comes from a bearer session token whose HMAC is verified in a scoped Elysia derive plugin (src/lib/identity.ts).",
+      "language": "typescript",
+      "file": "ticketing-elysia/src/domain/payout-statements.ts",
+      "scanAs": "src/domain/payout-statements.ts",
+      "kind": "safe",
+      "runtimeVerifiable": true,
+      "pairedWith": "h6-ticketing-elysia-payout-export-download",
+      "why": "The same join + Bun.file download, but the relative key is read off the Payout row that was selected by organiserId, it has to match the generator's own naming pattern, and the resolved absolute path has to still sit under STATEMENT_ROOT before the file is opened.",
+      "packageJson": {
+        "name": "gatefold-ticketing-api",
+        "version": "1.6.2",
+        "private": true,
+        "type": "module",
+        "module": "src/index.ts",
+        "scripts": {
+          "dev": "bun run --watch src/index.ts",
+          "start": "bun run src/index.ts",
+          "db:generate": "prisma generate",
+          "db:deploy": "prisma migrate deploy"
+        },
+        "dependencies": {
+          "@elysiajs/cors": "^1.3.0",
+          "@prisma/client": "^6.7.0",
+          "elysia": "^1.3.5"
+        },
+        "devDependencies": {
+          "@types/bun": "^1.2.12",
+          "prisma": "^6.7.0",
+          "typescript": "^5.8.3"
+        }
+      },
+      "extraFiles": {
+        "src/config/env.ts": "/**\n * Runtime configuration for the Gatefold ticketing API.\n *\n * Everything is read once at boot so a missing secret takes the container down\n * on start instead of failing the first request that happens to need it.\n */\n\nfunction required(name: string): string {\n  const value = Bun.env[name]\n\n  if (value === undefined || value.trim() === '') {\n    throw new Error(`Missing required environment variable: ${name}`)\n  }\n\n  return value.trim()\n}\n\nfunction numeric(name: string, fallback: number): number {\n  const raw = Bun.env[name]\n\n  if (raw === undefined || raw.trim() === '') {\n    return fallback\n  }\n\n  const parsed = Number.parseInt(raw, 10)\n\n  if (!Number.isFinite(parsed) || parsed <= 0) {\n    throw new Error(`Environment variable ${name} must be a positive integer`)\n  }\n\n  return parsed\n}\n\nexport const env = {\n  nodeEnv: Bun.env.NODE_ENV ?? 'development',\n  port: numeric('PORT', 3000),\n  databaseUrl: required('DATABASE_URL'),\n\n  /** Signs the attendee/organiser session tokens issued by the accounts service. */\n  sessionTokenSecret: required('SESSION_TOKEN_SECRET'),\n\n  /** Signs the compact pass tokens that end up inside the ticket QR code. */\n  gatePassSecret: required('GATE_PASS_SECRET'),\n\n  /** Where the nightly payout statement generator writes its output tree. */\n  statementDir: Bun.env.PAYOUT_STATEMENT_DIR ?? '/srv/gatefold/payout-statements',\n\n  /** How long after the door time a pass still scans, in minutes. */\n  gateGraceMinutes: numeric('GATE_GRACE_MINUTES', 45),\n\n  /** Ceiling on a single self-service order. */\n  maxTicketsPerOrder: numeric('MAX_TICKETS_PER_ORDER', 8),\n\n  /** Refunds at or below this figure skip the support queue. */\n  refundAutoApproveCents: numeric('REFUND_AUTO_APPROVE_CENTS', 5000),\n\n  allowedOrigins: (Bun.env.ALLOWED_ORIGINS ?? 'https://gatefold.events').split(',').map((origin) => origin.trim()),\n} as const\n\nexport type AppConfig = typeof env\n",
+        "src/lib/prisma.ts": "import { PrismaClient } from '@prisma/client'\n\nimport { env } from '../config/env'\n\n/**\n * Bun's watch mode re-evaluates modules on every save, which used to leave a\n * fan of orphaned pools behind. Keeping the client on globalThis outside of\n * production fixes that.\n */\nconst globalForPrisma = globalThis as unknown as { prismaClient?: PrismaClient }\n\nexport const prisma =\n  globalForPrisma.prismaClient ??\n  new PrismaClient({\n    datasources: { db: { url: env.databaseUrl } },\n    log: env.nodeEnv === 'production' ? ['warn', 'error'] : ['query', 'warn', 'error'],\n  })\n\nif (env.nodeEnv !== 'production') {\n  globalForPrisma.prismaClient = prisma\n}\n\nexport async function disconnectPrisma(): Promise<void> {\n  await prisma.$disconnect()\n}\n"
+      }
+    },
+    {
+      "id": "h6-ticketing-elysia-promoter-code-issuance",
+      "family": "ticketing-elysia",
+      "architecture": "Elysia 1.3 on Bun with Prisma 6 for data access; caller identity comes from a bearer session token whose HMAC is verified in a scoped Elysia derive plugin (src/lib/identity.ts).",
+      "language": "typescript",
+      "file": "ticketing-elysia/src/routes/promotions.ts",
+      "scanAs": "src/routes/promotions.ts",
+      "kind": "vulnerable",
+      "category": "unscoped_discount_code_issuance",
+      "cwe": "CWE-862",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "line": 47,
+      "lineRange": [
+        19,
+        57
+      ],
+      "route": "POST /api/promotions/codes",
+      "runtimeVerifiable": true,
+      "why": "The only guard on the group is requireAccount, and the create handler checks neither the caller's promoter role nor that body.eventId belongs to their organiser, so any signed-in attendee can mint a 100%-off code against any published event \u2014 the sibling read and revoke handlers in the same file do apply requirePromoter and an organiserId scope.",
+      "packageJson": {
+        "name": "gatefold-ticketing-api",
+        "version": "1.6.2",
+        "private": true,
+        "type": "module",
+        "module": "src/index.ts",
+        "scripts": {
+          "dev": "bun run --watch src/index.ts",
+          "start": "bun run src/index.ts",
+          "db:generate": "prisma generate",
+          "db:deploy": "prisma migrate deploy"
+        },
+        "dependencies": {
+          "@elysiajs/cors": "^1.3.0",
+          "@prisma/client": "^6.7.0",
+          "elysia": "^1.3.5"
+        },
+        "devDependencies": {
+          "@types/bun": "^1.2.12",
+          "prisma": "^6.7.0",
+          "typescript": "^5.8.3"
+        }
+      },
+      "extraFiles": {
+        "src/config/env.ts": "/**\n * Runtime configuration for the Gatefold ticketing API.\n *\n * Everything is read once at boot so a missing secret takes the container down\n * on start instead of failing the first request that happens to need it.\n */\n\nfunction required(name: string): string {\n  const value = Bun.env[name]\n\n  if (value === undefined || value.trim() === '') {\n    throw new Error(`Missing required environment variable: ${name}`)\n  }\n\n  return value.trim()\n}\n\nfunction numeric(name: string, fallback: number): number {\n  const raw = Bun.env[name]\n\n  if (raw === undefined || raw.trim() === '') {\n    return fallback\n  }\n\n  const parsed = Number.parseInt(raw, 10)\n\n  if (!Number.isFinite(parsed) || parsed <= 0) {\n    throw new Error(`Environment variable ${name} must be a positive integer`)\n  }\n\n  return parsed\n}\n\nexport const env = {\n  nodeEnv: Bun.env.NODE_ENV ?? 'development',\n  port: numeric('PORT', 3000),\n  databaseUrl: required('DATABASE_URL'),\n\n  /** Signs the attendee/organiser session tokens issued by the accounts service. */\n  sessionTokenSecret: required('SESSION_TOKEN_SECRET'),\n\n  /** Signs the compact pass tokens that end up inside the ticket QR code. */\n  gatePassSecret: required('GATE_PASS_SECRET'),\n\n  /** Where the nightly payout statement generator writes its output tree. */\n  statementDir: Bun.env.PAYOUT_STATEMENT_DIR ?? '/srv/gatefold/payout-statements',\n\n  /** How long after the door time a pass still scans, in minutes. */\n  gateGraceMinutes: numeric('GATE_GRACE_MINUTES', 45),\n\n  /** Ceiling on a single self-service order. */\n  maxTicketsPerOrder: numeric('MAX_TICKETS_PER_ORDER', 8),\n\n  /** Refunds at or below this figure skip the support queue. */\n  refundAutoApproveCents: numeric('REFUND_AUTO_APPROVE_CENTS', 5000),\n\n  allowedOrigins: (Bun.env.ALLOWED_ORIGINS ?? 'https://gatefold.events').split(',').map((origin) => origin.trim()),\n} as const\n\nexport type AppConfig = typeof env\n",
+        "src/lib/prisma.ts": "import { PrismaClient } from '@prisma/client'\n\nimport { env } from '../config/env'\n\n/**\n * Bun's watch mode re-evaluates modules on every save, which used to leave a\n * fan of orphaned pools behind. Keeping the client on globalThis outside of\n * production fixes that.\n */\nconst globalForPrisma = globalThis as unknown as { prismaClient?: PrismaClient }\n\nexport const prisma =\n  globalForPrisma.prismaClient ??\n  new PrismaClient({\n    datasources: { db: { url: env.databaseUrl } },\n    log: env.nodeEnv === 'production' ? ['warn', 'error'] : ['query', 'warn', 'error'],\n  })\n\nif (env.nodeEnv !== 'production') {\n  globalForPrisma.prismaClient = prisma\n}\n\nexport async function disconnectPrisma(): Promise<void> {\n  await prisma.$disconnect()\n}\n",
+        "src/lib/identity.ts": "import { createHmac, timingSafeEqual } from 'node:crypto'\nimport { Elysia } from 'elysia'\n\nimport { env } from '../config/env'\nimport { prisma } from './prisma'\n\n/**\n * Two kinds of compact token exist in this system and both are minted with the\n * same `<base64url(claims)>.<base64url(hmac)>` layout:\n *\n *   - session tokens, handed to the web app and the organiser console\n *   - gate pass tokens, printed into the QR code on a ticket\n *\n * Both are bearer credentials, so both get verified here before anything reads\n * a claim out of them.\n */\n\nexport type Identity = {\n  accountId: string\n  email: string\n  roles: string[]\n  organiserId: string | null\n}\n\nexport type SessionClaims = {\n  sub: string\n  scope: string\n  iat: number\n  exp: number\n}\n\nexport type PassClaims = {\n  ticketId: string\n  eventId: string\n  serial: number\n  iat: number\n  exp: number\n}\n\nconst MAX_TOKEN_BYTES = 2048\n\nfunction decodeClaims<T>(segment: string): T | null {\n  try {\n    return JSON.parse(Buffer.from(segment, 'base64url').toString('utf8')) as T\n  } catch {\n    return null\n  }\n}\n\n/**\n * Verifies the HMAC over the claim segment and only then decodes it. The\n * comparison runs through timingSafeEqual on equal-length buffers so a caller\n * cannot walk the signature out of us one byte at a time.\n */\nfunction readSignedToken<T extends { iat: number; exp: number }>(token: string, secret: string): T | null {\n  if (token.length === 0 || Buffer.byteLength(token, 'utf8') > MAX_TOKEN_BYTES) {\n    return null\n  }\n\n  const parts = token.split('.')\n\n  if (parts.length !== 2) {\n    return null\n  }\n\n  const [claimSegment, signature] = parts\n\n  if (!claimSegment || !signature) {\n    return null\n  }\n\n  const expected = Buffer.from(createHmac('sha256', secret).update(claimSegment).digest('base64url'), 'utf8')\n  const provided = Buffer.from(signature, 'utf8')\n\n  if (expected.length !== provided.length || !timingSafeEqual(expected, provided)) {\n    return null\n  }\n\n  const claims = decodeClaims<T>(claimSegment)\n\n  if (!claims || typeof claims.exp !== 'number' || typeof claims.iat !== 'number') {\n    return null\n  }\n\n  if (claims.exp * 1000 <= Date.now()) {\n    return null\n  }\n\n  return claims\n}\n\nexport function readSessionToken(token: string): SessionClaims | null {\n  const claims = readSignedToken<SessionClaims>(token, env.sessionTokenSecret)\n\n  if (!claims || typeof claims.sub !== 'string' || claims.sub.length === 0) {\n    return null\n  }\n\n  return claims\n}\n\nexport function readPassToken(token: string): PassClaims | null {\n  const claims = readSignedToken<PassClaims>(token, env.gatePassSecret)\n\n  if (!claims || typeof claims.ticketId !== 'string' || typeof claims.eventId !== 'string') {\n    return null\n  }\n\n  return claims\n}\n\nexport function signPassToken(claims: Omit<PassClaims, 'iat' | 'exp'>, ttlSeconds: number): string {\n  const now = Math.floor(Date.now() / 1000)\n  const payload: PassClaims = { ...claims, iat: now, exp: now + ttlSeconds }\n  const segment = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url')\n  const signature = createHmac('sha256', env.gatePassSecret).update(segment).digest('base64url')\n\n  return `${segment}.${signature}`\n}\n\nfunction bearerToken(header: string | undefined): string | null {\n  if (!header) {\n    return null\n  }\n\n  const [scheme, ...rest] = header.split(' ')\n\n  if (scheme?.toLowerCase() !== 'bearer' || rest.length === 0) {\n    return null\n  }\n\n  const token = rest.join(' ').trim()\n\n  return token.length > 0 ? token : null\n}\n\n/**\n * Scoped so every route group that mounts it gets its own resolved identity and\n * nothing leaks into sibling groups.\n */\nexport const identityPlugin = new Elysia({ name: 'identity' }).derive(\n  { as: 'scoped' },\n  async ({ headers }): Promise<{ identity: Identity | null }> => {\n    const token = bearerToken(headers.authorization)\n\n    if (!token) {\n      return { identity: null }\n    }\n\n    const claims = readSessionToken(token)\n\n    if (!claims) {\n      return { identity: null }\n    }\n\n    const account = await prisma.account.findUnique({\n      where: { id: claims.sub },\n      select: { id: true, email: true, roles: true, organiserId: true, suspendedAt: true },\n    })\n\n    if (!account || account.suspendedAt !== null) {\n      return { identity: null }\n    }\n\n    return {\n      identity: {\n        accountId: account.id,\n        email: account.email,\n        roles: account.roles,\n        organiserId: account.organiserId,\n      },\n    }\n  },\n)\n\ntype GuardContext = {\n  identity: Identity | null\n  status: (code: number, body: unknown) => unknown\n}\n\nexport function requireAccount({ identity, status }: GuardContext) {\n  if (!identity) {\n    return status(401, { error: 'authentication_required' })\n  }\n}\n\nexport function requireOrganiser({ identity, status }: GuardContext) {\n  if (!identity) {\n    return status(401, { error: 'authentication_required' })\n  }\n\n  if (!identity.organiserId || !identity.roles.includes('organiser')) {\n    return status(403, { error: 'organiser_membership_required' })\n  }\n}\n\nexport function requirePromoter({ identity, status }: GuardContext) {\n  if (!identity) {\n    return status(401, { error: 'authentication_required' })\n  }\n\n  if (!identity.roles.includes('promoter') && !identity.roles.includes('organiser')) {\n    return status(403, { error: 'promoter_role_required' })\n  }\n}\n\nexport function requireGateStaff({ identity, status }: GuardContext) {\n  if (!identity) {\n    return status(401, { error: 'authentication_required' })\n  }\n\n  if (!identity.roles.includes('gate')) {\n    return status(403, { error: 'gate_role_required' })\n  }\n}\n"
+      }
+    },
+    {
+      "id": "h6-ticketing-elysia-refund-request-credit",
+      "family": "ticketing-elysia",
+      "architecture": "Elysia 1.3 on Bun with Prisma 6 for data access; caller identity comes from a bearer session token whose HMAC is verified in a scoped Elysia derive plugin (src/lib/identity.ts).",
+      "language": "typescript",
+      "file": "ticketing-elysia/src/routes/refunds.ts",
+      "scanAs": "src/routes/refunds.ts",
+      "kind": "vulnerable",
+      "category": "client_supplied_refund_amount",
+      "cwe": "CWE-472",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 86,
+      "lineRange": [
+        64,
+        99
+      ],
+      "route": "POST /api/refunds/requests",
+      "runtimeVerifiable": true,
+      "why": "body.amountCents is what decides whether the request auto-approves and is also the figure written to the credit note and incremented onto the account's wallet balance; it is never compared with ticket.pricePaidCents, so an attendee holding a cheap ticket can request the auto-approve ceiling and be credited far more than was ever captured.",
+      "packageJson": {
+        "name": "gatefold-ticketing-api",
+        "version": "1.6.2",
+        "private": true,
+        "type": "module",
+        "module": "src/index.ts",
+        "scripts": {
+          "dev": "bun run --watch src/index.ts",
+          "start": "bun run src/index.ts",
+          "db:generate": "prisma generate",
+          "db:deploy": "prisma migrate deploy"
+        },
+        "dependencies": {
+          "@elysiajs/cors": "^1.3.0",
+          "@prisma/client": "^6.7.0",
+          "elysia": "^1.3.5"
+        },
+        "devDependencies": {
+          "@types/bun": "^1.2.12",
+          "prisma": "^6.7.0",
+          "typescript": "^5.8.3"
+        }
+      },
+      "extraFiles": {
+        "src/config/env.ts": "/**\n * Runtime configuration for the Gatefold ticketing API.\n *\n * Everything is read once at boot so a missing secret takes the container down\n * on start instead of failing the first request that happens to need it.\n */\n\nfunction required(name: string): string {\n  const value = Bun.env[name]\n\n  if (value === undefined || value.trim() === '') {\n    throw new Error(`Missing required environment variable: ${name}`)\n  }\n\n  return value.trim()\n}\n\nfunction numeric(name: string, fallback: number): number {\n  const raw = Bun.env[name]\n\n  if (raw === undefined || raw.trim() === '') {\n    return fallback\n  }\n\n  const parsed = Number.parseInt(raw, 10)\n\n  if (!Number.isFinite(parsed) || parsed <= 0) {\n    throw new Error(`Environment variable ${name} must be a positive integer`)\n  }\n\n  return parsed\n}\n\nexport const env = {\n  nodeEnv: Bun.env.NODE_ENV ?? 'development',\n  port: numeric('PORT', 3000),\n  databaseUrl: required('DATABASE_URL'),\n\n  /** Signs the attendee/organiser session tokens issued by the accounts service. */\n  sessionTokenSecret: required('SESSION_TOKEN_SECRET'),\n\n  /** Signs the compact pass tokens that end up inside the ticket QR code. */\n  gatePassSecret: required('GATE_PASS_SECRET'),\n\n  /** Where the nightly payout statement generator writes its output tree. */\n  statementDir: Bun.env.PAYOUT_STATEMENT_DIR ?? '/srv/gatefold/payout-statements',\n\n  /** How long after the door time a pass still scans, in minutes. */\n  gateGraceMinutes: numeric('GATE_GRACE_MINUTES', 45),\n\n  /** Ceiling on a single self-service order. */\n  maxTicketsPerOrder: numeric('MAX_TICKETS_PER_ORDER', 8),\n\n  /** Refunds at or below this figure skip the support queue. */\n  refundAutoApproveCents: numeric('REFUND_AUTO_APPROVE_CENTS', 5000),\n\n  allowedOrigins: (Bun.env.ALLOWED_ORIGINS ?? 'https://gatefold.events').split(',').map((origin) => origin.trim()),\n} as const\n\nexport type AppConfig = typeof env\n",
+        "src/lib/prisma.ts": "import { PrismaClient } from '@prisma/client'\n\nimport { env } from '../config/env'\n\n/**\n * Bun's watch mode re-evaluates modules on every save, which used to leave a\n * fan of orphaned pools behind. Keeping the client on globalThis outside of\n * production fixes that.\n */\nconst globalForPrisma = globalThis as unknown as { prismaClient?: PrismaClient }\n\nexport const prisma =\n  globalForPrisma.prismaClient ??\n  new PrismaClient({\n    datasources: { db: { url: env.databaseUrl } },\n    log: env.nodeEnv === 'production' ? ['warn', 'error'] : ['query', 'warn', 'error'],\n  })\n\nif (env.nodeEnv !== 'production') {\n  globalForPrisma.prismaClient = prisma\n}\n\nexport async function disconnectPrisma(): Promise<void> {\n  await prisma.$disconnect()\n}\n",
+        "src/lib/identity.ts": "import { createHmac, timingSafeEqual } from 'node:crypto'\nimport { Elysia } from 'elysia'\n\nimport { env } from '../config/env'\nimport { prisma } from './prisma'\n\n/**\n * Two kinds of compact token exist in this system and both are minted with the\n * same `<base64url(claims)>.<base64url(hmac)>` layout:\n *\n *   - session tokens, handed to the web app and the organiser console\n *   - gate pass tokens, printed into the QR code on a ticket\n *\n * Both are bearer credentials, so both get verified here before anything reads\n * a claim out of them.\n */\n\nexport type Identity = {\n  accountId: string\n  email: string\n  roles: string[]\n  organiserId: string | null\n}\n\nexport type SessionClaims = {\n  sub: string\n  scope: string\n  iat: number\n  exp: number\n}\n\nexport type PassClaims = {\n  ticketId: string\n  eventId: string\n  serial: number\n  iat: number\n  exp: number\n}\n\nconst MAX_TOKEN_BYTES = 2048\n\nfunction decodeClaims<T>(segment: string): T | null {\n  try {\n    return JSON.parse(Buffer.from(segment, 'base64url').toString('utf8')) as T\n  } catch {\n    return null\n  }\n}\n\n/**\n * Verifies the HMAC over the claim segment and only then decodes it. The\n * comparison runs through timingSafeEqual on equal-length buffers so a caller\n * cannot walk the signature out of us one byte at a time.\n */\nfunction readSignedToken<T extends { iat: number; exp: number }>(token: string, secret: string): T | null {\n  if (token.length === 0 || Buffer.byteLength(token, 'utf8') > MAX_TOKEN_BYTES) {\n    return null\n  }\n\n  const parts = token.split('.')\n\n  if (parts.length !== 2) {\n    return null\n  }\n\n  const [claimSegment, signature] = parts\n\n  if (!claimSegment || !signature) {\n    return null\n  }\n\n  const expected = Buffer.from(createHmac('sha256', secret).update(claimSegment).digest('base64url'), 'utf8')\n  const provided = Buffer.from(signature, 'utf8')\n\n  if (expected.length !== provided.length || !timingSafeEqual(expected, provided)) {\n    return null\n  }\n\n  const claims = decodeClaims<T>(claimSegment)\n\n  if (!claims || typeof claims.exp !== 'number' || typeof claims.iat !== 'number') {\n    return null\n  }\n\n  if (claims.exp * 1000 <= Date.now()) {\n    return null\n  }\n\n  return claims\n}\n\nexport function readSessionToken(token: string): SessionClaims | null {\n  const claims = readSignedToken<SessionClaims>(token, env.sessionTokenSecret)\n\n  if (!claims || typeof claims.sub !== 'string' || claims.sub.length === 0) {\n    return null\n  }\n\n  return claims\n}\n\nexport function readPassToken(token: string): PassClaims | null {\n  const claims = readSignedToken<PassClaims>(token, env.gatePassSecret)\n\n  if (!claims || typeof claims.ticketId !== 'string' || typeof claims.eventId !== 'string') {\n    return null\n  }\n\n  return claims\n}\n\nexport function signPassToken(claims: Omit<PassClaims, 'iat' | 'exp'>, ttlSeconds: number): string {\n  const now = Math.floor(Date.now() / 1000)\n  const payload: PassClaims = { ...claims, iat: now, exp: now + ttlSeconds }\n  const segment = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url')\n  const signature = createHmac('sha256', env.gatePassSecret).update(segment).digest('base64url')\n\n  return `${segment}.${signature}`\n}\n\nfunction bearerToken(header: string | undefined): string | null {\n  if (!header) {\n    return null\n  }\n\n  const [scheme, ...rest] = header.split(' ')\n\n  if (scheme?.toLowerCase() !== 'bearer' || rest.length === 0) {\n    return null\n  }\n\n  const token = rest.join(' ').trim()\n\n  return token.length > 0 ? token : null\n}\n\n/**\n * Scoped so every route group that mounts it gets its own resolved identity and\n * nothing leaks into sibling groups.\n */\nexport const identityPlugin = new Elysia({ name: 'identity' }).derive(\n  { as: 'scoped' },\n  async ({ headers }): Promise<{ identity: Identity | null }> => {\n    const token = bearerToken(headers.authorization)\n\n    if (!token) {\n      return { identity: null }\n    }\n\n    const claims = readSessionToken(token)\n\n    if (!claims) {\n      return { identity: null }\n    }\n\n    const account = await prisma.account.findUnique({\n      where: { id: claims.sub },\n      select: { id: true, email: true, roles: true, organiserId: true, suspendedAt: true },\n    })\n\n    if (!account || account.suspendedAt !== null) {\n      return { identity: null }\n    }\n\n    return {\n      identity: {\n        accountId: account.id,\n        email: account.email,\n        roles: account.roles,\n        organiserId: account.organiserId,\n      },\n    }\n  },\n)\n\ntype GuardContext = {\n  identity: Identity | null\n  status: (code: number, body: unknown) => unknown\n}\n\nexport function requireAccount({ identity, status }: GuardContext) {\n  if (!identity) {\n    return status(401, { error: 'authentication_required' })\n  }\n}\n\nexport function requireOrganiser({ identity, status }: GuardContext) {\n  if (!identity) {\n    return status(401, { error: 'authentication_required' })\n  }\n\n  if (!identity.organiserId || !identity.roles.includes('organiser')) {\n    return status(403, { error: 'organiser_membership_required' })\n  }\n}\n\nexport function requirePromoter({ identity, status }: GuardContext) {\n  if (!identity) {\n    return status(401, { error: 'authentication_required' })\n  }\n\n  if (!identity.roles.includes('promoter') && !identity.roles.includes('organiser')) {\n    return status(403, { error: 'promoter_role_required' })\n  }\n}\n\nexport function requireGateStaff({ identity, status }: GuardContext) {\n  if (!identity) {\n    return status(401, { error: 'authentication_required' })\n  }\n\n  if (!identity.roles.includes('gate')) {\n    return status(403, { error: 'gate_role_required' })\n  }\n}\n",
+        "src/domain/refund-desk.ts": "import { prisma } from '../lib/prisma'\n\n/**\n * Refund settlement. Support staff review a request, but the money that ends up\n * on the credit note is worked out here from what we actually captured for the\n * ticket - the figure the attendee typed into the request form is only ever\n * displayed, never paid out.\n */\n\nexport type SettlementResult =\n  | { ok: true; creditNoteId: string; amountCents: number }\n  | { ok: false; reason: 'not_reviewable' | 'nothing_refundable' }\n\n/** What a ticket is worth back, given the event's fee policy. */\nexport function refundableAmountCents(input: {\n  pricePaidCents: number\n  feeCents: number\n  retainFees: boolean\n}): number {\n  const refundable = input.retainFees ? input.pricePaidCents - input.feeCents : input.pricePaidCents\n\n  return Math.max(0, Math.min(refundable, input.pricePaidCents))\n}\n\nexport async function settleRefundRequest(requestId: string, reviewerAccountId: string): Promise<SettlementResult> {\n  /**\n   * The reviewer has to be finance staff at the organiser that owns the event\n   * the ticket belongs to; that membership is part of the where clause so a\n   * request from another organiser simply does not match.\n   */\n  const request = await prisma.refundRequest.findFirst({\n    where: {\n      id: requestId,\n      status: 'PENDING',\n      ticket: {\n        event: {\n          organiser: {\n            staff: { some: { accountId: reviewerAccountId, role: 'FINANCE', revokedAt: null } },\n          },\n        },\n      },\n    },\n    select: {\n      id: true,\n      requestedAmountCents: true,\n      ticket: {\n        select: {\n          id: true,\n          ownerId: true,\n          currency: true,\n          pricePaidCents: true,\n          feeCents: true,\n          event: { select: { id: true, retainFeesOnRefund: true } },\n        },\n      },\n    },\n  })\n\n  if (!request) {\n    return { ok: false, reason: 'not_reviewable' }\n  }\n\n  const amountCents = refundableAmountCents({\n    pricePaidCents: request.ticket.pricePaidCents,\n    feeCents: request.ticket.feeCents,\n    retainFees: request.ticket.event.retainFeesOnRefund,\n  })\n\n  if (amountCents <= 0) {\n    return { ok: false, reason: 'nothing_refundable' }\n  }\n\n  const [, creditNote] = await prisma.$transaction([\n    prisma.refundRequest.update({\n      where: { id: request.id },\n      data: { status: 'APPROVED', reviewedByAccountId: reviewerAccountId, reviewedAt: new Date() },\n    }),\n    prisma.creditNote.create({\n      data: {\n        accountId: request.ticket.ownerId,\n        refundRequestId: request.id,\n        amountCents,\n        currency: request.ticket.currency,\n      },\n      select: { id: true },\n    }),\n    prisma.ticket.update({\n      where: { id: request.ticket.id },\n      data: { status: 'REFUNDED' },\n    }),\n    prisma.account.update({\n      where: { id: request.ticket.ownerId },\n      data: { walletBalanceCents: { increment: amountCents } },\n    }),\n  ])\n\n  return { ok: true, creditNoteId: creditNote.id, amountCents }\n}\n"
+      }
+    },
+    {
+      "id": "h6-ticketing-elysia-refund-settlement",
+      "family": "ticketing-elysia",
+      "architecture": "Elysia 1.3 on Bun with Prisma 6 for data access; caller identity comes from a bearer session token whose HMAC is verified in a scoped Elysia derive plugin (src/lib/identity.ts).",
+      "language": "typescript",
+      "file": "ticketing-elysia/src/domain/refund-desk.ts",
+      "scanAs": "src/domain/refund-desk.ts",
+      "kind": "safe",
+      "runtimeVerifiable": true,
+      "pairedWith": "h6-ticketing-elysia-refund-request-credit",
+      "why": "The same credit-note and wallet write, but the amount is recomputed from ticket.pricePaidCents and the event's fee policy and requestedAmountCents is ignored for the ledger, and the request is only found when the reviewer is FINANCE staff at the organiser that owns the event.",
+      "packageJson": {
+        "name": "gatefold-ticketing-api",
+        "version": "1.6.2",
+        "private": true,
+        "type": "module",
+        "module": "src/index.ts",
+        "scripts": {
+          "dev": "bun run --watch src/index.ts",
+          "start": "bun run src/index.ts",
+          "db:generate": "prisma generate",
+          "db:deploy": "prisma migrate deploy"
+        },
+        "dependencies": {
+          "@elysiajs/cors": "^1.3.0",
+          "@prisma/client": "^6.7.0",
+          "elysia": "^1.3.5"
+        },
+        "devDependencies": {
+          "@types/bun": "^1.2.12",
+          "prisma": "^6.7.0",
+          "typescript": "^5.8.3"
+        }
+      },
+      "extraFiles": {
+        "src/config/env.ts": "/**\n * Runtime configuration for the Gatefold ticketing API.\n *\n * Everything is read once at boot so a missing secret takes the container down\n * on start instead of failing the first request that happens to need it.\n */\n\nfunction required(name: string): string {\n  const value = Bun.env[name]\n\n  if (value === undefined || value.trim() === '') {\n    throw new Error(`Missing required environment variable: ${name}`)\n  }\n\n  return value.trim()\n}\n\nfunction numeric(name: string, fallback: number): number {\n  const raw = Bun.env[name]\n\n  if (raw === undefined || raw.trim() === '') {\n    return fallback\n  }\n\n  const parsed = Number.parseInt(raw, 10)\n\n  if (!Number.isFinite(parsed) || parsed <= 0) {\n    throw new Error(`Environment variable ${name} must be a positive integer`)\n  }\n\n  return parsed\n}\n\nexport const env = {\n  nodeEnv: Bun.env.NODE_ENV ?? 'development',\n  port: numeric('PORT', 3000),\n  databaseUrl: required('DATABASE_URL'),\n\n  /** Signs the attendee/organiser session tokens issued by the accounts service. */\n  sessionTokenSecret: required('SESSION_TOKEN_SECRET'),\n\n  /** Signs the compact pass tokens that end up inside the ticket QR code. */\n  gatePassSecret: required('GATE_PASS_SECRET'),\n\n  /** Where the nightly payout statement generator writes its output tree. */\n  statementDir: Bun.env.PAYOUT_STATEMENT_DIR ?? '/srv/gatefold/payout-statements',\n\n  /** How long after the door time a pass still scans, in minutes. */\n  gateGraceMinutes: numeric('GATE_GRACE_MINUTES', 45),\n\n  /** Ceiling on a single self-service order. */\n  maxTicketsPerOrder: numeric('MAX_TICKETS_PER_ORDER', 8),\n\n  /** Refunds at or below this figure skip the support queue. */\n  refundAutoApproveCents: numeric('REFUND_AUTO_APPROVE_CENTS', 5000),\n\n  allowedOrigins: (Bun.env.ALLOWED_ORIGINS ?? 'https://gatefold.events').split(',').map((origin) => origin.trim()),\n} as const\n\nexport type AppConfig = typeof env\n",
+        "src/lib/prisma.ts": "import { PrismaClient } from '@prisma/client'\n\nimport { env } from '../config/env'\n\n/**\n * Bun's watch mode re-evaluates modules on every save, which used to leave a\n * fan of orphaned pools behind. Keeping the client on globalThis outside of\n * production fixes that.\n */\nconst globalForPrisma = globalThis as unknown as { prismaClient?: PrismaClient }\n\nexport const prisma =\n  globalForPrisma.prismaClient ??\n  new PrismaClient({\n    datasources: { db: { url: env.databaseUrl } },\n    log: env.nodeEnv === 'production' ? ['warn', 'error'] : ['query', 'warn', 'error'],\n  })\n\nif (env.nodeEnv !== 'production') {\n  globalForPrisma.prismaClient = prisma\n}\n\nexport async function disconnectPrisma(): Promise<void> {\n  await prisma.$disconnect()\n}\n"
+      }
+    }
+  ]
+}

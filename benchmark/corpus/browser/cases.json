@@ -1,0 +1,56 @@
+{
+  "family": "browser",
+  "architecture": "Browser page scripts and client components: plain ES modules served from public/, reading location, the fragment, the query string and the referrer, writing to the DOM and navigating with window.location",
+  "cases": [
+    {
+      "id": "browser-invite-welcome-banner",
+      "family": "browser",
+      "language": "javascript",
+      "file": "browser/welcome-banner.js",
+      "kind": "vulnerable",
+      "category": "dom_html_injection",
+      "severityBand": ["medium", "high"],
+      "line": 23,
+      "lineRange": [23, 23],
+      "runtimeVerifiable": true,
+      "scanAs": "public/js/welcome.js",
+      "architecture": "Browser page scripts and client components: plain ES modules served from public/, reading location, the fragment, the query string and the referrer, writing to the DOM and navigating with window.location",
+      "why": "The URL fragment is decoded and written into innerHTML. Anyone can send an invitation-style link whose fragment is markup with an event handler, and it runs in this origin when the page loads; the fragment never reaches the server, so no server-side filter sees it."
+    },
+    {
+      "id": "browser-invite-welcome-header",
+      "family": "browser",
+      "language": "javascript",
+      "file": "browser/welcome-header.js",
+      "kind": "safe",
+      "pairedWith": "browser-invite-welcome-banner",
+      "scanAs": "public/js/join.js",
+      "why": "The same greeting from the same fragment, but built with createElement and textContent, so the inviter name is rendered as text and never parsed as HTML."
+    },
+    {
+      "id": "browser-sign-in-return-to",
+      "family": "browser",
+      "language": "javascript",
+      "file": "browser/sign-in-form.js",
+      "kind": "vulnerable",
+      "category": "open_redirect",
+      "severityBand": ["low", "medium"],
+      "line": 28,
+      "lineRange": [27, 28],
+      "runtimeVerifiable": true,
+      "scanAs": "public/js/sign-in.js",
+      "architecture": "Browser page scripts and client components: plain ES modules served from public/, reading location, the fragment, the query string and the referrer, writing to the DOM and navigating with window.location",
+      "why": "After a successful sign-in the page navigates to the next query parameter as given, so a sign-in link on this domain can hand a freshly authenticated user to an attacker's look-alike page."
+    },
+    {
+      "id": "browser-sign-in-return-path",
+      "family": "browser",
+      "language": "javascript",
+      "file": "browser/sign-in-page.js",
+      "kind": "safe",
+      "pairedWith": "browser-sign-in-return-to",
+      "scanAs": "public/js/login.js",
+      "why": "The same return-after-sign-in flow, but the next parameter is resolved against this origin and discarded unless the result is same-origin, and only its path and query are used."
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "name": "ridgeline-ops",
+  "version": "1.14.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "encore run",
+    "gen": "encore gen client ridgeline-ops-4hf2 --output=./frontend/client.ts --env=local",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "encore.dev": "^1.46.13"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.5"
+  }
+}

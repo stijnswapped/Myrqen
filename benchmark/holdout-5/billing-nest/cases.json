@@ -1,0 +1,604 @@
+{
+  "family": "billing-nest",
+  "cases": [
+    {
+      "id": "h5-billing-nest-invoice-detail",
+      "scanAs": "src/invoices/invoices.service.ts",
+      "kind": "vulnerable",
+      "category": "cross_tenant_invoice_read",
+      "cwe": "CWE-639",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 52,
+      "lineRange": [
+        42,
+        63
+      ],
+      "route": "GET /api/invoices/:invoiceId",
+      "runtimeVerifiable": true,
+      "why": "getInvoiceDetail resolves the :invoiceId path parameter with findOne on the primary key alone; actor.organisationId from request.user is used only for the log line, so any authenticated token can read another tenant's invoice, its line items and the debtor organisation it joins in.",
+      "extraFiles": {
+        "src/auth/jwt-auth.guard.ts": "import {\n  CanActivate,\n  ExecutionContext,\n  Injectable,\n  UnauthorizedException,\n  createParamDecorator,\n} from '@nestjs/common';\nimport { JwtService } from '@nestjs/jwt';\nimport type { Request } from 'express';\n\nexport type BillingRole = 'billing_viewer' | 'billing_operator' | 'billing_admin';\n\n/** Shape of `request.user` on every authenticated billing request. */\nexport interface AuthenticatedUser {\n  readonly id: string;\n  readonly email: string;\n  readonly organisationId: string;\n  readonly roles: readonly BillingRole[];\n}\n\nexport interface AuthenticatedRequest extends Request {\n  user?: AuthenticatedUser;\n}\n\ninterface BillingTokenClaims {\n  sub: string;\n  email: string;\n  org: string;\n  roles?: BillingRole[];\n}\n\n/**\n * Verifies the bearer token issued by the identity service and hangs the\n * resolved billing identity on the request. Every controller in this service\n * sits behind it.\n */\n@Injectable()\nexport class JwtAuthGuard implements CanActivate {\n  constructor(private readonly jwtService: JwtService) {}\n\n  async canActivate(context: ExecutionContext): Promise<boolean> {\n    const request = context.switchToHttp().getRequest<AuthenticatedRequest>();\n    const token = readBearerToken(request);\n\n    if (!token) {\n      throw new UnauthorizedException('Missing bearer token');\n    }\n\n    try {\n      const claims = await this.jwtService.verifyAsync<BillingTokenClaims>(token);\n\n      request.user = {\n        id: claims.sub,\n        email: claims.email,\n        organisationId: claims.org,\n        roles: claims.roles ?? ['billing_viewer'],\n      };\n\n      return true;\n    } catch {\n      // Deliberately opaque: the caller does not get to learn whether the\n      // token was expired, malformed or signed with the wrong key.\n      throw new UnauthorizedException('Invalid bearer token');\n    }\n  }\n}\n\nfunction readBearerToken(request: AuthenticatedRequest): string | null {\n  const header = request.headers.authorization;\n  if (!header) {\n    return null;\n  }\n\n  const [scheme, value] = header.split(' ');\n  if (scheme?.toLowerCase() !== 'bearer' || !value) {\n    return null;\n  }\n\n  return value.trim();\n}\n\n/** `@CurrentUser()` — the identity JwtAuthGuard attached to the request. */\nexport const CurrentUser = createParamDecorator(\n  (_data: unknown, context: ExecutionContext): AuthenticatedUser => {\n    const request = context.switchToHttp().getRequest<AuthenticatedRequest>();\n\n    if (!request.user) {\n      throw new UnauthorizedException('Handler reached without an identity');\n    }\n\n    return request.user;\n  },\n);\n",
+        "src/billing/entities/invoice.entity.ts": "import {\n  Column,\n  Entity,\n  Index,\n  JoinColumn,\n  ManyToOne,\n  OneToMany,\n  PrimaryGeneratedColumn,\n} from 'typeorm';\nimport { InvoiceLine } from './invoice-line.entity';\nimport { Organisation } from './organisation.entity';\n\nexport type InvoiceStatus =\n  | 'draft'\n  | 'issued'\n  | 'partially_paid'\n  | 'overdue'\n  | 'paid'\n  | 'void';\n\n@Entity({ name: 'invoices' })\n@Index(['organisationId', 'status'])\nexport class Invoice {\n  @PrimaryGeneratedColumn('uuid')\n  id!: string;\n\n  /** Human readable number printed on the document, e.g. INV-2026-004182. */\n  @Column({ unique: true, length: 32 })\n  reference!: string;\n\n  @Column({ name: 'organisation_id' })\n  organisationId!: string;\n\n  @ManyToOne(() => Organisation, { onDelete: 'RESTRICT' })\n  @JoinColumn({ name: 'organisation_id' })\n  organisation!: Organisation;\n\n  @Column({ type: 'varchar', length: 20, default: 'draft' })\n  status!: InvoiceStatus;\n\n  @Column({ length: 3, default: 'EUR' })\n  currency!: string;\n\n  @Column({ name: 'total_cents', type: 'int' })\n  totalCents!: number;\n\n  /** What is still outstanding after payments and credit notes. */\n  @Column({ name: 'balance_cents', type: 'int' })\n  balanceCents!: number;\n\n  @Column({ name: 'issued_on', type: 'date' })\n  issuedOn!: string;\n\n  @Column({ name: 'due_on', type: 'date' })\n  dueOn!: string;\n\n  @OneToMany(() => InvoiceLine, (line) => line.invoice, { cascade: ['insert'] })\n  lines!: InvoiceLine[];\n\n  @Column({ name: 'created_at', type: 'timestamptz', default: () => 'now()' })\n  createdAt!: Date;\n}\n",
+        "src/billing/entities/invoice-line.entity.ts": "import { Column, Entity, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';\nimport { Invoice } from './invoice.entity';\n\n@Entity({ name: 'invoice_lines' })\nexport class InvoiceLine {\n  @PrimaryGeneratedColumn('uuid')\n  id!: string;\n\n  @Column({ name: 'invoice_id' })\n  invoiceId!: string;\n\n  @ManyToOne(() => Invoice, (invoice) => invoice.lines, { onDelete: 'CASCADE' })\n  @JoinColumn({ name: 'invoice_id' })\n  invoice!: Invoice;\n\n  @Column({ length: 400 })\n  description!: string;\n\n  @Column({ type: 'int' })\n  quantity!: number;\n\n  @Column({ name: 'unit_price_cents', type: 'int' })\n  unitPriceCents!: number;\n\n  /** Tax rate in basis points, so 2100 is 21%. */\n  @Column({ name: 'tax_rate_bps', type: 'int', default: 0 })\n  taxRateBps!: number;\n}\n",
+        "src/billing/entities/organisation.entity.ts": "import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';\n\n@Entity({ name: 'organisations' })\nexport class Organisation {\n  @PrimaryGeneratedColumn('uuid')\n  id!: string;\n\n  @Column({ length: 200 })\n  name!: string;\n\n  /** VAT or other national tax identifier, as printed on the invoice. */\n  @Column({ name: 'tax_identifier', length: 32, nullable: true })\n  taxIdentifier!: string | null;\n\n  @Column({ length: 2 })\n  country!: string;\n\n  @Column({ name: 'dunning_email', length: 320 })\n  dunningEmail!: string;\n\n  @Column({ name: 'created_at', type: 'timestamptz', default: () => 'now()' })\n  createdAt!: Date;\n}\n",
+        "src/invoices/invoices.controller.ts": "import { Controller, Get, Param, ParseUUIDPipe, UseGuards } from '@nestjs/common';\nimport {\n  CurrentUser,\n  JwtAuthGuard,\n  type AuthenticatedUser,\n} from '../auth/jwt-auth.guard';\nimport { InvoicesService, type InvoiceSummary } from './invoices.service';\nimport type { Invoice } from '../billing/entities/invoice.entity';\n\n@Controller('api/invoices')\n@UseGuards(JwtAuthGuard)\nexport class InvoicesController {\n  constructor(private readonly invoices: InvoicesService) {}\n\n  @Get()\n  async list(@CurrentUser() actor: AuthenticatedUser): Promise<InvoiceSummary[]> {\n    return this.invoices.listOutstanding(actor);\n  }\n\n  @Get('overdue-count')\n  async overdueCount(\n    @CurrentUser() actor: AuthenticatedUser,\n  ): Promise<{ overdue: number }> {\n    return { overdue: await this.invoices.countOverdue(actor) };\n  }\n\n  @Get(':invoiceId')\n  async detail(\n    @Param('invoiceId', ParseUUIDPipe) invoiceId: string,\n    @CurrentUser() actor: AuthenticatedUser,\n  ): Promise<Invoice> {\n    return this.invoices.getInvoiceDetail(invoiceId, actor);\n  }\n}\n"
+      },
+      "family": "billing-nest",
+      "architecture": "NestJS 10 REST service over PostgreSQL through TypeORM 0.3 repositories and query builders, with the caller identity read from request.user as populated by JwtAuthGuard.",
+      "language": "typescript",
+      "packageJson": {
+        "name": "acme-billing-api",
+        "version": "3.4.2",
+        "private": true,
+        "dependencies": {
+          "@nestjs/common": "^10.3.7",
+          "@nestjs/config": "^3.2.2",
+          "@nestjs/core": "^10.3.7",
+          "@nestjs/jwt": "^10.2.0",
+          "@nestjs/platform-express": "^10.3.7",
+          "@nestjs/typeorm": "^10.0.2",
+          "class-transformer": "^0.5.1",
+          "class-validator": "^0.14.1",
+          "pg": "^8.11.5",
+          "reflect-metadata": "^0.2.2",
+          "rxjs": "^7.8.1",
+          "typeorm": "^0.3.20"
+        },
+        "devDependencies": {
+          "@types/express": "^4.17.21",
+          "@types/node": "^20.12.7",
+          "typescript": "^5.4.5"
+        }
+      },
+      "file": "billing-nest/src/invoices/invoices.service.ts"
+    },
+    {
+      "id": "h5-billing-nest-invoice-line-items",
+      "scanAs": "src/invoices/invoice-lines.service.ts",
+      "kind": "safe",
+      "route": "GET /api/invoices/:invoiceId/lines",
+      "runtimeVerifiable": true,
+      "pairedWith": "h5-billing-nest-invoice-detail",
+      "why": "Same findOne-by-path-parameter shape, but organisationId from request.user sits in the WHERE clause next to the id, so an invoice id belonging to another tenant matches no row and the handler answers 404 instead of leaking the lines.",
+      "extraFiles": {
+        "src/auth/jwt-auth.guard.ts": "import {\n  CanActivate,\n  ExecutionContext,\n  Injectable,\n  UnauthorizedException,\n  createParamDecorator,\n} from '@nestjs/common';\nimport { JwtService } from '@nestjs/jwt';\nimport type { Request } from 'express';\n\nexport type BillingRole = 'billing_viewer' | 'billing_operator' | 'billing_admin';\n\n/** Shape of `request.user` on every authenticated billing request. */\nexport interface AuthenticatedUser {\n  readonly id: string;\n  readonly email: string;\n  readonly organisationId: string;\n  readonly roles: readonly BillingRole[];\n}\n\nexport interface AuthenticatedRequest extends Request {\n  user?: AuthenticatedUser;\n}\n\ninterface BillingTokenClaims {\n  sub: string;\n  email: string;\n  org: string;\n  roles?: BillingRole[];\n}\n\n/**\n * Verifies the bearer token issued by the identity service and hangs the\n * resolved billing identity on the request. Every controller in this service\n * sits behind it.\n */\n@Injectable()\nexport class JwtAuthGuard implements CanActivate {\n  constructor(private readonly jwtService: JwtService) {}\n\n  async canActivate(context: ExecutionContext): Promise<boolean> {\n    const request = context.switchToHttp().getRequest<AuthenticatedRequest>();\n    const token = readBearerToken(request);\n\n    if (!token) {\n      throw new UnauthorizedException('Missing bearer token');\n    }\n\n    try {\n      const claims = await this.jwtService.verifyAsync<BillingTokenClaims>(token);\n\n      request.user = {\n        id: claims.sub,\n        email: claims.email,\n        organisationId: claims.org,\n        roles: claims.roles ?? ['billing_viewer'],\n      };\n\n      return true;\n    } catch {\n      // Deliberately opaque: the caller does not get to learn whether the\n      // token was expired, malformed or signed with the wrong key.\n      throw new UnauthorizedException('Invalid bearer token');\n    }\n  }\n}\n\nfunction readBearerToken(request: AuthenticatedRequest): string | null {\n  const header = request.headers.authorization;\n  if (!header) {\n    return null;\n  }\n\n  const [scheme, value] = header.split(' ');\n  if (scheme?.toLowerCase() !== 'bearer' || !value) {\n    return null;\n  }\n\n  return value.trim();\n}\n\n/** `@CurrentUser()` — the identity JwtAuthGuard attached to the request. */\nexport const CurrentUser = createParamDecorator(\n  (_data: unknown, context: ExecutionContext): AuthenticatedUser => {\n    const request = context.switchToHttp().getRequest<AuthenticatedRequest>();\n\n    if (!request.user) {\n      throw new UnauthorizedException('Handler reached without an identity');\n    }\n\n    return request.user;\n  },\n);\n",
+        "src/billing/entities/invoice.entity.ts": "import {\n  Column,\n  Entity,\n  Index,\n  JoinColumn,\n  ManyToOne,\n  OneToMany,\n  PrimaryGeneratedColumn,\n} from 'typeorm';\nimport { InvoiceLine } from './invoice-line.entity';\nimport { Organisation } from './organisation.entity';\n\nexport type InvoiceStatus =\n  | 'draft'\n  | 'issued'\n  | 'partially_paid'\n  | 'overdue'\n  | 'paid'\n  | 'void';\n\n@Entity({ name: 'invoices' })\n@Index(['organisationId', 'status'])\nexport class Invoice {\n  @PrimaryGeneratedColumn('uuid')\n  id!: string;\n\n  /** Human readable number printed on the document, e.g. INV-2026-004182. */\n  @Column({ unique: true, length: 32 })\n  reference!: string;\n\n  @Column({ name: 'organisation_id' })\n  organisationId!: string;\n\n  @ManyToOne(() => Organisation, { onDelete: 'RESTRICT' })\n  @JoinColumn({ name: 'organisation_id' })\n  organisation!: Organisation;\n\n  @Column({ type: 'varchar', length: 20, default: 'draft' })\n  status!: InvoiceStatus;\n\n  @Column({ length: 3, default: 'EUR' })\n  currency!: string;\n\n  @Column({ name: 'total_cents', type: 'int' })\n  totalCents!: number;\n\n  /** What is still outstanding after payments and credit notes. */\n  @Column({ name: 'balance_cents', type: 'int' })\n  balanceCents!: number;\n\n  @Column({ name: 'issued_on', type: 'date' })\n  issuedOn!: string;\n\n  @Column({ name: 'due_on', type: 'date' })\n  dueOn!: string;\n\n  @OneToMany(() => InvoiceLine, (line) => line.invoice, { cascade: ['insert'] })\n  lines!: InvoiceLine[];\n\n  @Column({ name: 'created_at', type: 'timestamptz', default: () => 'now()' })\n  createdAt!: Date;\n}\n",
+        "src/billing/entities/invoice-line.entity.ts": "import { Column, Entity, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';\nimport { Invoice } from './invoice.entity';\n\n@Entity({ name: 'invoice_lines' })\nexport class InvoiceLine {\n  @PrimaryGeneratedColumn('uuid')\n  id!: string;\n\n  @Column({ name: 'invoice_id' })\n  invoiceId!: string;\n\n  @ManyToOne(() => Invoice, (invoice) => invoice.lines, { onDelete: 'CASCADE' })\n  @JoinColumn({ name: 'invoice_id' })\n  invoice!: Invoice;\n\n  @Column({ length: 400 })\n  description!: string;\n\n  @Column({ type: 'int' })\n  quantity!: number;\n\n  @Column({ name: 'unit_price_cents', type: 'int' })\n  unitPriceCents!: number;\n\n  /** Tax rate in basis points, so 2100 is 21%. */\n  @Column({ name: 'tax_rate_bps', type: 'int', default: 0 })\n  taxRateBps!: number;\n}\n",
+        "src/billing/entities/organisation.entity.ts": "import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';\n\n@Entity({ name: 'organisations' })\nexport class Organisation {\n  @PrimaryGeneratedColumn('uuid')\n  id!: string;\n\n  @Column({ length: 200 })\n  name!: string;\n\n  /** VAT or other national tax identifier, as printed on the invoice. */\n  @Column({ name: 'tax_identifier', length: 32, nullable: true })\n  taxIdentifier!: string | null;\n\n  @Column({ length: 2 })\n  country!: string;\n\n  @Column({ name: 'dunning_email', length: 320 })\n  dunningEmail!: string;\n\n  @Column({ name: 'created_at', type: 'timestamptz', default: () => 'now()' })\n  createdAt!: Date;\n}\n",
+        "src/invoices/invoice-lines.controller.ts": "import { Controller, Get, Param, ParseUUIDPipe, UseGuards } from '@nestjs/common';\nimport {\n  CurrentUser,\n  JwtAuthGuard,\n  type AuthenticatedUser,\n} from '../auth/jwt-auth.guard';\nimport { InvoiceLinesService, type InvoiceLineView } from './invoice-lines.service';\n\n@Controller('api/invoices')\n@UseGuards(JwtAuthGuard)\nexport class InvoiceLinesController {\n  constructor(private readonly lines: InvoiceLinesService) {}\n\n  @Get(':invoiceId/lines')\n  async list(\n    @Param('invoiceId', ParseUUIDPipe) invoiceId: string,\n    @CurrentUser() actor: AuthenticatedUser,\n  ): Promise<InvoiceLineView[]> {\n    return this.lines.listForInvoice(invoiceId, actor);\n  }\n\n  @Get(':invoiceId/tax-total')\n  async taxTotal(\n    @Param('invoiceId', ParseUUIDPipe) invoiceId: string,\n    @CurrentUser() actor: AuthenticatedUser,\n  ): Promise<{ taxCents: number }> {\n    return { taxCents: await this.lines.taxTotalCents(invoiceId, actor) };\n  }\n}\n"
+      },
+      "family": "billing-nest",
+      "architecture": "NestJS 10 REST service over PostgreSQL through TypeORM 0.3 repositories and query builders, with the caller identity read from request.user as populated by JwtAuthGuard.",
+      "language": "typescript",
+      "packageJson": {
+        "name": "acme-billing-api",
+        "version": "3.4.2",
+        "private": true,
+        "dependencies": {
+          "@nestjs/common": "^10.3.7",
+          "@nestjs/config": "^3.2.2",
+          "@nestjs/core": "^10.3.7",
+          "@nestjs/jwt": "^10.2.0",
+          "@nestjs/platform-express": "^10.3.7",
+          "@nestjs/typeorm": "^10.0.2",
+          "class-transformer": "^0.5.1",
+          "class-validator": "^0.14.1",
+          "pg": "^8.11.5",
+          "reflect-metadata": "^0.2.2",
+          "rxjs": "^7.8.1",
+          "typeorm": "^0.3.20"
+        },
+        "devDependencies": {
+          "@types/express": "^4.17.21",
+          "@types/node": "^20.12.7",
+          "typescript": "^5.4.5"
+        }
+      },
+      "file": "billing-nest/src/invoices/invoice-lines.service.ts"
+    },
+    {
+      "id": "h5-billing-nest-invoice-search-grid",
+      "scanAs": "src/invoices/invoice-search.service.ts",
+      "kind": "vulnerable",
+      "category": "orm_query_builder_clause_string_interpolation",
+      "cwe": "CWE-89",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 70,
+      "lineRange": [
+        46,
+        94
+      ],
+      "route": "GET /api/invoices/search",
+      "runtimeVerifiable": true,
+      "why": "filters.reference and filters.taxIdentifier arrive from the query string of the search grid and are concatenated into the andWhere clause text of the TypeORM query builder, which is then executed by getRawMany; a single quote in either parameter closes the literal and appends attacker SQL to the statement, while the status filter on the same builder shows the bound form.",
+      "extraFiles": {
+        "src/auth/jwt-auth.guard.ts": "import {\n  CanActivate,\n  ExecutionContext,\n  Injectable,\n  UnauthorizedException,\n  createParamDecorator,\n} from '@nestjs/common';\nimport { JwtService } from '@nestjs/jwt';\nimport type { Request } from 'express';\n\nexport type BillingRole = 'billing_viewer' | 'billing_operator' | 'billing_admin';\n\n/** Shape of `request.user` on every authenticated billing request. */\nexport interface AuthenticatedUser {\n  readonly id: string;\n  readonly email: string;\n  readonly organisationId: string;\n  readonly roles: readonly BillingRole[];\n}\n\nexport interface AuthenticatedRequest extends Request {\n  user?: AuthenticatedUser;\n}\n\ninterface BillingTokenClaims {\n  sub: string;\n  email: string;\n  org: string;\n  roles?: BillingRole[];\n}\n\n/**\n * Verifies the bearer token issued by the identity service and hangs the\n * resolved billing identity on the request. Every controller in this service\n * sits behind it.\n */\n@Injectable()\nexport class JwtAuthGuard implements CanActivate {\n  constructor(private readonly jwtService: JwtService) {}\n\n  async canActivate(context: ExecutionContext): Promise<boolean> {\n    const request = context.switchToHttp().getRequest<AuthenticatedRequest>();\n    const token = readBearerToken(request);\n\n    if (!token) {\n      throw new UnauthorizedException('Missing bearer token');\n    }\n\n    try {\n      const claims = await this.jwtService.verifyAsync<BillingTokenClaims>(token);\n\n      request.user = {\n        id: claims.sub,\n        email: claims.email,\n        organisationId: claims.org,\n        roles: claims.roles ?? ['billing_viewer'],\n      };\n\n      return true;\n    } catch {\n      // Deliberately opaque: the caller does not get to learn whether the\n      // token was expired, malformed or signed with the wrong key.\n      throw new UnauthorizedException('Invalid bearer token');\n    }\n  }\n}\n\nfunction readBearerToken(request: AuthenticatedRequest): string | null {\n  const header = request.headers.authorization;\n  if (!header) {\n    return null;\n  }\n\n  const [scheme, value] = header.split(' ');\n  if (scheme?.toLowerCase() !== 'bearer' || !value) {\n    return null;\n  }\n\n  return value.trim();\n}\n\n/** `@CurrentUser()` — the identity JwtAuthGuard attached to the request. */\nexport const CurrentUser = createParamDecorator(\n  (_data: unknown, context: ExecutionContext): AuthenticatedUser => {\n    const request = context.switchToHttp().getRequest<AuthenticatedRequest>();\n\n    if (!request.user) {\n      throw new UnauthorizedException('Handler reached without an identity');\n    }\n\n    return request.user;\n  },\n);\n",
+        "src/billing/entities/invoice.entity.ts": "import {\n  Column,\n  Entity,\n  Index,\n  JoinColumn,\n  ManyToOne,\n  OneToMany,\n  PrimaryGeneratedColumn,\n} from 'typeorm';\nimport { InvoiceLine } from './invoice-line.entity';\nimport { Organisation } from './organisation.entity';\n\nexport type InvoiceStatus =\n  | 'draft'\n  | 'issued'\n  | 'partially_paid'\n  | 'overdue'\n  | 'paid'\n  | 'void';\n\n@Entity({ name: 'invoices' })\n@Index(['organisationId', 'status'])\nexport class Invoice {\n  @PrimaryGeneratedColumn('uuid')\n  id!: string;\n\n  /** Human readable number printed on the document, e.g. INV-2026-004182. */\n  @Column({ unique: true, length: 32 })\n  reference!: string;\n\n  @Column({ name: 'organisation_id' })\n  organisationId!: string;\n\n  @ManyToOne(() => Organisation, { onDelete: 'RESTRICT' })\n  @JoinColumn({ name: 'organisation_id' })\n  organisation!: Organisation;\n\n  @Column({ type: 'varchar', length: 20, default: 'draft' })\n  status!: InvoiceStatus;\n\n  @Column({ length: 3, default: 'EUR' })\n  currency!: string;\n\n  @Column({ name: 'total_cents', type: 'int' })\n  totalCents!: number;\n\n  /** What is still outstanding after payments and credit notes. */\n  @Column({ name: 'balance_cents', type: 'int' })\n  balanceCents!: number;\n\n  @Column({ name: 'issued_on', type: 'date' })\n  issuedOn!: string;\n\n  @Column({ name: 'due_on', type: 'date' })\n  dueOn!: string;\n\n  @OneToMany(() => InvoiceLine, (line) => line.invoice, { cascade: ['insert'] })\n  lines!: InvoiceLine[];\n\n  @Column({ name: 'created_at', type: 'timestamptz', default: () => 'now()' })\n  createdAt!: Date;\n}\n",
+        "src/billing/entities/invoice-line.entity.ts": "import { Column, Entity, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';\nimport { Invoice } from './invoice.entity';\n\n@Entity({ name: 'invoice_lines' })\nexport class InvoiceLine {\n  @PrimaryGeneratedColumn('uuid')\n  id!: string;\n\n  @Column({ name: 'invoice_id' })\n  invoiceId!: string;\n\n  @ManyToOne(() => Invoice, (invoice) => invoice.lines, { onDelete: 'CASCADE' })\n  @JoinColumn({ name: 'invoice_id' })\n  invoice!: Invoice;\n\n  @Column({ length: 400 })\n  description!: string;\n\n  @Column({ type: 'int' })\n  quantity!: number;\n\n  @Column({ name: 'unit_price_cents', type: 'int' })\n  unitPriceCents!: number;\n\n  /** Tax rate in basis points, so 2100 is 21%. */\n  @Column({ name: 'tax_rate_bps', type: 'int', default: 0 })\n  taxRateBps!: number;\n}\n",
+        "src/billing/entities/organisation.entity.ts": "import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';\n\n@Entity({ name: 'organisations' })\nexport class Organisation {\n  @PrimaryGeneratedColumn('uuid')\n  id!: string;\n\n  @Column({ length: 200 })\n  name!: string;\n\n  /** VAT or other national tax identifier, as printed on the invoice. */\n  @Column({ name: 'tax_identifier', length: 32, nullable: true })\n  taxIdentifier!: string | null;\n\n  @Column({ length: 2 })\n  country!: string;\n\n  @Column({ name: 'dunning_email', length: 320 })\n  dunningEmail!: string;\n\n  @Column({ name: 'created_at', type: 'timestamptz', default: () => 'now()' })\n  createdAt!: Date;\n}\n",
+        "src/invoices/invoice-search.controller.ts": "import { Controller, Get, Query, UseGuards } from '@nestjs/common';\nimport {\n  CurrentUser,\n  JwtAuthGuard,\n  type AuthenticatedUser,\n} from '../auth/jwt-auth.guard';\nimport {\n  InvoiceSearchService,\n  type InvoiceSearchResult,\n} from './invoice-search.service';\n\n@Controller('api/invoices')\n@UseGuards(JwtAuthGuard)\nexport class InvoiceSearchController {\n  constructor(private readonly search: InvoiceSearchService) {}\n\n  /** Grid behind the search box in the finance console. */\n  @Get('search')\n  async run(\n    @CurrentUser() actor: AuthenticatedUser,\n    @Query('reference') reference?: string,\n    @Query('taxIdentifier') taxIdentifier?: string,\n    @Query('status') status?: string,\n    @Query('sortBy') sortBy?: string,\n    @Query('direction') direction?: string,\n    @Query('page') page?: string,\n  ): Promise<InvoiceSearchResult[]> {\n    return this.search.search(\n      {\n        reference,\n        taxIdentifier,\n        status,\n        sortBy,\n        direction,\n        page: Number.parseInt(page ?? '1', 10) || 1,\n      },\n      actor,\n    );\n  }\n}\n"
+      },
+      "family": "billing-nest",
+      "architecture": "NestJS 10 REST service over PostgreSQL through TypeORM 0.3 repositories and query builders, with the caller identity read from request.user as populated by JwtAuthGuard.",
+      "language": "typescript",
+      "packageJson": {
+        "name": "acme-billing-api",
+        "version": "3.4.2",
+        "private": true,
+        "dependencies": {
+          "@nestjs/common": "^10.3.7",
+          "@nestjs/config": "^3.2.2",
+          "@nestjs/core": "^10.3.7",
+          "@nestjs/jwt": "^10.2.0",
+          "@nestjs/platform-express": "^10.3.7",
+          "@nestjs/typeorm": "^10.0.2",
+          "class-transformer": "^0.5.1",
+          "class-validator": "^0.14.1",
+          "pg": "^8.11.5",
+          "reflect-metadata": "^0.2.2",
+          "rxjs": "^7.8.1",
+          "typeorm": "^0.3.20"
+        },
+        "devDependencies": {
+          "@types/express": "^4.17.21",
+          "@types/node": "^20.12.7",
+          "typescript": "^5.4.5"
+        }
+      },
+      "file": "billing-nest/src/invoices/invoice-search.service.ts"
+    },
+    {
+      "id": "h5-billing-nest-collections-queue",
+      "scanAs": "src/dunning/dunning-search.service.ts",
+      "kind": "safe",
+      "route": "GET /api/dunning/cases",
+      "runtimeVerifiable": true,
+      "pairedWith": "h5-billing-nest-invoice-search-grid",
+      "why": "The free text filter is interpolated only into the parameter value passed alongside 'dunning.debtorName ILIKE :debtor', never into the clause text, and the sort column is resolved through the fixed SORTABLE_COLUMNS map, so nothing the caller types becomes part of the statement.",
+      "extraFiles": {
+        "src/auth/jwt-auth.guard.ts": "import {\n  CanActivate,\n  ExecutionContext,\n  Injectable,\n  UnauthorizedException,\n  createParamDecorator,\n} from '@nestjs/common';\nimport { JwtService } from '@nestjs/jwt';\nimport type { Request } from 'express';\n\nexport type BillingRole = 'billing_viewer' | 'billing_operator' | 'billing_admin';\n\n/** Shape of `request.user` on every authenticated billing request. */\nexport interface AuthenticatedUser {\n  readonly id: string;\n  readonly email: string;\n  readonly organisationId: string;\n  readonly roles: readonly BillingRole[];\n}\n\nexport interface AuthenticatedRequest extends Request {\n  user?: AuthenticatedUser;\n}\n\ninterface BillingTokenClaims {\n  sub: string;\n  email: string;\n  org: string;\n  roles?: BillingRole[];\n}\n\n/**\n * Verifies the bearer token issued by the identity service and hangs the\n * resolved billing identity on the request. Every controller in this service\n * sits behind it.\n */\n@Injectable()\nexport class JwtAuthGuard implements CanActivate {\n  constructor(private readonly jwtService: JwtService) {}\n\n  async canActivate(context: ExecutionContext): Promise<boolean> {\n    const request = context.switchToHttp().getRequest<AuthenticatedRequest>();\n    const token = readBearerToken(request);\n\n    if (!token) {\n      throw new UnauthorizedException('Missing bearer token');\n    }\n\n    try {\n      const claims = await this.jwtService.verifyAsync<BillingTokenClaims>(token);\n\n      request.user = {\n        id: claims.sub,\n        email: claims.email,\n        organisationId: claims.org,\n        roles: claims.roles ?? ['billing_viewer'],\n      };\n\n      return true;\n    } catch {\n      // Deliberately opaque: the caller does not get to learn whether the\n      // token was expired, malformed or signed with the wrong key.\n      throw new UnauthorizedException('Invalid bearer token');\n    }\n  }\n}\n\nfunction readBearerToken(request: AuthenticatedRequest): string | null {\n  const header = request.headers.authorization;\n  if (!header) {\n    return null;\n  }\n\n  const [scheme, value] = header.split(' ');\n  if (scheme?.toLowerCase() !== 'bearer' || !value) {\n    return null;\n  }\n\n  return value.trim();\n}\n\n/** `@CurrentUser()` — the identity JwtAuthGuard attached to the request. */\nexport const CurrentUser = createParamDecorator(\n  (_data: unknown, context: ExecutionContext): AuthenticatedUser => {\n    const request = context.switchToHttp().getRequest<AuthenticatedRequest>();\n\n    if (!request.user) {\n      throw new UnauthorizedException('Handler reached without an identity');\n    }\n\n    return request.user;\n  },\n);\n",
+        "src/billing/entities/dunning-case.entity.ts": "import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';\n\nexport type DunningStage = 'reminder' | 'first_notice' | 'final_notice' | 'collections';\nexport type DunningStatus = 'open' | 'paused' | 'settled' | 'written_off';\n\n@Entity({ name: 'dunning_cases' })\n@Index(['organisationId', 'stage'])\nexport class DunningCase {\n  @PrimaryGeneratedColumn('uuid')\n  id!: string;\n\n  @Column({ name: 'organisation_id' })\n  organisationId!: string;\n\n  @Column({ name: 'invoice_id' })\n  invoiceId!: string;\n\n  @Column({ name: 'invoice_reference', length: 32 })\n  invoiceReference!: string;\n\n  @Column({ name: 'debtor_name', length: 200 })\n  debtorName!: string;\n\n  @Column({ type: 'varchar', length: 20, default: 'reminder' })\n  stage!: DunningStage;\n\n  @Column({ type: 'varchar', length: 20, default: 'open' })\n  status!: DunningStatus;\n\n  @Column({ name: 'overdue_cents', type: 'int' })\n  overdueCents!: number;\n\n  @Column({ name: 'next_action_on', type: 'date' })\n  nextActionOn!: string;\n\n  @Column({ name: 'write_off_reason_code', length: 40, nullable: true })\n  writeOffReasonCode!: string | null;\n\n  @Column({ length: 500, nullable: true })\n  memo!: string | null;\n\n  @Column({ name: 'closed_by_id', nullable: true })\n  closedById!: string | null;\n\n  @Column({ name: 'closed_at', type: 'timestamptz', nullable: true })\n  closedAt!: Date | null;\n}\n",
+        "src/dunning/dunning-search.controller.ts": "import { Controller, Get, Query, UseGuards } from '@nestjs/common';\nimport {\n  CurrentUser,\n  JwtAuthGuard,\n  type AuthenticatedUser,\n} from '../auth/jwt-auth.guard';\nimport { DunningSearchService, type DunningCaseRow } from './dunning-search.service';\n\n@Controller('api/dunning')\n@UseGuards(JwtAuthGuard)\nexport class DunningSearchController {\n  constructor(private readonly search: DunningSearchService) {}\n\n  /** Collections work queue. */\n  @Get('cases')\n  async list(\n    @CurrentUser() actor: AuthenticatedUser,\n    @Query('debtor') debtor?: string,\n    @Query('stage') stage?: string,\n    @Query('sortBy') sortBy?: string,\n    @Query('direction') direction?: string,\n    @Query('page') page?: string,\n  ): Promise<DunningCaseRow[]> {\n    return this.search.search(\n      {\n        debtor,\n        stage,\n        sortBy,\n        direction,\n        page: Number.parseInt(page ?? '1', 10) || 1,\n      },\n      actor,\n    );\n  }\n}\n"
+      },
+      "family": "billing-nest",
+      "architecture": "NestJS 10 REST service over PostgreSQL through TypeORM 0.3 repositories and query builders, with the caller identity read from request.user as populated by JwtAuthGuard.",
+      "language": "typescript",
+      "packageJson": {
+        "name": "acme-billing-api",
+        "version": "3.4.2",
+        "private": true,
+        "dependencies": {
+          "@nestjs/common": "^10.3.7",
+          "@nestjs/config": "^3.2.2",
+          "@nestjs/core": "^10.3.7",
+          "@nestjs/jwt": "^10.2.0",
+          "@nestjs/platform-express": "^10.3.7",
+          "@nestjs/typeorm": "^10.0.2",
+          "class-transformer": "^0.5.1",
+          "class-validator": "^0.14.1",
+          "pg": "^8.11.5",
+          "reflect-metadata": "^0.2.2",
+          "rxjs": "^7.8.1",
+          "typeorm": "^0.3.20"
+        },
+        "devDependencies": {
+          "@types/express": "^4.17.21",
+          "@types/node": "^20.12.7",
+          "typescript": "^5.4.5"
+        }
+      },
+      "file": "billing-nest/src/dunning/dunning-search.service.ts"
+    },
+    {
+      "id": "h5-billing-nest-ledger-correction",
+      "scanAs": "src/adjustments/adjustments.controller.ts",
+      "kind": "vulnerable",
+      "category": "role_requirement_declared_without_enforcing_guard",
+      "cwe": "CWE-862",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 50,
+      "lineRange": [
+        27,
+        63
+      ],
+      "route": "POST /api/adjustments",
+      "runtimeVerifiable": true,
+      "why": "The create handler is decorated @Roles('billing_admin') but the controller's guard chain is @UseGuards(JwtAuthGuard) only and the shipped AppModule registers no global RolesGuard, so nothing ever reads the role metadata: any authenticated token, billing_viewer included, can book a ledger adjustment that moves an invoice balance.",
+      "extraFiles": {
+        "src/auth/jwt-auth.guard.ts": "import {\n  CanActivate,\n  ExecutionContext,\n  Injectable,\n  UnauthorizedException,\n  createParamDecorator,\n} from '@nestjs/common';\nimport { JwtService } from '@nestjs/jwt';\nimport type { Request } from 'express';\n\nexport type BillingRole = 'billing_viewer' | 'billing_operator' | 'billing_admin';\n\n/** Shape of `request.user` on every authenticated billing request. */\nexport interface AuthenticatedUser {\n  readonly id: string;\n  readonly email: string;\n  readonly organisationId: string;\n  readonly roles: readonly BillingRole[];\n}\n\nexport interface AuthenticatedRequest extends Request {\n  user?: AuthenticatedUser;\n}\n\ninterface BillingTokenClaims {\n  sub: string;\n  email: string;\n  org: string;\n  roles?: BillingRole[];\n}\n\n/**\n * Verifies the bearer token issued by the identity service and hangs the\n * resolved billing identity on the request. Every controller in this service\n * sits behind it.\n */\n@Injectable()\nexport class JwtAuthGuard implements CanActivate {\n  constructor(private readonly jwtService: JwtService) {}\n\n  async canActivate(context: ExecutionContext): Promise<boolean> {\n    const request = context.switchToHttp().getRequest<AuthenticatedRequest>();\n    const token = readBearerToken(request);\n\n    if (!token) {\n      throw new UnauthorizedException('Missing bearer token');\n    }\n\n    try {\n      const claims = await this.jwtService.verifyAsync<BillingTokenClaims>(token);\n\n      request.user = {\n        id: claims.sub,\n        email: claims.email,\n        organisationId: claims.org,\n        roles: claims.roles ?? ['billing_viewer'],\n      };\n\n      return true;\n    } catch {\n      // Deliberately opaque: the caller does not get to learn whether the\n      // token was expired, malformed or signed with the wrong key.\n      throw new UnauthorizedException('Invalid bearer token');\n    }\n  }\n}\n\nfunction readBearerToken(request: AuthenticatedRequest): string | null {\n  const header = request.headers.authorization;\n  if (!header) {\n    return null;\n  }\n\n  const [scheme, value] = header.split(' ');\n  if (scheme?.toLowerCase() !== 'bearer' || !value) {\n    return null;\n  }\n\n  return value.trim();\n}\n\n/** `@CurrentUser()` — the identity JwtAuthGuard attached to the request. */\nexport const CurrentUser = createParamDecorator(\n  (_data: unknown, context: ExecutionContext): AuthenticatedUser => {\n    const request = context.switchToHttp().getRequest<AuthenticatedRequest>();\n\n    if (!request.user) {\n      throw new UnauthorizedException('Handler reached without an identity');\n    }\n\n    return request.user;\n  },\n);\n",
+        "src/auth/roles.guard.ts": "import {\n  CanActivate,\n  ExecutionContext,\n  ForbiddenException,\n  Injectable,\n  SetMetadata,\n} from '@nestjs/common';\nimport { Reflector } from '@nestjs/core';\nimport type { AuthenticatedRequest, BillingRole } from './jwt-auth.guard';\n\nexport const ROLES_METADATA_KEY = 'billing:required-roles';\n\n/**\n * Declares the roles a handler needs. Only enforced where RolesGuard is\n * actually in the handler's guard chain.\n */\nexport const Roles = (...roles: BillingRole[]) => SetMetadata(ROLES_METADATA_KEY, roles);\n\n@Injectable()\nexport class RolesGuard implements CanActivate {\n  constructor(private readonly reflector: Reflector) {}\n\n  canActivate(context: ExecutionContext): boolean {\n    const required = this.reflector.getAllAndOverride<BillingRole[] | undefined>(\n      ROLES_METADATA_KEY,\n      [context.getHandler(), context.getClass()],\n    );\n\n    if (!required || required.length === 0) {\n      return true;\n    }\n\n    const { user } = context.switchToHttp().getRequest<AuthenticatedRequest>();\n\n    if (!user) {\n      throw new ForbiddenException('No billing identity on the request');\n    }\n\n    if (!required.some((role) => user.roles.includes(role))) {\n      throw new ForbiddenException(`Requires one of: ${required.join(', ')}`);\n    }\n\n    return true;\n  }\n}\n",
+        "src/billing/entities/ledger-adjustment.entity.ts": "import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';\n\n@Entity({ name: 'ledger_adjustments' })\n@Index(['organisationId', 'createdAt'])\nexport class LedgerAdjustment {\n  @PrimaryGeneratedColumn('uuid')\n  id!: string;\n\n  @Column({ name: 'organisation_id' })\n  organisationId!: string;\n\n  @Column({ name: 'invoice_id' })\n  invoiceId!: string;\n\n  /** Signed: a negative amount writes value off the receivable. */\n  @Column({ name: 'amount_cents', type: 'int' })\n  amountCents!: number;\n\n  @Column({ length: 500 })\n  memo!: string;\n\n  @Column({ name: 'created_by_id' })\n  createdById!: string;\n\n  @Column({ name: 'created_at', type: 'timestamptz', default: () => 'now()' })\n  createdAt!: Date;\n}\n",
+        "src/billing/entities/invoice.entity.ts": "import {\n  Column,\n  Entity,\n  Index,\n  JoinColumn,\n  ManyToOne,\n  OneToMany,\n  PrimaryGeneratedColumn,\n} from 'typeorm';\nimport { InvoiceLine } from './invoice-line.entity';\nimport { Organisation } from './organisation.entity';\n\nexport type InvoiceStatus =\n  | 'draft'\n  | 'issued'\n  | 'partially_paid'\n  | 'overdue'\n  | 'paid'\n  | 'void';\n\n@Entity({ name: 'invoices' })\n@Index(['organisationId', 'status'])\nexport class Invoice {\n  @PrimaryGeneratedColumn('uuid')\n  id!: string;\n\n  /** Human readable number printed on the document, e.g. INV-2026-004182. */\n  @Column({ unique: true, length: 32 })\n  reference!: string;\n\n  @Column({ name: 'organisation_id' })\n  organisationId!: string;\n\n  @ManyToOne(() => Organisation, { onDelete: 'RESTRICT' })\n  @JoinColumn({ name: 'organisation_id' })\n  organisation!: Organisation;\n\n  @Column({ type: 'varchar', length: 20, default: 'draft' })\n  status!: InvoiceStatus;\n\n  @Column({ length: 3, default: 'EUR' })\n  currency!: string;\n\n  @Column({ name: 'total_cents', type: 'int' })\n  totalCents!: number;\n\n  /** What is still outstanding after payments and credit notes. */\n  @Column({ name: 'balance_cents', type: 'int' })\n  balanceCents!: number;\n\n  @Column({ name: 'issued_on', type: 'date' })\n  issuedOn!: string;\n\n  @Column({ name: 'due_on', type: 'date' })\n  dueOn!: string;\n\n  @OneToMany(() => InvoiceLine, (line) => line.invoice, { cascade: ['insert'] })\n  lines!: InvoiceLine[];\n\n  @Column({ name: 'created_at', type: 'timestamptz', default: () => 'now()' })\n  createdAt!: Date;\n}\n",
+        "src/billing/entities/invoice-line.entity.ts": "import { Column, Entity, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';\nimport { Invoice } from './invoice.entity';\n\n@Entity({ name: 'invoice_lines' })\nexport class InvoiceLine {\n  @PrimaryGeneratedColumn('uuid')\n  id!: string;\n\n  @Column({ name: 'invoice_id' })\n  invoiceId!: string;\n\n  @ManyToOne(() => Invoice, (invoice) => invoice.lines, { onDelete: 'CASCADE' })\n  @JoinColumn({ name: 'invoice_id' })\n  invoice!: Invoice;\n\n  @Column({ length: 400 })\n  description!: string;\n\n  @Column({ type: 'int' })\n  quantity!: number;\n\n  @Column({ name: 'unit_price_cents', type: 'int' })\n  unitPriceCents!: number;\n\n  /** Tax rate in basis points, so 2100 is 21%. */\n  @Column({ name: 'tax_rate_bps', type: 'int', default: 0 })\n  taxRateBps!: number;\n}\n",
+        "src/billing/entities/organisation.entity.ts": "import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';\n\n@Entity({ name: 'organisations' })\nexport class Organisation {\n  @PrimaryGeneratedColumn('uuid')\n  id!: string;\n\n  @Column({ length: 200 })\n  name!: string;\n\n  /** VAT or other national tax identifier, as printed on the invoice. */\n  @Column({ name: 'tax_identifier', length: 32, nullable: true })\n  taxIdentifier!: string | null;\n\n  @Column({ length: 2 })\n  country!: string;\n\n  @Column({ name: 'dunning_email', length: 320 })\n  dunningEmail!: string;\n\n  @Column({ name: 'created_at', type: 'timestamptz', default: () => 'now()' })\n  createdAt!: Date;\n}\n",
+        "src/adjustments/adjustments.service.ts": "import { Injectable, Logger, NotFoundException } from '@nestjs/common';\nimport { InjectRepository } from '@nestjs/typeorm';\nimport { Repository } from 'typeorm';\nimport { Invoice } from '../billing/entities/invoice.entity';\nimport { LedgerAdjustment } from '../billing/entities/ledger-adjustment.entity';\n\nexport interface AdjustmentView {\n  id: string;\n  invoiceReference: string;\n  amountCents: number;\n  memo: string;\n  createdAt: string;\n}\n\nexport interface RecordAdjustmentInput {\n  organisationId: string;\n  invoiceId: string;\n  amountCents: number;\n  memo: string;\n  createdById: string;\n}\n\n@Injectable()\nexport class AdjustmentsService {\n  private readonly logger = new Logger(AdjustmentsService.name);\n\n  constructor(\n    @InjectRepository(LedgerAdjustment)\n    private readonly adjustments: Repository<LedgerAdjustment>,\n    @InjectRepository(Invoice)\n    private readonly invoices: Repository<Invoice>,\n  ) {}\n\n  async listForOrganisation(organisationId: string, take: number): Promise<AdjustmentView[]> {\n    const rows = await this.adjustments\n      .createQueryBuilder('adjustment')\n      .innerJoin(Invoice, 'invoice', 'invoice.id = adjustment.invoiceId')\n      .select([\n        'adjustment.id AS id',\n        'adjustment.amountCents AS amount',\n        'adjustment.memo AS memo',\n        'adjustment.createdAt AS created_at',\n        'invoice.reference AS reference',\n      ])\n      .where('adjustment.organisationId = :organisationId', { organisationId })\n      .orderBy('adjustment.createdAt', 'DESC')\n      .take(take)\n      .getRawMany<{\n        id: string;\n        amount: string;\n        memo: string;\n        created_at: Date;\n        reference: string;\n      }>();\n\n    return rows.map((row) => ({\n      id: row.id,\n      invoiceReference: row.reference,\n      amountCents: Number(row.amount),\n      memo: row.memo,\n      createdAt: row.created_at.toISOString(),\n    }));\n  }\n\n  /** Book the correction and move the invoice balance with it. */\n  async record(input: RecordAdjustmentInput): Promise<AdjustmentView> {\n    const invoice = await this.invoices.findOne({\n      where: { id: input.invoiceId, organisationId: input.organisationId },\n    });\n\n    if (!invoice) {\n      throw new NotFoundException(`Invoice ${input.invoiceId} does not exist`);\n    }\n\n    const adjustment = await this.adjustments.save(\n      this.adjustments.create({\n        organisationId: invoice.organisationId,\n        invoiceId: invoice.id,\n        amountCents: input.amountCents,\n        memo: input.memo,\n        createdById: input.createdById,\n      }),\n    );\n\n    await this.invoices.increment({ id: invoice.id }, 'balanceCents', input.amountCents);\n\n    this.logger.warn(\n      `ledger adjustment ${adjustment.id} of ${input.amountCents} cents on ${invoice.reference}`,\n    );\n\n    return {\n      id: adjustment.id,\n      invoiceReference: invoice.reference,\n      amountCents: adjustment.amountCents,\n      memo: adjustment.memo,\n      createdAt: adjustment.createdAt.toISOString(),\n    };\n  }\n}\n",
+        "src/adjustments/dto/create-adjustment.dto.ts": "import { IsInt, IsString, IsUUID, Length, Max, Min } from 'class-validator';\n\nexport class CreateAdjustmentDto {\n  @IsUUID('4')\n  invoiceId!: string;\n\n  /** Signed correction in cents. Negative writes value off the receivable. */\n  @IsInt()\n  @Min(-1_000_000_00)\n  @Max(1_000_000_00)\n  amountCents!: number;\n\n  @IsString()\n  @Length(5, 500)\n  memo!: string;\n}\n",
+        "src/app.module.ts": "import { Module } from '@nestjs/common';\nimport { ConfigModule, ConfigService } from '@nestjs/config';\nimport { JwtModule } from '@nestjs/jwt';\nimport { TypeOrmModule } from '@nestjs/typeorm';\nimport { AdjustmentsController } from './adjustments/adjustments.controller';\nimport { AdjustmentsService } from './adjustments/adjustments.service';\nimport { LedgerAdjustment } from './billing/entities/ledger-adjustment.entity';\nimport { Invoice } from './billing/entities/invoice.entity';\nimport { InvoiceLine } from './billing/entities/invoice-line.entity';\nimport { Organisation } from './billing/entities/organisation.entity';\nimport { BillingConfigService } from './config/billing-config.service';\n\n@Module({\n  imports: [\n    ConfigModule.forRoot({ isGlobal: true, cache: true }),\n    TypeOrmModule.forRootAsync({\n      inject: [ConfigService],\n      useFactory: (config: ConfigService) => ({\n        type: 'postgres' as const,\n        url: config.getOrThrow<string>('DATABASE_URL'),\n        entities: [Invoice, InvoiceLine, Organisation, LedgerAdjustment],\n        migrationsRun: true,\n        synchronize: false,\n      }),\n    }),\n    TypeOrmModule.forFeature([Invoice, LedgerAdjustment]),\n    JwtModule.registerAsync({\n      inject: [ConfigService],\n      useFactory: (config: ConfigService) => ({\n        publicKey: config.getOrThrow<string>('IDENTITY_JWT_PUBLIC_KEY'),\n        verifyOptions: { algorithms: ['RS256'], issuer: 'identity.internal' },\n      }),\n    }),\n  ],\n  controllers: [AdjustmentsController],\n  providers: [AdjustmentsService, BillingConfigService],\n})\nexport class AppModule {}\n"
+      },
+      "family": "billing-nest",
+      "architecture": "NestJS 10 REST service over PostgreSQL through TypeORM 0.3 repositories and query builders, with the caller identity read from request.user as populated by JwtAuthGuard.",
+      "language": "typescript",
+      "packageJson": {
+        "name": "acme-billing-api",
+        "version": "3.4.2",
+        "private": true,
+        "dependencies": {
+          "@nestjs/common": "^10.3.7",
+          "@nestjs/config": "^3.2.2",
+          "@nestjs/core": "^10.3.7",
+          "@nestjs/jwt": "^10.2.0",
+          "@nestjs/platform-express": "^10.3.7",
+          "@nestjs/typeorm": "^10.0.2",
+          "class-transformer": "^0.5.1",
+          "class-validator": "^0.14.1",
+          "pg": "^8.11.5",
+          "reflect-metadata": "^0.2.2",
+          "rxjs": "^7.8.1",
+          "typeorm": "^0.3.20"
+        },
+        "devDependencies": {
+          "@types/express": "^4.17.21",
+          "@types/node": "^20.12.7",
+          "typescript": "^5.4.5"
+        }
+      },
+      "file": "billing-nest/src/adjustments/adjustments.controller.ts"
+    },
+    {
+      "id": "h5-billing-nest-uncollectable-case-closure",
+      "scanAs": "src/dunning/write-off.controller.ts",
+      "kind": "safe",
+      "route": "POST /api/dunning/cases/:caseId/write-off",
+      "runtimeVerifiable": true,
+      "pairedWith": "h5-billing-nest-ledger-correction",
+      "why": "The same @Roles('billing_admin') declaration on an equally money-moving handler, but here RolesGuard is in the controller's @UseGuards chain, so the metadata is read and operator or viewer tokens are rejected with 403 before the handler runs.",
+      "extraFiles": {
+        "src/auth/jwt-auth.guard.ts": "import {\n  CanActivate,\n  ExecutionContext,\n  Injectable,\n  UnauthorizedException,\n  createParamDecorator,\n} from '@nestjs/common';\nimport { JwtService } from '@nestjs/jwt';\nimport type { Request } from 'express';\n\nexport type BillingRole = 'billing_viewer' | 'billing_operator' | 'billing_admin';\n\n/** Shape of `request.user` on every authenticated billing request. */\nexport interface AuthenticatedUser {\n  readonly id: string;\n  readonly email: string;\n  readonly organisationId: string;\n  readonly roles: readonly BillingRole[];\n}\n\nexport interface AuthenticatedRequest extends Request {\n  user?: AuthenticatedUser;\n}\n\ninterface BillingTokenClaims {\n  sub: string;\n  email: string;\n  org: string;\n  roles?: BillingRole[];\n}\n\n/**\n * Verifies the bearer token issued by the identity service and hangs the\n * resolved billing identity on the request. Every controller in this service\n * sits behind it.\n */\n@Injectable()\nexport class JwtAuthGuard implements CanActivate {\n  constructor(private readonly jwtService: JwtService) {}\n\n  async canActivate(context: ExecutionContext): Promise<boolean> {\n    const request = context.switchToHttp().getRequest<AuthenticatedRequest>();\n    const token = readBearerToken(request);\n\n    if (!token) {\n      throw new UnauthorizedException('Missing bearer token');\n    }\n\n    try {\n      const claims = await this.jwtService.verifyAsync<BillingTokenClaims>(token);\n\n      request.user = {\n        id: claims.sub,\n        email: claims.email,\n        organisationId: claims.org,\n        roles: claims.roles ?? ['billing_viewer'],\n      };\n\n      return true;\n    } catch {\n      // Deliberately opaque: the caller does not get to learn whether the\n      // token was expired, malformed or signed with the wrong key.\n      throw new UnauthorizedException('Invalid bearer token');\n    }\n  }\n}\n\nfunction readBearerToken(request: AuthenticatedRequest): string | null {\n  const header = request.headers.authorization;\n  if (!header) {\n    return null;\n  }\n\n  const [scheme, value] = header.split(' ');\n  if (scheme?.toLowerCase() !== 'bearer' || !value) {\n    return null;\n  }\n\n  return value.trim();\n}\n\n/** `@CurrentUser()` — the identity JwtAuthGuard attached to the request. */\nexport const CurrentUser = createParamDecorator(\n  (_data: unknown, context: ExecutionContext): AuthenticatedUser => {\n    const request = context.switchToHttp().getRequest<AuthenticatedRequest>();\n\n    if (!request.user) {\n      throw new UnauthorizedException('Handler reached without an identity');\n    }\n\n    return request.user;\n  },\n);\n",
+        "src/auth/roles.guard.ts": "import {\n  CanActivate,\n  ExecutionContext,\n  ForbiddenException,\n  Injectable,\n  SetMetadata,\n} from '@nestjs/common';\nimport { Reflector } from '@nestjs/core';\nimport type { AuthenticatedRequest, BillingRole } from './jwt-auth.guard';\n\nexport const ROLES_METADATA_KEY = 'billing:required-roles';\n\n/**\n * Declares the roles a handler needs. Only enforced where RolesGuard is\n * actually in the handler's guard chain.\n */\nexport const Roles = (...roles: BillingRole[]) => SetMetadata(ROLES_METADATA_KEY, roles);\n\n@Injectable()\nexport class RolesGuard implements CanActivate {\n  constructor(private readonly reflector: Reflector) {}\n\n  canActivate(context: ExecutionContext): boolean {\n    const required = this.reflector.getAllAndOverride<BillingRole[] | undefined>(\n      ROLES_METADATA_KEY,\n      [context.getHandler(), context.getClass()],\n    );\n\n    if (!required || required.length === 0) {\n      return true;\n    }\n\n    const { user } = context.switchToHttp().getRequest<AuthenticatedRequest>();\n\n    if (!user) {\n      throw new ForbiddenException('No billing identity on the request');\n    }\n\n    if (!required.some((role) => user.roles.includes(role))) {\n      throw new ForbiddenException(`Requires one of: ${required.join(', ')}`);\n    }\n\n    return true;\n  }\n}\n",
+        "src/billing/entities/dunning-case.entity.ts": "import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';\n\nexport type DunningStage = 'reminder' | 'first_notice' | 'final_notice' | 'collections';\nexport type DunningStatus = 'open' | 'paused' | 'settled' | 'written_off';\n\n@Entity({ name: 'dunning_cases' })\n@Index(['organisationId', 'stage'])\nexport class DunningCase {\n  @PrimaryGeneratedColumn('uuid')\n  id!: string;\n\n  @Column({ name: 'organisation_id' })\n  organisationId!: string;\n\n  @Column({ name: 'invoice_id' })\n  invoiceId!: string;\n\n  @Column({ name: 'invoice_reference', length: 32 })\n  invoiceReference!: string;\n\n  @Column({ name: 'debtor_name', length: 200 })\n  debtorName!: string;\n\n  @Column({ type: 'varchar', length: 20, default: 'reminder' })\n  stage!: DunningStage;\n\n  @Column({ type: 'varchar', length: 20, default: 'open' })\n  status!: DunningStatus;\n\n  @Column({ name: 'overdue_cents', type: 'int' })\n  overdueCents!: number;\n\n  @Column({ name: 'next_action_on', type: 'date' })\n  nextActionOn!: string;\n\n  @Column({ name: 'write_off_reason_code', length: 40, nullable: true })\n  writeOffReasonCode!: string | null;\n\n  @Column({ length: 500, nullable: true })\n  memo!: string | null;\n\n  @Column({ name: 'closed_by_id', nullable: true })\n  closedById!: string | null;\n\n  @Column({ name: 'closed_at', type: 'timestamptz', nullable: true })\n  closedAt!: Date | null;\n}\n",
+        "src/dunning/case-write-off.service.ts": "import { Injectable, Logger, NotFoundException, UnprocessableEntityException } from '@nestjs/common';\nimport { InjectRepository } from '@nestjs/typeorm';\nimport { Repository } from 'typeorm';\nimport { DunningCase } from '../billing/entities/dunning-case.entity';\n\nexport interface WriteOffReceipt {\n  caseId: string;\n  invoiceReference: string;\n  writtenOffCents: number;\n  closedAt: string;\n}\n\nexport interface CloseCaseInput {\n  caseId: string;\n  organisationId: string;\n  reasonCode: string;\n  memo: string;\n  closedById: string;\n}\n\n@Injectable()\nexport class CaseWriteOffService {\n  private readonly logger = new Logger(CaseWriteOffService.name);\n\n  constructor(\n    @InjectRepository(DunningCase)\n    private readonly cases: Repository<DunningCase>,\n  ) {}\n\n  async close(input: CloseCaseInput): Promise<WriteOffReceipt> {\n    const dunningCase = await this.cases.findOne({\n      where: { id: input.caseId, organisationId: input.organisationId },\n    });\n\n    if (!dunningCase) {\n      throw new NotFoundException(`Dunning case ${input.caseId} does not exist`);\n    }\n\n    if (dunningCase.status !== 'open') {\n      throw new UnprocessableEntityException(\n        `Case ${dunningCase.invoiceReference} is already ${dunningCase.status}`,\n      );\n    }\n\n    dunningCase.status = 'written_off';\n    dunningCase.writeOffReasonCode = input.reasonCode;\n    dunningCase.memo = input.memo;\n    dunningCase.closedById = input.closedById;\n    dunningCase.closedAt = new Date();\n\n    const saved = await this.cases.save(dunningCase);\n\n    this.logger.warn(\n      `case ${saved.invoiceReference} written off for ${saved.overdueCents} cents`,\n    );\n\n    return {\n      caseId: saved.id,\n      invoiceReference: saved.invoiceReference,\n      writtenOffCents: saved.overdueCents,\n      closedAt: (saved.closedAt ?? new Date()).toISOString(),\n    };\n  }\n}\n",
+        "src/dunning/dto/write-off.dto.ts": "import { IsIn, IsString, Length } from 'class-validator';\n\nconst REASON_CODES = ['bankruptcy', 'goodwill', 'uneconomical', 'disputed'] as const;\n\nexport class WriteOffDto {\n  @IsIn(REASON_CODES)\n  reasonCode!: (typeof REASON_CODES)[number];\n\n  @IsString()\n  @Length(5, 500)\n  memo!: string;\n}\n"
+      },
+      "family": "billing-nest",
+      "architecture": "NestJS 10 REST service over PostgreSQL through TypeORM 0.3 repositories and query builders, with the caller identity read from request.user as populated by JwtAuthGuard.",
+      "language": "typescript",
+      "packageJson": {
+        "name": "acme-billing-api",
+        "version": "3.4.2",
+        "private": true,
+        "dependencies": {
+          "@nestjs/common": "^10.3.7",
+          "@nestjs/config": "^3.2.2",
+          "@nestjs/core": "^10.3.7",
+          "@nestjs/jwt": "^10.2.0",
+          "@nestjs/platform-express": "^10.3.7",
+          "@nestjs/typeorm": "^10.0.2",
+          "class-transformer": "^0.5.1",
+          "class-validator": "^0.14.1",
+          "pg": "^8.11.5",
+          "reflect-metadata": "^0.2.2",
+          "rxjs": "^7.8.1",
+          "typeorm": "^0.3.20"
+        },
+        "devDependencies": {
+          "@types/express": "^4.17.21",
+          "@types/node": "^20.12.7",
+          "typescript": "^5.4.5"
+        }
+      },
+      "file": "billing-nest/src/dunning/write-off.controller.ts"
+    },
+    {
+      "id": "h5-billing-nest-plan-change",
+      "scanAs": "src/subscriptions/plan-change.service.ts",
+      "kind": "vulnerable",
+      "category": "subscription_entity_mass_assignment",
+      "cwe": "CWE-915",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 90,
+      "lineRange": [
+        59,
+        100
+      ],
+      "route": "PATCH /api/subscriptions/:subscriptionId/plan",
+      "runtimeVerifiable": true,
+      "why": "The whole request body is spread into repository.merge and saved, and the global ValidationPipe in main.ts is built without whitelist or forbidNonWhitelisted, so properties that are not on PlanChangeDto survive validation and are written to the entity: a customer can send discountBps, status, currentPeriodEnd, taxIdentifier or organisationId and, for example, give itself a 100% discount on its own subscription.",
+      "extraFiles": {
+        "src/auth/jwt-auth.guard.ts": "import {\n  CanActivate,\n  ExecutionContext,\n  Injectable,\n  UnauthorizedException,\n  createParamDecorator,\n} from '@nestjs/common';\nimport { JwtService } from '@nestjs/jwt';\nimport type { Request } from 'express';\n\nexport type BillingRole = 'billing_viewer' | 'billing_operator' | 'billing_admin';\n\n/** Shape of `request.user` on every authenticated billing request. */\nexport interface AuthenticatedUser {\n  readonly id: string;\n  readonly email: string;\n  readonly organisationId: string;\n  readonly roles: readonly BillingRole[];\n}\n\nexport interface AuthenticatedRequest extends Request {\n  user?: AuthenticatedUser;\n}\n\ninterface BillingTokenClaims {\n  sub: string;\n  email: string;\n  org: string;\n  roles?: BillingRole[];\n}\n\n/**\n * Verifies the bearer token issued by the identity service and hangs the\n * resolved billing identity on the request. Every controller in this service\n * sits behind it.\n */\n@Injectable()\nexport class JwtAuthGuard implements CanActivate {\n  constructor(private readonly jwtService: JwtService) {}\n\n  async canActivate(context: ExecutionContext): Promise<boolean> {\n    const request = context.switchToHttp().getRequest<AuthenticatedRequest>();\n    const token = readBearerToken(request);\n\n    if (!token) {\n      throw new UnauthorizedException('Missing bearer token');\n    }\n\n    try {\n      const claims = await this.jwtService.verifyAsync<BillingTokenClaims>(token);\n\n      request.user = {\n        id: claims.sub,\n        email: claims.email,\n        organisationId: claims.org,\n        roles: claims.roles ?? ['billing_viewer'],\n      };\n\n      return true;\n    } catch {\n      // Deliberately opaque: the caller does not get to learn whether the\n      // token was expired, malformed or signed with the wrong key.\n      throw new UnauthorizedException('Invalid bearer token');\n    }\n  }\n}\n\nfunction readBearerToken(request: AuthenticatedRequest): string | null {\n  const header = request.headers.authorization;\n  if (!header) {\n    return null;\n  }\n\n  const [scheme, value] = header.split(' ');\n  if (scheme?.toLowerCase() !== 'bearer' || !value) {\n    return null;\n  }\n\n  return value.trim();\n}\n\n/** `@CurrentUser()` — the identity JwtAuthGuard attached to the request. */\nexport const CurrentUser = createParamDecorator(\n  (_data: unknown, context: ExecutionContext): AuthenticatedUser => {\n    const request = context.switchToHttp().getRequest<AuthenticatedRequest>();\n\n    if (!request.user) {\n      throw new UnauthorizedException('Handler reached without an identity');\n    }\n\n    return request.user;\n  },\n);\n",
+        "src/billing/entities/subscription.entity.ts": "import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';\n\nexport type SubscriptionStatus = 'trialing' | 'active' | 'past_due' | 'cancelled';\n\n@Entity({ name: 'subscriptions' })\n@Index(['organisationId', 'status'])\nexport class Subscription {\n  @PrimaryGeneratedColumn('uuid')\n  id!: string;\n\n  @Column({ name: 'organisation_id' })\n  organisationId!: string;\n\n  @Column({ name: 'plan_code', length: 40 })\n  planCode!: string;\n\n  @Column({ type: 'int', default: 1 })\n  seats!: number;\n\n  @Column({ name: 'unit_price_cents', type: 'int' })\n  unitPriceCents!: number;\n\n  /** Contract discount in basis points, so 1500 is 15% off the list price. */\n  @Column({ name: 'discount_bps', type: 'int', default: 0 })\n  discountBps!: number;\n\n  @Column({ type: 'varchar', length: 20, default: 'trialing' })\n  status!: SubscriptionStatus;\n\n  @Column({ name: 'billing_interval', type: 'varchar', length: 10, default: 'monthly' })\n  billingInterval!: 'monthly' | 'annual';\n\n  @Column({ name: 'billing_contact_name', length: 200 })\n  billingContactName!: string;\n\n  @Column({ name: 'billing_contact_email', length: 320 })\n  billingContactEmail!: string;\n\n  @Column({ name: 'purchase_order_reference', length: 64, nullable: true })\n  purchaseOrderReference!: string | null;\n\n  /** Tax identifier used on this subscription's invoices, if it differs. */\n  @Column({ name: 'tax_identifier', length: 32, nullable: true })\n  taxIdentifier!: string | null;\n\n  @Column({ name: 'current_period_end', type: 'date' })\n  currentPeriodEnd!: string;\n\n  @Column({ name: 'effective_from', type: 'date' })\n  effectiveFrom!: string;\n\n  @Column({ name: 'trial_ends_on', type: 'date', nullable: true })\n  trialEndsOn!: string | null;\n\n  @Column({ name: 'updated_by_id', nullable: true })\n  updatedById!: string | null;\n}\n",
+        "src/subscriptions/plan-change.controller.ts": "import { Body, Controller, Param, ParseUUIDPipe, Patch, UseGuards } from '@nestjs/common';\nimport {\n  CurrentUser,\n  JwtAuthGuard,\n  type AuthenticatedUser,\n} from '../auth/jwt-auth.guard';\nimport { PlanChangeService, type PlanChangeReceipt } from './plan-change.service';\nimport { PlanChangeDto } from './dto/plan-change.dto';\n\n@Controller('api/subscriptions')\n@UseGuards(JwtAuthGuard)\nexport class PlanChangeController {\n  constructor(private readonly planChanges: PlanChangeService) {}\n\n  @Patch(':subscriptionId/plan')\n  async change(\n    @Param('subscriptionId', ParseUUIDPipe) subscriptionId: string,\n    @Body() body: PlanChangeDto,\n    @CurrentUser() actor: AuthenticatedUser,\n  ): Promise<PlanChangeReceipt> {\n    return this.planChanges.applyPlanChange(subscriptionId, body, actor);\n  }\n}\n",
+        "src/subscriptions/dto/plan-change.dto.ts": "import { IsInt, IsOptional, IsString, Length, Min } from 'class-validator';\n\nexport class PlanChangeDto {\n  @IsString()\n  @Length(3, 40)\n  planCode!: string;\n\n  @IsOptional()\n  @IsInt()\n  @Min(1)\n  seats?: number;\n\n  /** Free text the CSM types when a downgrade is requested. */\n  @IsOptional()\n  @IsString()\n  @Length(0, 500)\n  note?: string;\n}\n",
+        "src/main.ts": "import { ValidationPipe } from '@nestjs/common';\nimport { NestFactory } from '@nestjs/core';\nimport { AppModule } from './app.module';\n\nasync function bootstrap(): Promise<void> {\n  const app = await NestFactory.create(AppModule, { bufferLogs: true });\n\n  app.enableShutdownHooks();\n\n  // Transform incoming payloads into their DTO classes and run the\n  // class-validator decorators on them.\n  app.useGlobalPipes(\n    new ValidationPipe({\n      transform: true,\n      transformOptions: { enableImplicitConversion: true },\n    }),\n  );\n\n  await app.listen(Number(process.env.PORT ?? 3000));\n}\n\nvoid bootstrap();\n",
+        "src/app.module.ts": "import { Module } from '@nestjs/common';\nimport { ConfigModule, ConfigService } from '@nestjs/config';\nimport { JwtModule } from '@nestjs/jwt';\nimport { TypeOrmModule } from '@nestjs/typeorm';\nimport { Subscription } from './billing/entities/subscription.entity';\nimport { PlanChangeController } from './subscriptions/plan-change.controller';\nimport { PlanChangeService } from './subscriptions/plan-change.service';\n\n@Module({\n  imports: [\n    ConfigModule.forRoot({ isGlobal: true, cache: true }),\n    TypeOrmModule.forRootAsync({\n      inject: [ConfigService],\n      useFactory: (config: ConfigService) => ({\n        type: 'postgres' as const,\n        url: config.getOrThrow<string>('DATABASE_URL'),\n        entities: [Subscription],\n        migrationsRun: true,\n        synchronize: false,\n      }),\n    }),\n    TypeOrmModule.forFeature([Subscription]),\n    JwtModule.registerAsync({\n      inject: [ConfigService],\n      useFactory: (config: ConfigService) => ({\n        publicKey: config.getOrThrow<string>('IDENTITY_JWT_PUBLIC_KEY'),\n        verifyOptions: { algorithms: ['RS256'], issuer: 'identity.internal' },\n      }),\n    }),\n  ],\n  controllers: [PlanChangeController],\n  providers: [PlanChangeService],\n})\nexport class AppModule {}\n"
+      },
+      "family": "billing-nest",
+      "architecture": "NestJS 10 REST service over PostgreSQL through TypeORM 0.3 repositories and query builders, with the caller identity read from request.user as populated by JwtAuthGuard.",
+      "language": "typescript",
+      "packageJson": {
+        "name": "acme-billing-api",
+        "version": "3.4.2",
+        "private": true,
+        "dependencies": {
+          "@nestjs/common": "^10.3.7",
+          "@nestjs/config": "^3.2.2",
+          "@nestjs/core": "^10.3.7",
+          "@nestjs/jwt": "^10.2.0",
+          "@nestjs/platform-express": "^10.3.7",
+          "@nestjs/typeorm": "^10.0.2",
+          "class-transformer": "^0.5.1",
+          "class-validator": "^0.14.1",
+          "pg": "^8.11.5",
+          "reflect-metadata": "^0.2.2",
+          "rxjs": "^7.8.1",
+          "typeorm": "^0.3.20"
+        },
+        "devDependencies": {
+          "@types/express": "^4.17.21",
+          "@types/node": "^20.12.7",
+          "typescript": "^5.4.5"
+        }
+      },
+      "file": "billing-nest/src/subscriptions/plan-change.service.ts"
+    },
+    {
+      "id": "h5-billing-nest-billing-contact",
+      "scanAs": "src/subscriptions/billing-contact.service.ts",
+      "kind": "safe",
+      "route": "PATCH /api/subscriptions/:subscriptionId/billing-contact",
+      "runtimeVerifiable": true,
+      "pairedWith": "h5-billing-nest-plan-change",
+      "why": "Same repository.merge and save on the same entity behind the same non-whitelisting ValidationPipe, but the patch is copied field by field into an explicit DeepPartial<Subscription>, so extra properties in the body never reach merge.",
+      "extraFiles": {
+        "src/auth/jwt-auth.guard.ts": "import {\n  CanActivate,\n  ExecutionContext,\n  Injectable,\n  UnauthorizedException,\n  createParamDecorator,\n} from '@nestjs/common';\nimport { JwtService } from '@nestjs/jwt';\nimport type { Request } from 'express';\n\nexport type BillingRole = 'billing_viewer' | 'billing_operator' | 'billing_admin';\n\n/** Shape of `request.user` on every authenticated billing request. */\nexport interface AuthenticatedUser {\n  readonly id: string;\n  readonly email: string;\n  readonly organisationId: string;\n  readonly roles: readonly BillingRole[];\n}\n\nexport interface AuthenticatedRequest extends Request {\n  user?: AuthenticatedUser;\n}\n\ninterface BillingTokenClaims {\n  sub: string;\n  email: string;\n  org: string;\n  roles?: BillingRole[];\n}\n\n/**\n * Verifies the bearer token issued by the identity service and hangs the\n * resolved billing identity on the request. Every controller in this service\n * sits behind it.\n */\n@Injectable()\nexport class JwtAuthGuard implements CanActivate {\n  constructor(private readonly jwtService: JwtService) {}\n\n  async canActivate(context: ExecutionContext): Promise<boolean> {\n    const request = context.switchToHttp().getRequest<AuthenticatedRequest>();\n    const token = readBearerToken(request);\n\n    if (!token) {\n      throw new UnauthorizedException('Missing bearer token');\n    }\n\n    try {\n      const claims = await this.jwtService.verifyAsync<BillingTokenClaims>(token);\n\n      request.user = {\n        id: claims.sub,\n        email: claims.email,\n        organisationId: claims.org,\n        roles: claims.roles ?? ['billing_viewer'],\n      };\n\n      return true;\n    } catch {\n      // Deliberately opaque: the caller does not get to learn whether the\n      // token was expired, malformed or signed with the wrong key.\n      throw new UnauthorizedException('Invalid bearer token');\n    }\n  }\n}\n\nfunction readBearerToken(request: AuthenticatedRequest): string | null {\n  const header = request.headers.authorization;\n  if (!header) {\n    return null;\n  }\n\n  const [scheme, value] = header.split(' ');\n  if (scheme?.toLowerCase() !== 'bearer' || !value) {\n    return null;\n  }\n\n  return value.trim();\n}\n\n/** `@CurrentUser()` — the identity JwtAuthGuard attached to the request. */\nexport const CurrentUser = createParamDecorator(\n  (_data: unknown, context: ExecutionContext): AuthenticatedUser => {\n    const request = context.switchToHttp().getRequest<AuthenticatedRequest>();\n\n    if (!request.user) {\n      throw new UnauthorizedException('Handler reached without an identity');\n    }\n\n    return request.user;\n  },\n);\n",
+        "src/billing/entities/subscription.entity.ts": "import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';\n\nexport type SubscriptionStatus = 'trialing' | 'active' | 'past_due' | 'cancelled';\n\n@Entity({ name: 'subscriptions' })\n@Index(['organisationId', 'status'])\nexport class Subscription {\n  @PrimaryGeneratedColumn('uuid')\n  id!: string;\n\n  @Column({ name: 'organisation_id' })\n  organisationId!: string;\n\n  @Column({ name: 'plan_code', length: 40 })\n  planCode!: string;\n\n  @Column({ type: 'int', default: 1 })\n  seats!: number;\n\n  @Column({ name: 'unit_price_cents', type: 'int' })\n  unitPriceCents!: number;\n\n  /** Contract discount in basis points, so 1500 is 15% off the list price. */\n  @Column({ name: 'discount_bps', type: 'int', default: 0 })\n  discountBps!: number;\n\n  @Column({ type: 'varchar', length: 20, default: 'trialing' })\n  status!: SubscriptionStatus;\n\n  @Column({ name: 'billing_interval', type: 'varchar', length: 10, default: 'monthly' })\n  billingInterval!: 'monthly' | 'annual';\n\n  @Column({ name: 'billing_contact_name', length: 200 })\n  billingContactName!: string;\n\n  @Column({ name: 'billing_contact_email', length: 320 })\n  billingContactEmail!: string;\n\n  @Column({ name: 'purchase_order_reference', length: 64, nullable: true })\n  purchaseOrderReference!: string | null;\n\n  /** Tax identifier used on this subscription's invoices, if it differs. */\n  @Column({ name: 'tax_identifier', length: 32, nullable: true })\n  taxIdentifier!: string | null;\n\n  @Column({ name: 'current_period_end', type: 'date' })\n  currentPeriodEnd!: string;\n\n  @Column({ name: 'effective_from', type: 'date' })\n  effectiveFrom!: string;\n\n  @Column({ name: 'trial_ends_on', type: 'date', nullable: true })\n  trialEndsOn!: string | null;\n\n  @Column({ name: 'updated_by_id', nullable: true })\n  updatedById!: string | null;\n}\n",
+        "src/subscriptions/billing-contact.controller.ts": "import { Body, Controller, Param, ParseUUIDPipe, Patch, UseGuards } from '@nestjs/common';\nimport {\n  CurrentUser,\n  JwtAuthGuard,\n  type AuthenticatedUser,\n} from '../auth/jwt-auth.guard';\nimport {\n  BillingContactService,\n  type BillingContactView,\n} from './billing-contact.service';\nimport { BillingContactDto } from './dto/billing-contact.dto';\n\n@Controller('api/subscriptions')\n@UseGuards(JwtAuthGuard)\nexport class BillingContactController {\n  constructor(private readonly contacts: BillingContactService) {}\n\n  @Patch(':subscriptionId/billing-contact')\n  async update(\n    @Param('subscriptionId', ParseUUIDPipe) subscriptionId: string,\n    @Body() body: BillingContactDto,\n    @CurrentUser() actor: AuthenticatedUser,\n  ): Promise<BillingContactView> {\n    return this.contacts.updateContact(subscriptionId, body, actor);\n  }\n}\n",
+        "src/subscriptions/dto/billing-contact.dto.ts": "import { IsEmail, IsOptional, IsString, Length } from 'class-validator';\n\nexport class BillingContactDto {\n  @IsString()\n  @Length(2, 200)\n  billingContactName!: string;\n\n  @IsEmail()\n  billingContactEmail!: string;\n\n  @IsOptional()\n  @IsString()\n  @Length(1, 64)\n  purchaseOrderReference?: string;\n}\n",
+        "src/main.ts": "import { ValidationPipe } from '@nestjs/common';\nimport { NestFactory } from '@nestjs/core';\nimport { AppModule } from './app.module';\n\nasync function bootstrap(): Promise<void> {\n  const app = await NestFactory.create(AppModule, { bufferLogs: true });\n\n  app.enableShutdownHooks();\n\n  // Transform incoming payloads into their DTO classes and run the\n  // class-validator decorators on them.\n  app.useGlobalPipes(\n    new ValidationPipe({\n      transform: true,\n      transformOptions: { enableImplicitConversion: true },\n    }),\n  );\n\n  await app.listen(Number(process.env.PORT ?? 3000));\n}\n\nvoid bootstrap();\n",
+        "src/app.module.ts": "import { Module } from '@nestjs/common';\nimport { ConfigModule, ConfigService } from '@nestjs/config';\nimport { JwtModule } from '@nestjs/jwt';\nimport { TypeOrmModule } from '@nestjs/typeorm';\nimport { Subscription } from './billing/entities/subscription.entity';\nimport { BillingContactController } from './subscriptions/billing-contact.controller';\nimport { BillingContactService } from './subscriptions/billing-contact.service';\n\n@Module({\n  imports: [\n    ConfigModule.forRoot({ isGlobal: true, cache: true }),\n    TypeOrmModule.forRootAsync({\n      inject: [ConfigService],\n      useFactory: (config: ConfigService) => ({\n        type: 'postgres' as const,\n        url: config.getOrThrow<string>('DATABASE_URL'),\n        entities: [Subscription],\n        migrationsRun: true,\n        synchronize: false,\n      }),\n    }),\n    TypeOrmModule.forFeature([Subscription]),\n    JwtModule.registerAsync({\n      inject: [ConfigService],\n      useFactory: (config: ConfigService) => ({\n        publicKey: config.getOrThrow<string>('IDENTITY_JWT_PUBLIC_KEY'),\n        verifyOptions: { algorithms: ['RS256'], issuer: 'identity.internal' },\n      }),\n    }),\n  ],\n  controllers: [BillingContactController],\n  providers: [BillingContactService],\n})\nexport class AppModule {}\n"
+      },
+      "family": "billing-nest",
+      "architecture": "NestJS 10 REST service over PostgreSQL through TypeORM 0.3 repositories and query builders, with the caller identity read from request.user as populated by JwtAuthGuard.",
+      "language": "typescript",
+      "packageJson": {
+        "name": "acme-billing-api",
+        "version": "3.4.2",
+        "private": true,
+        "dependencies": {
+          "@nestjs/common": "^10.3.7",
+          "@nestjs/config": "^3.2.2",
+          "@nestjs/core": "^10.3.7",
+          "@nestjs/jwt": "^10.2.0",
+          "@nestjs/platform-express": "^10.3.7",
+          "@nestjs/typeorm": "^10.0.2",
+          "class-transformer": "^0.5.1",
+          "class-validator": "^0.14.1",
+          "pg": "^8.11.5",
+          "reflect-metadata": "^0.2.2",
+          "rxjs": "^7.8.1",
+          "typeorm": "^0.3.20"
+        },
+        "devDependencies": {
+          "@types/express": "^4.17.21",
+          "@types/node": "^20.12.7",
+          "typescript": "^5.4.5"
+        }
+      },
+      "file": "billing-nest/src/subscriptions/billing-contact.service.ts"
+    },
+    {
+      "id": "h5-billing-nest-statement-download",
+      "scanAs": "src/documents/statement-download.controller.ts",
+      "kind": "vulnerable",
+      "category": "archive_document_path_from_request_parameter",
+      "cwe": "CWE-22",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 60,
+      "lineRange": [
+        38,
+        68
+      ],
+      "route": "GET /api/documents/statements/:reference",
+      "runtimeVerifiable": true,
+      "why": "When the statement index has no row, the handler builds the archive path by joining statementArchiveRoot with the raw :reference path segment plus '.pdf' and streams it; the reference is never matched against the statement numbering pattern and the resolved path is never checked against the root, so percent-encoded separators in the URL let an authenticated caller read files outside the archive volume.",
+      "extraFiles": {
+        "src/auth/jwt-auth.guard.ts": "import {\n  CanActivate,\n  ExecutionContext,\n  Injectable,\n  UnauthorizedException,\n  createParamDecorator,\n} from '@nestjs/common';\nimport { JwtService } from '@nestjs/jwt';\nimport type { Request } from 'express';\n\nexport type BillingRole = 'billing_viewer' | 'billing_operator' | 'billing_admin';\n\n/** Shape of `request.user` on every authenticated billing request. */\nexport interface AuthenticatedUser {\n  readonly id: string;\n  readonly email: string;\n  readonly organisationId: string;\n  readonly roles: readonly BillingRole[];\n}\n\nexport interface AuthenticatedRequest extends Request {\n  user?: AuthenticatedUser;\n}\n\ninterface BillingTokenClaims {\n  sub: string;\n  email: string;\n  org: string;\n  roles?: BillingRole[];\n}\n\n/**\n * Verifies the bearer token issued by the identity service and hangs the\n * resolved billing identity on the request. Every controller in this service\n * sits behind it.\n */\n@Injectable()\nexport class JwtAuthGuard implements CanActivate {\n  constructor(private readonly jwtService: JwtService) {}\n\n  async canActivate(context: ExecutionContext): Promise<boolean> {\n    const request = context.switchToHttp().getRequest<AuthenticatedRequest>();\n    const token = readBearerToken(request);\n\n    if (!token) {\n      throw new UnauthorizedException('Missing bearer token');\n    }\n\n    try {\n      const claims = await this.jwtService.verifyAsync<BillingTokenClaims>(token);\n\n      request.user = {\n        id: claims.sub,\n        email: claims.email,\n        organisationId: claims.org,\n        roles: claims.roles ?? ['billing_viewer'],\n      };\n\n      return true;\n    } catch {\n      // Deliberately opaque: the caller does not get to learn whether the\n      // token was expired, malformed or signed with the wrong key.\n      throw new UnauthorizedException('Invalid bearer token');\n    }\n  }\n}\n\nfunction readBearerToken(request: AuthenticatedRequest): string | null {\n  const header = request.headers.authorization;\n  if (!header) {\n    return null;\n  }\n\n  const [scheme, value] = header.split(' ');\n  if (scheme?.toLowerCase() !== 'bearer' || !value) {\n    return null;\n  }\n\n  return value.trim();\n}\n\n/** `@CurrentUser()` — the identity JwtAuthGuard attached to the request. */\nexport const CurrentUser = createParamDecorator(\n  (_data: unknown, context: ExecutionContext): AuthenticatedUser => {\n    const request = context.switchToHttp().getRequest<AuthenticatedRequest>();\n\n    if (!request.user) {\n      throw new UnauthorizedException('Handler reached without an identity');\n    }\n\n    return request.user;\n  },\n);\n",
+        "src/config/billing-config.service.ts": "import { Injectable } from '@nestjs/common';\nimport { ConfigService } from '@nestjs/config';\n\n/**\n * Typed view over the environment. Everything the billing service needs to\n * find on disk or in another system is resolved here once at boot.\n */\n@Injectable()\nexport class BillingConfigService {\n  constructor(private readonly config: ConfigService) {}\n\n  /** Where the month end job writes freshly rendered statements. */\n  get statementRoot(): string {\n    return this.config.get<string>('DOCUMENTS_STATEMENT_ROOT', '/srv/billing/statements');\n  }\n\n  /** Read only volume holding everything printed before the 2024 migration. */\n  get statementArchiveRoot(): string {\n    return this.config.get<string>(\n      'DOCUMENTS_STATEMENT_ARCHIVE_ROOT',\n      '/srv/billing/archive/statements',\n    );\n  }\n\n  get creditNoteRoot(): string {\n    return this.config.get<string>('DOCUMENTS_CREDIT_NOTE_ROOT', '/srv/billing/credit-notes');\n  }\n\n  get creditNoteArchiveRoot(): string {\n    return this.config.get<string>(\n      'DOCUMENTS_CREDIT_NOTE_ARCHIVE_ROOT',\n      '/srv/billing/archive/credit-notes',\n    );\n  }\n\n  get defaultCurrency(): string {\n    return this.config.get<string>('BILLING_DEFAULT_CURRENCY', 'EUR');\n  }\n\n  /** Days after the due date before a dunning case opens. */\n  get dunningGraceDays(): number {\n    return Number(this.config.get<string>('BILLING_DUNNING_GRACE_DAYS', '5'));\n  }\n}\n",
+        "src/config/billing-config.module.ts": "import { Module } from '@nestjs/common';\nimport { ConfigModule } from '@nestjs/config';\nimport { BillingConfigService } from './billing-config.service';\n\n@Module({\n  imports: [ConfigModule.forRoot({ isGlobal: true, cache: true })],\n  providers: [BillingConfigService],\n  exports: [BillingConfigService],\n})\nexport class BillingConfigModule {}\n",
+        "src/billing/entities/account-statement.entity.ts": "import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';\n\n@Entity({ name: 'account_statements' })\n@Index(['organisationId', 'reference'])\nexport class AccountStatement {\n  @PrimaryGeneratedColumn('uuid')\n  id!: string;\n\n  @Column({ name: 'organisation_id' })\n  organisationId!: string;\n\n  /** Statement number quoted in the month end e-mail, e.g. ST-2026-04-0187. */\n  @Column({ length: 32 })\n  reference!: string;\n\n  /** File name of the rendered PDF on the documents volume. */\n  @Column({ name: 'stored_file_name', length: 200 })\n  storedFileName!: string;\n\n  @Column({ name: 'period_start', type: 'date' })\n  periodStart!: string;\n\n  @Column({ name: 'period_end', type: 'date' })\n  periodEnd!: string;\n\n  @Column({ name: 'created_at', type: 'timestamptz', default: () => 'now()' })\n  createdAt!: Date;\n}\n",
+        "src/documents/statement-index.service.ts": "import { Injectable } from '@nestjs/common';\nimport { InjectRepository } from '@nestjs/typeorm';\nimport { Repository } from 'typeorm';\nimport { AccountStatement } from '../billing/entities/account-statement.entity';\n\n@Injectable()\nexport class StatementIndexService {\n  constructor(\n    @InjectRepository(AccountStatement)\n    private readonly statements: Repository<AccountStatement>,\n  ) {}\n\n  /** The indexed statement for one organisation, or null if it predates the index. */\n  async findForOrganisation(\n    reference: string,\n    organisationId: string,\n  ): Promise<AccountStatement | null> {\n    return this.statements.findOne({ where: { reference, organisationId } });\n  }\n}\n"
+      },
+      "family": "billing-nest",
+      "architecture": "NestJS 10 REST service over PostgreSQL through TypeORM 0.3 repositories and query builders, with the caller identity read from request.user as populated by JwtAuthGuard.",
+      "language": "typescript",
+      "packageJson": {
+        "name": "acme-billing-api",
+        "version": "3.4.2",
+        "private": true,
+        "dependencies": {
+          "@nestjs/common": "^10.3.7",
+          "@nestjs/config": "^3.2.2",
+          "@nestjs/core": "^10.3.7",
+          "@nestjs/jwt": "^10.2.0",
+          "@nestjs/platform-express": "^10.3.7",
+          "@nestjs/typeorm": "^10.0.2",
+          "class-transformer": "^0.5.1",
+          "class-validator": "^0.14.1",
+          "pg": "^8.11.5",
+          "reflect-metadata": "^0.2.2",
+          "rxjs": "^7.8.1",
+          "typeorm": "^0.3.20"
+        },
+        "devDependencies": {
+          "@types/express": "^4.17.21",
+          "@types/node": "^20.12.7",
+          "typescript": "^5.4.5"
+        }
+      },
+      "file": "billing-nest/src/documents/statement-download.controller.ts"
+    },
+    {
+      "id": "h5-billing-nest-credit-note-download",
+      "scanAs": "src/documents/credit-note-download.controller.ts",
+      "kind": "safe",
+      "route": "GET /api/documents/credit-notes/:reference",
+      "runtimeVerifiable": true,
+      "pairedWith": "h5-billing-nest-statement-download",
+      "why": "The same index-then-archive fallback, but the reference must first match /^CN-\\d{4}-\\d{6}$/ and the resolved archive path is then re-checked to still start with the resolved archive root, so the joined path cannot leave the directory.",
+      "extraFiles": {
+        "src/auth/jwt-auth.guard.ts": "import {\n  CanActivate,\n  ExecutionContext,\n  Injectable,\n  UnauthorizedException,\n  createParamDecorator,\n} from '@nestjs/common';\nimport { JwtService } from '@nestjs/jwt';\nimport type { Request } from 'express';\n\nexport type BillingRole = 'billing_viewer' | 'billing_operator' | 'billing_admin';\n\n/** Shape of `request.user` on every authenticated billing request. */\nexport interface AuthenticatedUser {\n  readonly id: string;\n  readonly email: string;\n  readonly organisationId: string;\n  readonly roles: readonly BillingRole[];\n}\n\nexport interface AuthenticatedRequest extends Request {\n  user?: AuthenticatedUser;\n}\n\ninterface BillingTokenClaims {\n  sub: string;\n  email: string;\n  org: string;\n  roles?: BillingRole[];\n}\n\n/**\n * Verifies the bearer token issued by the identity service and hangs the\n * resolved billing identity on the request. Every controller in this service\n * sits behind it.\n */\n@Injectable()\nexport class JwtAuthGuard implements CanActivate {\n  constructor(private readonly jwtService: JwtService) {}\n\n  async canActivate(context: ExecutionContext): Promise<boolean> {\n    const request = context.switchToHttp().getRequest<AuthenticatedRequest>();\n    const token = readBearerToken(request);\n\n    if (!token) {\n      throw new UnauthorizedException('Missing bearer token');\n    }\n\n    try {\n      const claims = await this.jwtService.verifyAsync<BillingTokenClaims>(token);\n\n      request.user = {\n        id: claims.sub,\n        email: claims.email,\n        organisationId: claims.org,\n        roles: claims.roles ?? ['billing_viewer'],\n      };\n\n      return true;\n    } catch {\n      // Deliberately opaque: the caller does not get to learn whether the\n      // token was expired, malformed or signed with the wrong key.\n      throw new UnauthorizedException('Invalid bearer token');\n    }\n  }\n}\n\nfunction readBearerToken(request: AuthenticatedRequest): string | null {\n  const header = request.headers.authorization;\n  if (!header) {\n    return null;\n  }\n\n  const [scheme, value] = header.split(' ');\n  if (scheme?.toLowerCase() !== 'bearer' || !value) {\n    return null;\n  }\n\n  return value.trim();\n}\n\n/** `@CurrentUser()` — the identity JwtAuthGuard attached to the request. */\nexport const CurrentUser = createParamDecorator(\n  (_data: unknown, context: ExecutionContext): AuthenticatedUser => {\n    const request = context.switchToHttp().getRequest<AuthenticatedRequest>();\n\n    if (!request.user) {\n      throw new UnauthorizedException('Handler reached without an identity');\n    }\n\n    return request.user;\n  },\n);\n",
+        "src/config/billing-config.service.ts": "import { Injectable } from '@nestjs/common';\nimport { ConfigService } from '@nestjs/config';\n\n/**\n * Typed view over the environment. Everything the billing service needs to\n * find on disk or in another system is resolved here once at boot.\n */\n@Injectable()\nexport class BillingConfigService {\n  constructor(private readonly config: ConfigService) {}\n\n  /** Where the month end job writes freshly rendered statements. */\n  get statementRoot(): string {\n    return this.config.get<string>('DOCUMENTS_STATEMENT_ROOT', '/srv/billing/statements');\n  }\n\n  /** Read only volume holding everything printed before the 2024 migration. */\n  get statementArchiveRoot(): string {\n    return this.config.get<string>(\n      'DOCUMENTS_STATEMENT_ARCHIVE_ROOT',\n      '/srv/billing/archive/statements',\n    );\n  }\n\n  get creditNoteRoot(): string {\n    return this.config.get<string>('DOCUMENTS_CREDIT_NOTE_ROOT', '/srv/billing/credit-notes');\n  }\n\n  get creditNoteArchiveRoot(): string {\n    return this.config.get<string>(\n      'DOCUMENTS_CREDIT_NOTE_ARCHIVE_ROOT',\n      '/srv/billing/archive/credit-notes',\n    );\n  }\n\n  get defaultCurrency(): string {\n    return this.config.get<string>('BILLING_DEFAULT_CURRENCY', 'EUR');\n  }\n\n  /** Days after the due date before a dunning case opens. */\n  get dunningGraceDays(): number {\n    return Number(this.config.get<string>('BILLING_DUNNING_GRACE_DAYS', '5'));\n  }\n}\n",
+        "src/config/billing-config.module.ts": "import { Module } from '@nestjs/common';\nimport { ConfigModule } from '@nestjs/config';\nimport { BillingConfigService } from './billing-config.service';\n\n@Module({\n  imports: [ConfigModule.forRoot({ isGlobal: true, cache: true })],\n  providers: [BillingConfigService],\n  exports: [BillingConfigService],\n})\nexport class BillingConfigModule {}\n",
+        "src/billing/entities/credit-note.entity.ts": "import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';\nimport { Invoice } from './invoice.entity';\n\nexport type CreditNoteStatus = 'issued' | 'settled' | 'voided';\n\n@Entity({ name: 'credit_notes' })\n@Index(['organisationId', 'invoiceId'])\nexport class CreditNote {\n  @PrimaryGeneratedColumn('uuid')\n  id!: string;\n\n  @Column({ unique: true, length: 32 })\n  reference!: string;\n\n  @Column({ name: 'organisation_id' })\n  organisationId!: string;\n\n  @Column({ name: 'invoice_id' })\n  invoiceId!: string;\n\n  @ManyToOne(() => Invoice, { onDelete: 'RESTRICT' })\n  @JoinColumn({ name: 'invoice_id' })\n  invoice!: Invoice;\n\n  @Column({ name: 'amount_cents', type: 'int' })\n  amountCents!: number;\n\n  @Column({ length: 500 })\n  reason!: string;\n\n  @Column({ type: 'varchar', length: 20, default: 'issued' })\n  status!: CreditNoteStatus;\n\n  /** File name of the rendered PDF on the documents volume, once produced. */\n  @Column({ name: 'stored_file_name', length: 200, nullable: true })\n  storedFileName!: string | null;\n\n  @Column({ name: 'issued_by_id' })\n  issuedById!: string;\n\n  @Column({ name: 'created_at', type: 'timestamptz', default: () => 'now()' })\n  createdAt!: Date;\n}\n",
+        "src/billing/entities/invoice.entity.ts": "import {\n  Column,\n  Entity,\n  Index,\n  JoinColumn,\n  ManyToOne,\n  OneToMany,\n  PrimaryGeneratedColumn,\n} from 'typeorm';\nimport { InvoiceLine } from './invoice-line.entity';\nimport { Organisation } from './organisation.entity';\n\nexport type InvoiceStatus =\n  | 'draft'\n  | 'issued'\n  | 'partially_paid'\n  | 'overdue'\n  | 'paid'\n  | 'void';\n\n@Entity({ name: 'invoices' })\n@Index(['organisationId', 'status'])\nexport class Invoice {\n  @PrimaryGeneratedColumn('uuid')\n  id!: string;\n\n  /** Human readable number printed on the document, e.g. INV-2026-004182. */\n  @Column({ unique: true, length: 32 })\n  reference!: string;\n\n  @Column({ name: 'organisation_id' })\n  organisationId!: string;\n\n  @ManyToOne(() => Organisation, { onDelete: 'RESTRICT' })\n  @JoinColumn({ name: 'organisation_id' })\n  organisation!: Organisation;\n\n  @Column({ type: 'varchar', length: 20, default: 'draft' })\n  status!: InvoiceStatus;\n\n  @Column({ length: 3, default: 'EUR' })\n  currency!: string;\n\n  @Column({ name: 'total_cents', type: 'int' })\n  totalCents!: number;\n\n  /** What is still outstanding after payments and credit notes. */\n  @Column({ name: 'balance_cents', type: 'int' })\n  balanceCents!: number;\n\n  @Column({ name: 'issued_on', type: 'date' })\n  issuedOn!: string;\n\n  @Column({ name: 'due_on', type: 'date' })\n  dueOn!: string;\n\n  @OneToMany(() => InvoiceLine, (line) => line.invoice, { cascade: ['insert'] })\n  lines!: InvoiceLine[];\n\n  @Column({ name: 'created_at', type: 'timestamptz', default: () => 'now()' })\n  createdAt!: Date;\n}\n",
+        "src/billing/entities/invoice-line.entity.ts": "import { Column, Entity, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';\nimport { Invoice } from './invoice.entity';\n\n@Entity({ name: 'invoice_lines' })\nexport class InvoiceLine {\n  @PrimaryGeneratedColumn('uuid')\n  id!: string;\n\n  @Column({ name: 'invoice_id' })\n  invoiceId!: string;\n\n  @ManyToOne(() => Invoice, (invoice) => invoice.lines, { onDelete: 'CASCADE' })\n  @JoinColumn({ name: 'invoice_id' })\n  invoice!: Invoice;\n\n  @Column({ length: 400 })\n  description!: string;\n\n  @Column({ type: 'int' })\n  quantity!: number;\n\n  @Column({ name: 'unit_price_cents', type: 'int' })\n  unitPriceCents!: number;\n\n  /** Tax rate in basis points, so 2100 is 21%. */\n  @Column({ name: 'tax_rate_bps', type: 'int', default: 0 })\n  taxRateBps!: number;\n}\n",
+        "src/billing/entities/organisation.entity.ts": "import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';\n\n@Entity({ name: 'organisations' })\nexport class Organisation {\n  @PrimaryGeneratedColumn('uuid')\n  id!: string;\n\n  @Column({ length: 200 })\n  name!: string;\n\n  /** VAT or other national tax identifier, as printed on the invoice. */\n  @Column({ name: 'tax_identifier', length: 32, nullable: true })\n  taxIdentifier!: string | null;\n\n  @Column({ length: 2 })\n  country!: string;\n\n  @Column({ name: 'dunning_email', length: 320 })\n  dunningEmail!: string;\n\n  @Column({ name: 'created_at', type: 'timestamptz', default: () => 'now()' })\n  createdAt!: Date;\n}\n",
+        "src/documents/credit-note-index.service.ts": "import { Injectable } from '@nestjs/common';\nimport { InjectRepository } from '@nestjs/typeorm';\nimport { Not, Repository } from 'typeorm';\nimport { CreditNote } from '../billing/entities/credit-note.entity';\n\nexport interface IndexedCreditNote {\n  reference: string;\n  storedFileName: string;\n}\n\n@Injectable()\nexport class CreditNoteIndexService {\n  constructor(\n    @InjectRepository(CreditNote)\n    private readonly creditNotes: Repository<CreditNote>,\n  ) {}\n\n  /** The rendered credit note for one organisation, if the PDF exists yet. */\n  async findForOrganisation(\n    reference: string,\n    organisationId: string,\n  ): Promise<IndexedCreditNote | null> {\n    const note = await this.creditNotes.findOne({\n      where: { reference, organisationId, storedFileName: Not('') },\n      select: { reference: true, storedFileName: true },\n    });\n\n    if (!note?.storedFileName) {\n      return null;\n    }\n\n    return { reference: note.reference, storedFileName: note.storedFileName };\n  }\n}\n"
+      },
+      "family": "billing-nest",
+      "architecture": "NestJS 10 REST service over PostgreSQL through TypeORM 0.3 repositories and query builders, with the caller identity read from request.user as populated by JwtAuthGuard.",
+      "language": "typescript",
+      "packageJson": {
+        "name": "acme-billing-api",
+        "version": "3.4.2",
+        "private": true,
+        "dependencies": {
+          "@nestjs/common": "^10.3.7",
+          "@nestjs/config": "^3.2.2",
+          "@nestjs/core": "^10.3.7",
+          "@nestjs/jwt": "^10.2.0",
+          "@nestjs/platform-express": "^10.3.7",
+          "@nestjs/typeorm": "^10.0.2",
+          "class-transformer": "^0.5.1",
+          "class-validator": "^0.14.1",
+          "pg": "^8.11.5",
+          "reflect-metadata": "^0.2.2",
+          "rxjs": "^7.8.1",
+          "typeorm": "^0.3.20"
+        },
+        "devDependencies": {
+          "@types/express": "^4.17.21",
+          "@types/node": "^20.12.7",
+          "typescript": "^5.4.5"
+        }
+      },
+      "file": "billing-nest/src/documents/credit-note-download.controller.ts"
+    },
+    {
+      "id": "h5-billing-nest-credit-note-issue",
+      "scanAs": "src/credit-notes/credit-notes.service.ts",
+      "kind": "vulnerable",
+      "category": "credit_amount_unbounded_by_invoice_balance",
+      "cwe": "CWE-840",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "line": 77,
+      "lineRange": [
+        53,
+        89
+      ],
+      "route": "POST /api/credit-notes",
+      "runtimeVerifiable": true,
+      "why": "issue books a credit note for input.amountCents and decrements the invoice balance by it without ever comparing the amount to the invoice total or to the credit notes already issued against that invoice; the DTO only requires a positive integer, so a caller can credit the same invoice repeatedly and drive balanceCents negative into a payable position.",
+      "extraFiles": {
+        "src/auth/jwt-auth.guard.ts": "import {\n  CanActivate,\n  ExecutionContext,\n  Injectable,\n  UnauthorizedException,\n  createParamDecorator,\n} from '@nestjs/common';\nimport { JwtService } from '@nestjs/jwt';\nimport type { Request } from 'express';\n\nexport type BillingRole = 'billing_viewer' | 'billing_operator' | 'billing_admin';\n\n/** Shape of `request.user` on every authenticated billing request. */\nexport interface AuthenticatedUser {\n  readonly id: string;\n  readonly email: string;\n  readonly organisationId: string;\n  readonly roles: readonly BillingRole[];\n}\n\nexport interface AuthenticatedRequest extends Request {\n  user?: AuthenticatedUser;\n}\n\ninterface BillingTokenClaims {\n  sub: string;\n  email: string;\n  org: string;\n  roles?: BillingRole[];\n}\n\n/**\n * Verifies the bearer token issued by the identity service and hangs the\n * resolved billing identity on the request. Every controller in this service\n * sits behind it.\n */\n@Injectable()\nexport class JwtAuthGuard implements CanActivate {\n  constructor(private readonly jwtService: JwtService) {}\n\n  async canActivate(context: ExecutionContext): Promise<boolean> {\n    const request = context.switchToHttp().getRequest<AuthenticatedRequest>();\n    const token = readBearerToken(request);\n\n    if (!token) {\n      throw new UnauthorizedException('Missing bearer token');\n    }\n\n    try {\n      const claims = await this.jwtService.verifyAsync<BillingTokenClaims>(token);\n\n      request.user = {\n        id: claims.sub,\n        email: claims.email,\n        organisationId: claims.org,\n        roles: claims.roles ?? ['billing_viewer'],\n      };\n\n      return true;\n    } catch {\n      // Deliberately opaque: the caller does not get to learn whether the\n      // token was expired, malformed or signed with the wrong key.\n      throw new UnauthorizedException('Invalid bearer token');\n    }\n  }\n}\n\nfunction readBearerToken(request: AuthenticatedRequest): string | null {\n  const header = request.headers.authorization;\n  if (!header) {\n    return null;\n  }\n\n  const [scheme, value] = header.split(' ');\n  if (scheme?.toLowerCase() !== 'bearer' || !value) {\n    return null;\n  }\n\n  return value.trim();\n}\n\n/** `@CurrentUser()` — the identity JwtAuthGuard attached to the request. */\nexport const CurrentUser = createParamDecorator(\n  (_data: unknown, context: ExecutionContext): AuthenticatedUser => {\n    const request = context.switchToHttp().getRequest<AuthenticatedRequest>();\n\n    if (!request.user) {\n      throw new UnauthorizedException('Handler reached without an identity');\n    }\n\n    return request.user;\n  },\n);\n",
+        "src/billing/entities/credit-note.entity.ts": "import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';\nimport { Invoice } from './invoice.entity';\n\nexport type CreditNoteStatus = 'issued' | 'settled' | 'voided';\n\n@Entity({ name: 'credit_notes' })\n@Index(['organisationId', 'invoiceId'])\nexport class CreditNote {\n  @PrimaryGeneratedColumn('uuid')\n  id!: string;\n\n  @Column({ unique: true, length: 32 })\n  reference!: string;\n\n  @Column({ name: 'organisation_id' })\n  organisationId!: string;\n\n  @Column({ name: 'invoice_id' })\n  invoiceId!: string;\n\n  @ManyToOne(() => Invoice, { onDelete: 'RESTRICT' })\n  @JoinColumn({ name: 'invoice_id' })\n  invoice!: Invoice;\n\n  @Column({ name: 'amount_cents', type: 'int' })\n  amountCents!: number;\n\n  @Column({ length: 500 })\n  reason!: string;\n\n  @Column({ type: 'varchar', length: 20, default: 'issued' })\n  status!: CreditNoteStatus;\n\n  /** File name of the rendered PDF on the documents volume, once produced. */\n  @Column({ name: 'stored_file_name', length: 200, nullable: true })\n  storedFileName!: string | null;\n\n  @Column({ name: 'issued_by_id' })\n  issuedById!: string;\n\n  @Column({ name: 'created_at', type: 'timestamptz', default: () => 'now()' })\n  createdAt!: Date;\n}\n",
+        "src/billing/entities/invoice.entity.ts": "import {\n  Column,\n  Entity,\n  Index,\n  JoinColumn,\n  ManyToOne,\n  OneToMany,\n  PrimaryGeneratedColumn,\n} from 'typeorm';\nimport { InvoiceLine } from './invoice-line.entity';\nimport { Organisation } from './organisation.entity';\n\nexport type InvoiceStatus =\n  | 'draft'\n  | 'issued'\n  | 'partially_paid'\n  | 'overdue'\n  | 'paid'\n  | 'void';\n\n@Entity({ name: 'invoices' })\n@Index(['organisationId', 'status'])\nexport class Invoice {\n  @PrimaryGeneratedColumn('uuid')\n  id!: string;\n\n  /** Human readable number printed on the document, e.g. INV-2026-004182. */\n  @Column({ unique: true, length: 32 })\n  reference!: string;\n\n  @Column({ name: 'organisation_id' })\n  organisationId!: string;\n\n  @ManyToOne(() => Organisation, { onDelete: 'RESTRICT' })\n  @JoinColumn({ name: 'organisation_id' })\n  organisation!: Organisation;\n\n  @Column({ type: 'varchar', length: 20, default: 'draft' })\n  status!: InvoiceStatus;\n\n  @Column({ length: 3, default: 'EUR' })\n  currency!: string;\n\n  @Column({ name: 'total_cents', type: 'int' })\n  totalCents!: number;\n\n  /** What is still outstanding after payments and credit notes. */\n  @Column({ name: 'balance_cents', type: 'int' })\n  balanceCents!: number;\n\n  @Column({ name: 'issued_on', type: 'date' })\n  issuedOn!: string;\n\n  @Column({ name: 'due_on', type: 'date' })\n  dueOn!: string;\n\n  @OneToMany(() => InvoiceLine, (line) => line.invoice, { cascade: ['insert'] })\n  lines!: InvoiceLine[];\n\n  @Column({ name: 'created_at', type: 'timestamptz', default: () => 'now()' })\n  createdAt!: Date;\n}\n",
+        "src/billing/entities/invoice-line.entity.ts": "import { Column, Entity, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';\nimport { Invoice } from './invoice.entity';\n\n@Entity({ name: 'invoice_lines' })\nexport class InvoiceLine {\n  @PrimaryGeneratedColumn('uuid')\n  id!: string;\n\n  @Column({ name: 'invoice_id' })\n  invoiceId!: string;\n\n  @ManyToOne(() => Invoice, (invoice) => invoice.lines, { onDelete: 'CASCADE' })\n  @JoinColumn({ name: 'invoice_id' })\n  invoice!: Invoice;\n\n  @Column({ length: 400 })\n  description!: string;\n\n  @Column({ type: 'int' })\n  quantity!: number;\n\n  @Column({ name: 'unit_price_cents', type: 'int' })\n  unitPriceCents!: number;\n\n  /** Tax rate in basis points, so 2100 is 21%. */\n  @Column({ name: 'tax_rate_bps', type: 'int', default: 0 })\n  taxRateBps!: number;\n}\n",
+        "src/billing/entities/organisation.entity.ts": "import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';\n\n@Entity({ name: 'organisations' })\nexport class Organisation {\n  @PrimaryGeneratedColumn('uuid')\n  id!: string;\n\n  @Column({ length: 200 })\n  name!: string;\n\n  /** VAT or other national tax identifier, as printed on the invoice. */\n  @Column({ name: 'tax_identifier', length: 32, nullable: true })\n  taxIdentifier!: string | null;\n\n  @Column({ length: 2 })\n  country!: string;\n\n  @Column({ name: 'dunning_email', length: 320 })\n  dunningEmail!: string;\n\n  @Column({ name: 'created_at', type: 'timestamptz', default: () => 'now()' })\n  createdAt!: Date;\n}\n",
+        "src/credit-notes/credit-notes.controller.ts": "import {\n  Body,\n  Controller,\n  Get,\n  HttpCode,\n  Param,\n  ParseUUIDPipe,\n  Post,\n  UseGuards,\n} from '@nestjs/common';\nimport {\n  CurrentUser,\n  JwtAuthGuard,\n  type AuthenticatedUser,\n} from '../auth/jwt-auth.guard';\nimport { CreditNotesService, type CreditNoteView } from './credit-notes.service';\nimport { IssueCreditNoteDto } from './dto/issue-credit-note.dto';\n\n@Controller('api/credit-notes')\n@UseGuards(JwtAuthGuard)\nexport class CreditNotesController {\n  constructor(private readonly creditNotes: CreditNotesService) {}\n\n  @Get('for-invoice/:invoiceId')\n  async listForInvoice(\n    @Param('invoiceId', ParseUUIDPipe) invoiceId: string,\n    @CurrentUser() actor: AuthenticatedUser,\n  ): Promise<CreditNoteView[]> {\n    return this.creditNotes.listForInvoice(invoiceId, actor);\n  }\n\n  @Post()\n  @HttpCode(201)\n  async issue(\n    @Body() body: IssueCreditNoteDto,\n    @CurrentUser() actor: AuthenticatedUser,\n  ): Promise<CreditNoteView> {\n    return this.creditNotes.issue(body, actor);\n  }\n}\n",
+        "src/credit-notes/dto/issue-credit-note.dto.ts": "import { IsInt, IsString, IsUUID, Length, Min } from 'class-validator';\n\nexport class IssueCreditNoteDto {\n  @IsUUID('4')\n  invoiceId!: string;\n\n  @IsInt()\n  @Min(1)\n  amountCents!: number;\n\n  @IsString()\n  @Length(5, 500)\n  reason!: string;\n}\n"
+      },
+      "family": "billing-nest",
+      "architecture": "NestJS 10 REST service over PostgreSQL through TypeORM 0.3 repositories and query builders, with the caller identity read from request.user as populated by JwtAuthGuard.",
+      "language": "typescript",
+      "packageJson": {
+        "name": "acme-billing-api",
+        "version": "3.4.2",
+        "private": true,
+        "dependencies": {
+          "@nestjs/common": "^10.3.7",
+          "@nestjs/config": "^3.2.2",
+          "@nestjs/core": "^10.3.7",
+          "@nestjs/jwt": "^10.2.0",
+          "@nestjs/platform-express": "^10.3.7",
+          "@nestjs/typeorm": "^10.0.2",
+          "class-transformer": "^0.5.1",
+          "class-validator": "^0.14.1",
+          "pg": "^8.11.5",
+          "reflect-metadata": "^0.2.2",
+          "rxjs": "^7.8.1",
+          "typeorm": "^0.3.20"
+        },
+        "devDependencies": {
+          "@types/express": "^4.17.21",
+          "@types/node": "^20.12.7",
+          "typescript": "^5.4.5"
+        }
+      },
+      "file": "billing-nest/src/credit-notes/credit-notes.service.ts"
+    },
+    {
+      "id": "h5-billing-nest-refund-approval",
+      "scanAs": "src/credit-notes/refund-approval.service.ts",
+      "kind": "safe",
+      "route": "POST /api/refunds",
+      "runtimeVerifiable": true,
+      "pairedWith": "h5-billing-nest-credit-note-issue",
+      "why": "The same create, save and balance decrement, but the amount is first checked against the invoice total minus the summed non-voided credit notes already on it and rejected with 422 when it exceeds what is still creditable.",
+      "extraFiles": {
+        "src/auth/jwt-auth.guard.ts": "import {\n  CanActivate,\n  ExecutionContext,\n  Injectable,\n  UnauthorizedException,\n  createParamDecorator,\n} from '@nestjs/common';\nimport { JwtService } from '@nestjs/jwt';\nimport type { Request } from 'express';\n\nexport type BillingRole = 'billing_viewer' | 'billing_operator' | 'billing_admin';\n\n/** Shape of `request.user` on every authenticated billing request. */\nexport interface AuthenticatedUser {\n  readonly id: string;\n  readonly email: string;\n  readonly organisationId: string;\n  readonly roles: readonly BillingRole[];\n}\n\nexport interface AuthenticatedRequest extends Request {\n  user?: AuthenticatedUser;\n}\n\ninterface BillingTokenClaims {\n  sub: string;\n  email: string;\n  org: string;\n  roles?: BillingRole[];\n}\n\n/**\n * Verifies the bearer token issued by the identity service and hangs the\n * resolved billing identity on the request. Every controller in this service\n * sits behind it.\n */\n@Injectable()\nexport class JwtAuthGuard implements CanActivate {\n  constructor(private readonly jwtService: JwtService) {}\n\n  async canActivate(context: ExecutionContext): Promise<boolean> {\n    const request = context.switchToHttp().getRequest<AuthenticatedRequest>();\n    const token = readBearerToken(request);\n\n    if (!token) {\n      throw new UnauthorizedException('Missing bearer token');\n    }\n\n    try {\n      const claims = await this.jwtService.verifyAsync<BillingTokenClaims>(token);\n\n      request.user = {\n        id: claims.sub,\n        email: claims.email,\n        organisationId: claims.org,\n        roles: claims.roles ?? ['billing_viewer'],\n      };\n\n      return true;\n    } catch {\n      // Deliberately opaque: the caller does not get to learn whether the\n      // token was expired, malformed or signed with the wrong key.\n      throw new UnauthorizedException('Invalid bearer token');\n    }\n  }\n}\n\nfunction readBearerToken(request: AuthenticatedRequest): string | null {\n  const header = request.headers.authorization;\n  if (!header) {\n    return null;\n  }\n\n  const [scheme, value] = header.split(' ');\n  if (scheme?.toLowerCase() !== 'bearer' || !value) {\n    return null;\n  }\n\n  return value.trim();\n}\n\n/** `@CurrentUser()` — the identity JwtAuthGuard attached to the request. */\nexport const CurrentUser = createParamDecorator(\n  (_data: unknown, context: ExecutionContext): AuthenticatedUser => {\n    const request = context.switchToHttp().getRequest<AuthenticatedRequest>();\n\n    if (!request.user) {\n      throw new UnauthorizedException('Handler reached without an identity');\n    }\n\n    return request.user;\n  },\n);\n",
+        "src/billing/entities/credit-note.entity.ts": "import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';\nimport { Invoice } from './invoice.entity';\n\nexport type CreditNoteStatus = 'issued' | 'settled' | 'voided';\n\n@Entity({ name: 'credit_notes' })\n@Index(['organisationId', 'invoiceId'])\nexport class CreditNote {\n  @PrimaryGeneratedColumn('uuid')\n  id!: string;\n\n  @Column({ unique: true, length: 32 })\n  reference!: string;\n\n  @Column({ name: 'organisation_id' })\n  organisationId!: string;\n\n  @Column({ name: 'invoice_id' })\n  invoiceId!: string;\n\n  @ManyToOne(() => Invoice, { onDelete: 'RESTRICT' })\n  @JoinColumn({ name: 'invoice_id' })\n  invoice!: Invoice;\n\n  @Column({ name: 'amount_cents', type: 'int' })\n  amountCents!: number;\n\n  @Column({ length: 500 })\n  reason!: string;\n\n  @Column({ type: 'varchar', length: 20, default: 'issued' })\n  status!: CreditNoteStatus;\n\n  /** File name of the rendered PDF on the documents volume, once produced. */\n  @Column({ name: 'stored_file_name', length: 200, nullable: true })\n  storedFileName!: string | null;\n\n  @Column({ name: 'issued_by_id' })\n  issuedById!: string;\n\n  @Column({ name: 'created_at', type: 'timestamptz', default: () => 'now()' })\n  createdAt!: Date;\n}\n",
+        "src/billing/entities/invoice.entity.ts": "import {\n  Column,\n  Entity,\n  Index,\n  JoinColumn,\n  ManyToOne,\n  OneToMany,\n  PrimaryGeneratedColumn,\n} from 'typeorm';\nimport { InvoiceLine } from './invoice-line.entity';\nimport { Organisation } from './organisation.entity';\n\nexport type InvoiceStatus =\n  | 'draft'\n  | 'issued'\n  | 'partially_paid'\n  | 'overdue'\n  | 'paid'\n  | 'void';\n\n@Entity({ name: 'invoices' })\n@Index(['organisationId', 'status'])\nexport class Invoice {\n  @PrimaryGeneratedColumn('uuid')\n  id!: string;\n\n  /** Human readable number printed on the document, e.g. INV-2026-004182. */\n  @Column({ unique: true, length: 32 })\n  reference!: string;\n\n  @Column({ name: 'organisation_id' })\n  organisationId!: string;\n\n  @ManyToOne(() => Organisation, { onDelete: 'RESTRICT' })\n  @JoinColumn({ name: 'organisation_id' })\n  organisation!: Organisation;\n\n  @Column({ type: 'varchar', length: 20, default: 'draft' })\n  status!: InvoiceStatus;\n\n  @Column({ length: 3, default: 'EUR' })\n  currency!: string;\n\n  @Column({ name: 'total_cents', type: 'int' })\n  totalCents!: number;\n\n  /** What is still outstanding after payments and credit notes. */\n  @Column({ name: 'balance_cents', type: 'int' })\n  balanceCents!: number;\n\n  @Column({ name: 'issued_on', type: 'date' })\n  issuedOn!: string;\n\n  @Column({ name: 'due_on', type: 'date' })\n  dueOn!: string;\n\n  @OneToMany(() => InvoiceLine, (line) => line.invoice, { cascade: ['insert'] })\n  lines!: InvoiceLine[];\n\n  @Column({ name: 'created_at', type: 'timestamptz', default: () => 'now()' })\n  createdAt!: Date;\n}\n",
+        "src/billing/entities/invoice-line.entity.ts": "import { Column, Entity, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';\nimport { Invoice } from './invoice.entity';\n\n@Entity({ name: 'invoice_lines' })\nexport class InvoiceLine {\n  @PrimaryGeneratedColumn('uuid')\n  id!: string;\n\n  @Column({ name: 'invoice_id' })\n  invoiceId!: string;\n\n  @ManyToOne(() => Invoice, (invoice) => invoice.lines, { onDelete: 'CASCADE' })\n  @JoinColumn({ name: 'invoice_id' })\n  invoice!: Invoice;\n\n  @Column({ length: 400 })\n  description!: string;\n\n  @Column({ type: 'int' })\n  quantity!: number;\n\n  @Column({ name: 'unit_price_cents', type: 'int' })\n  unitPriceCents!: number;\n\n  /** Tax rate in basis points, so 2100 is 21%. */\n  @Column({ name: 'tax_rate_bps', type: 'int', default: 0 })\n  taxRateBps!: number;\n}\n",
+        "src/billing/entities/organisation.entity.ts": "import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';\n\n@Entity({ name: 'organisations' })\nexport class Organisation {\n  @PrimaryGeneratedColumn('uuid')\n  id!: string;\n\n  @Column({ length: 200 })\n  name!: string;\n\n  /** VAT or other national tax identifier, as printed on the invoice. */\n  @Column({ name: 'tax_identifier', length: 32, nullable: true })\n  taxIdentifier!: string | null;\n\n  @Column({ length: 2 })\n  country!: string;\n\n  @Column({ name: 'dunning_email', length: 320 })\n  dunningEmail!: string;\n\n  @Column({ name: 'created_at', type: 'timestamptz', default: () => 'now()' })\n  createdAt!: Date;\n}\n",
+        "src/credit-notes/refund-approval.controller.ts": "import { Body, Controller, HttpCode, Post, UseGuards } from '@nestjs/common';\nimport {\n  CurrentUser,\n  JwtAuthGuard,\n  type AuthenticatedUser,\n} from '../auth/jwt-auth.guard';\nimport { RefundApprovalService, type RefundReceipt } from './refund-approval.service';\nimport { ApproveRefundDto } from './dto/approve-refund.dto';\n\n@Controller('api/refunds')\n@UseGuards(JwtAuthGuard)\nexport class RefundApprovalController {\n  constructor(private readonly refunds: RefundApprovalService) {}\n\n  @Post()\n  @HttpCode(201)\n  async approve(\n    @Body() body: ApproveRefundDto,\n    @CurrentUser() actor: AuthenticatedUser,\n  ): Promise<RefundReceipt> {\n    return this.refunds.approve(body, actor);\n  }\n}\n",
+        "src/credit-notes/dto/approve-refund.dto.ts": "import { IsInt, IsString, IsUUID, Length, Min } from 'class-validator';\n\nexport class ApproveRefundDto {\n  @IsUUID('4')\n  invoiceId!: string;\n\n  @IsInt()\n  @Min(1)\n  amountCents!: number;\n\n  @IsString()\n  @Length(5, 500)\n  reason!: string;\n}\n"
+      },
+      "family": "billing-nest",
+      "architecture": "NestJS 10 REST service over PostgreSQL through TypeORM 0.3 repositories and query builders, with the caller identity read from request.user as populated by JwtAuthGuard.",
+      "language": "typescript",
+      "packageJson": {
+        "name": "acme-billing-api",
+        "version": "3.4.2",
+        "private": true,
+        "dependencies": {
+          "@nestjs/common": "^10.3.7",
+          "@nestjs/config": "^3.2.2",
+          "@nestjs/core": "^10.3.7",
+          "@nestjs/jwt": "^10.2.0",
+          "@nestjs/platform-express": "^10.3.7",
+          "@nestjs/typeorm": "^10.0.2",
+          "class-transformer": "^0.5.1",
+          "class-validator": "^0.14.1",
+          "pg": "^8.11.5",
+          "reflect-metadata": "^0.2.2",
+          "rxjs": "^7.8.1",
+          "typeorm": "^0.3.20"
+        },
+        "devDependencies": {
+          "@types/express": "^4.17.21",
+          "@types/node": "^20.12.7",
+          "typescript": "^5.4.5"
+        }
+      },
+      "file": "billing-nest/src/credit-notes/refund-approval.service.ts"
+    }
+  ]
+}

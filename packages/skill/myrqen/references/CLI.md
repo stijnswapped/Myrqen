@@ -10,6 +10,7 @@ on a specific local report instead of the current one.
 | `myrqen <low\|high\|xhigh\|ultra\|auto>` | Start an assessment with that effort. |
 | `myrqen session start --effort <effort>` | Same, with explicit flags. |
 | `myrqen session context` | Re-read the current session context. |
+| `myrqen finding list` | List the candidates waiting to be settled, worst first. `--all` includes ones already verified or refuted. Reading is free: it changes nothing. |
 | `myrqen session sync-decision <yes\|no>` | Record the user's answer to the sync question. |
 | `myrqen session agent --name <n> --model <m>` | Record host agent and model metadata. |
 | `myrqen session finish` | Validate, write local formats, sync if enabled. |
@@ -44,6 +45,8 @@ prohibited.
 ## Findings, notes, metrics
 
 ```bash
+myrqen finding list
+myrqen finding list --all
 echo '<json>' | myrqen finding submit
 myrqen finding submit --file finding.json
 myrqen finding verify <findingId> --description "<what was requested and what came back>" [--kind runtime|identity_differential|configuration|other] [--location "<route or file>"]
@@ -59,6 +62,8 @@ Exit code 2 means the finding was rejected; the output explains why.
 ## Fix workflow
 
 ```bash
+myrqen fix <findingId>                      # clean tree required; branch myrqen/fix-<id>, plan + prompt
+myrqen retest <findingId> [--evidence "<request and response after the fix>"] [--still-reproduces] [--no-commit]
 myrqen fix prompt <findingId>
 myrqen fix record <findingId> --applied [--files a,b] [--note "<text>"]
 myrqen fix record <findingId> --verified
@@ -66,12 +71,38 @@ myrqen fix record <findingId> --verification-failed
 myrqen fix record <findingId> --reverted
 ```
 
+`retest` exits 0 on a pass (and commits on the fix branch), 5 when runtime evidence is
+required, and 6 when the issue still reproduces. The commit includes tracked changes
+and staged files only; untracked files are reported in `untracked`, and a change that
+adds a credential-shaped value is not committed (`credentialsFound` names file and
+line, never the value). The repository's git hooks do not run for this commit.
+
+## Run settings, progress, and history
+
+```bash
+myrqen config                               # this project's start command, app URL, env names
+myrqen config detect                        # what would be detected, without saving
+myrqen config set run.command "<command>"   # also run.url <port-or-loopback-url>, run.env A,B
+myrqen config trust                         # only after the user agreed to the committed start command
+myrqen config reset
+myrqen auto --start-command "<command>" --app-url <port> --app-env NAME_A,NAME_B
+myrqen watch [--once]                       # follow the current session live
+myrqen report [run] [--format html|md|json|sarif] [--no-open]
+myrqen report --list                        # or --last <n>
+myrqen diff [base] [head]                   # default: the last two runs
+```
+
+A run reference is a local report id, a unique prefix of one, or a position where `1`
+is the newest.
+
 ## Account, project, and platform
 
 ```bash
-myrqen link                 # install the skill and link this device
-myrqen install              # install or update the skill only
-myrqen status               # account, device, and quota state
+myrqen link                 # detect coding agents, configure them, then offer an account
+myrqen install              # the same, without the account step
+myrqen unlink               # remove Myrqen's integrations, leaving other content alone
+myrqen login                # connect an account for cloud reports
+myrqen status               # linked agents, plus account, device, and quota state
 myrqen logout               # remove the local credential
 myrqen workspace [--set <id>] [--detach]
 myrqen reports
@@ -79,4 +110,5 @@ myrqen sync <localReportId>
 myrqen doctor
 myrqen update [--apply] [--pin <version>] [--unpin] [--channel <channel>]
 myrqen config set-url <url>
+myrqen config telemetry <on|off>
 ```

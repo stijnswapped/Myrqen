@@ -5,7 +5,10 @@ import { configDirectory, configFile } from "../config/paths.js";
 import { readConfig } from "../config/store.js";
 import { resolveClient } from "../api/client.js";
 import { discoverProject, findRepoRoot } from "../discovery/project.js";
-import { detectAgents } from "../install/skill.js";
+import { adapterContext } from "../integrations/context.js";
+import { detectionLedger } from "../integrations/probe.js";
+import { detectAll } from "../integrations/registry.js";
+import { integrationHealth } from "./integrations.js";
 import { resolveRepositoryBinding } from "@myrqen/policy";
 import { blank, bullet, capabilityNote, field, heading, json, style, write } from "../ui/output.js";
 
@@ -19,7 +22,7 @@ interface Check {
  * Doctor reports capability, not alarm. A missing convenience is `info`;
  * `attention` is reserved for something that actually blocks the product.
  */
-export async function doctorCommand(options: { asJson?: boolean } = {}): Promise<Check[]> {
+export async function doctorCommand(options: { asJson?: boolean; noProbe?: boolean } = {}): Promise<Check[]> {
   const checks: Check[] = [];
   const repoRoot = await findRepoRoot(process.cwd());
   const config = await readConfig();
@@ -42,14 +45,14 @@ export async function doctorCommand(options: { asJson?: boolean } = {}): Promise
       checks.push({
         name: "account",
         state: "attention",
-        detail: `Configured for ${config.account.email} but no device credential was found. Run "${BRAND.cliName} link".`
+        detail: `Configured for ${config.account.email} but no device credential was found. Run "${BRAND.cliName} login".`
       });
     }
   } else {
     checks.push({
       name: "account",
       state: "info",
-      detail: `Not linked. Scans still run locally. Run "${BRAND.cliName} link" to enable cloud reports and sharing.`
+      detail: `No account is connected. Scans still run locally and completely. Run "${BRAND.cliName} login" if you want cloud reports and sharing.`
     });
   }
 
@@ -73,19 +76,61 @@ export async function doctorCommand(options: { asJson?: boolean } = {}): Promise
     checks.push({ name: "cloud", state: "info", detail: `${client.url} (not linked)` });
   }
 
-  const agents = await detectAgents(repoRoot);
-  const installed = agents.filter((agent) => agent.managed);
-  const detected = agents.filter((agent) => agent.detected);
+  // Environment detection, kept strictly separate from the security detection
+  // the scanner does. Nothing below reads application source.
+  const integrations = await adapterContext(repoRoot, { probe: detectionLedger(options.noProbe) });
+  const agents = await detectAll(integrations);
+  const detected = agents.filter((agent) => agent.detection.detected);
+  const linked = agents.filter((agent) => agent.linkedScopes.length > 0);
   checks.push({
     name: "agents",
-    state: installed.length > 0 ? "ok" : "info",
+    state: linked.length > 0 ? "ok" : "info",
     detail:
-      installed.length > 0
-        ? `Skill installed for: ${installed.map((agent) => agent.label).join(", ")}`
+      linked.length > 0
+        ? `Linked: ${linked.map((agent) => `${agent.adapter.displayName} (${agent.linkedScopes.join(", ")})`).join(", ")}`
         : detected.length > 0
-          ? `Detected ${detected.map((agent) => agent.label).join(", ")} but the skill is not installed yet. Run "${BRAND.cliName} install".`
-          : `No agent installation detected. The universal "${BRAND.cliName} auto" command works from any agent with shell access.`
+          ? `Detected ${detected.map((agent) => agent.adapter.displayName).join(", ")} but nothing is linked yet. Run "${BRAND.cliName} link".`
+          : `No coding agent was detected on this machine. The universal "${BRAND.cliName} auto" command works from any agent with shell access.`
   });
+
+  // Doctor is where a user comes to ask what this command just did to their
+  // machine, so the probe policy is reported whether or not anything ran. A run
+  // that executed nothing says so; a run that launched an agent's CLI names it,
+  // because that CLI's own side effects are not Myrqen's to hide.
+  const executed = integrations.probe?.executed() ?? [];
+  checks.push({
+    name: "detection probes",
+    state: "info",
+    detail:
+      executed.length > 0
+        ? `Ran ${executed.join(", ")} to read a version. Pass --no-probe, or set MYRQEN_NO_PROBE=1, to detect without executing anything.`
+        : `Executed nothing (${integrations.probe?.decision.reason ?? "no probe policy was supplied"}). Agents are detected from files on disk alone.`
+  });
+
+  // Every installed integration is validated individually. A file that exists is
+  // not the same as a file that still says what this version of Myrqen writes,
+  // and a stale or duplicated managed region is exactly the kind of problem a
+  // user cannot diagnose without being told which file it is in.
+  for (const integration of await integrationHealth(integrations)) {
+    checks.push({
+      name: `integration ${integration.name}`,
+      state: integration.health === "healthy" ? "ok" : integration.health === "stale" ? "info" : "attention",
+      detail: integration.remedy ? `${integration.detail} ${integration.remedy}` : integration.detail
+    });
+  }
+
+  const conflicted = agents.filter(
+    (agent) => agent.linkedScopes.length > 0 && !agent.detection.detected
+  );
+  if (conflicted.length > 0) {
+    checks.push({
+      name: "integration scope",
+      state: "info",
+      detail: `Linked for ${conflicted
+        .map((agent) => agent.adapter.displayName)
+        .join(", ")}, which was not detected on this machine. That is fine for a repository shared with colleagues who do use it; run "${BRAND.cliName} unlink" if it was a mistake.`
+    });
+  }
 
   const binding = await resolveRepositoryBinding(repoRoot).catch(() => null);
   checks.push({

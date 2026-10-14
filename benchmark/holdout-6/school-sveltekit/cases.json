@@ -1,0 +1,591 @@
+{
+  "family": "school-sveltekit",
+  "cases": [
+    {
+      "id": "h6-school-sveltekit-pupil-roll-search",
+      "family": "school-sveltekit",
+      "architecture": "SvelteKit 2 server routes (+page.server.ts form actions and +server.ts handlers) over a synchronous better-sqlite3 connection, with the staff session resolved from a signed cookie in hooks.server.ts and exposed as event.locals.user.",
+      "language": "typescript",
+      "file": "school-sveltekit/src/routes/pupils/+page.server.ts",
+      "scanAs": "src/routes/pupils/+page.server.ts",
+      "kind": "vulnerable",
+      "category": "pupil_roll_search_predicate_string_interpolation",
+      "cwe": "CWE-89",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 38,
+      "lineRange": [
+        24,
+        63
+      ],
+      "runtimeVerifiable": true,
+      "why": "The roll loader interpolates the untrusted q, year and sort query-string values straight into the WHERE predicates and the ORDER BY clause of a better-sqlite3 statement built at request time, so a crafted q can close the string literal and append its own SQL against the pupil, guardian and staff tables.",
+      "packageJson": {
+        "name": "school-portal",
+        "version": "2.4.0",
+        "private": true,
+        "type": "module",
+        "scripts": {
+          "dev": "vite dev",
+          "build": "vite build",
+          "preview": "vite preview",
+          "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json"
+        },
+        "dependencies": {
+          "better-sqlite3": "^11.5.0",
+          "csv-parse": "^5.5.6"
+        },
+        "devDependencies": {
+          "@sveltejs/adapter-node": "^5.2.9",
+          "@sveltejs/kit": "^2.8.3",
+          "@sveltejs/vite-plugin-svelte": "^4.0.1",
+          "@types/better-sqlite3": "^7.6.11",
+          "svelte": "^5.2.7",
+          "svelte-check": "^4.0.9",
+          "typescript": "^5.6.3",
+          "vite": "^5.4.11"
+        }
+      },
+      "extraFiles": {
+        "src/hooks.server.ts": "import { randomUUID } from 'node:crypto';\nimport type { Handle } from '@sveltejs/kit';\nimport { db } from '$lib/server/db';\nimport type { StaffUser } from '$lib/server/staffSession';\n\nconst SESSION_COOKIE = 'school_session';\n\nconst lookupSession = db.prepare(\n\t`select s.id as id,\n\t        s.full_name as fullName,\n\t        s.role as role,\n\t        s.form_class_id as formClassId\n\t   from staff_session ss\n\t   join staff s on s.id = ss.staff_id\n\t  where ss.token = ?\n\t    and ss.revoked_at is null\n\t    and ss.expires_at > datetime('now')`\n);\n\nexport const handle: Handle = async ({ event, resolve }) => {\n\tevent.locals.requestId = randomUUID();\n\tevent.locals.user = null;\n\n\tconst token = event.cookies.get(SESSION_COOKIE);\n\tif (token) {\n\t\tconst row = lookupSession.get(token) as StaffUser | undefined;\n\t\tif (row) {\n\t\t\tevent.locals.user = row;\n\t\t} else {\n\t\t\t// Revoked or expired: drop the cookie so the browser stops sending it.\n\t\t\tevent.cookies.delete(SESSION_COOKIE, { path: '/' });\n\t\t}\n\t}\n\n\tconst response = await resolve(event);\n\tresponse.headers.set('x-request-id', event.locals.requestId);\n\tresponse.headers.set('referrer-policy', 'same-origin');\n\treturn response;\n};\n",
+        "src/lib/server/db.ts": "import Database from 'better-sqlite3';\nimport { env } from '$env/dynamic/private';\n\n/**\n * One connection for the whole process. better-sqlite3 is synchronous, which is\n * fine for a school of this size: the nightly MIS sync is the only writer that\n * competes with the portal, and WAL keeps it out of our way.\n */\nexport const db = new Database(env.SCHOOL_DB_FILE ?? '/srv/school-portal/var/school.sqlite', {\n\tfileMustExist: true\n});\n\ndb.pragma('journal_mode = WAL');\ndb.pragma('foreign_keys = ON');\ndb.pragma('busy_timeout = 5000');\n\nexport interface PupilRow {\n\tid: number;\n\treference: string;\n\tgiven_name: string;\n\tsurname: string;\n\tyear_group: string;\n\tform_class_id: number;\n}\n\nexport interface GuardianRow {\n\tid: number;\n\tfull_name: string;\n\trelationship: string;\n\tphone: string | null;\n\temail: string | null;\n}\n\nexport interface StaffRow {\n\tid: number;\n\tfull_name: string;\n\trole: string;\n\tform_class_id: number | null;\n}\n\nexport interface AuditEntry {\n\tstaffId: number;\n\taction: string;\n\tsubject: string;\n\tdetail?: string | null;\n}\n\nconst insertAudit = db.prepare(\n\t`insert into audit_log (staff_id, action, subject, detail, created_at)\n\t values (?, ?, ?, ?, datetime('now'))`\n);\n\n/** Every read of a pupil record has to be attributable \u2014 safeguarding audit asks for this yearly. */\nexport function recordAudit(entry: AuditEntry): void {\n\tinsertAudit.run(entry.staffId, entry.action, entry.subject, entry.detail ?? null);\n}\n",
+        "src/lib/server/staffSession.ts": "import { error } from '@sveltejs/kit';\n\nexport type StaffRole = 'teacher' | 'office' | 'senior_leader' | 'headteacher';\n\nexport interface StaffUser {\n\tid: number;\n\tfullName: string;\n\trole: StaffRole;\n\t/** The form group this member of staff registers, when they have one. */\n\tformClassId: number | null;\n}\n\n/** Structural shape of event.locals; declared here so the helpers stay testable. */\nexport interface RequestLocals {\n\tuser: StaffUser | null;\n\trequestId?: string;\n}\n\nexport function requireStaff(locals: RequestLocals): StaffUser {\n\tif (!locals.user) {\n\t\tthrow error(401, 'Sign in with your staff account to continue.');\n\t}\n\treturn locals.user;\n}\n\nexport function requireRole(locals: RequestLocals, ...allowed: StaffRole[]): StaffUser {\n\tconst user = requireStaff(locals);\n\tif (!allowed.includes(user.role)) {\n\t\tthrow error(403, 'Your staff role does not cover this part of the portal.');\n\t}\n\treturn user;\n}\n\n/**\n * Office, SLT and the head run the switchboard and the roll, so they see every\n * pupil. A form teacher only ever sees their own group unless a query widens it\n * on purpose.\n */\nexport function hasWholeSchoolScope(user: StaffUser): boolean {\n\treturn user.role === 'office' || user.role === 'senior_leader' || user.role === 'headteacher';\n}\n"
+      },
+      "route": "GET /pupils"
+    },
+    {
+      "id": "h6-school-sveltekit-attendance-register-search",
+      "family": "school-sveltekit",
+      "architecture": "SvelteKit 2 server routes (+page.server.ts form actions and +server.ts handlers) over a synchronous better-sqlite3 connection, with the staff session resolved from a signed cookie in hooks.server.ts and exposed as event.locals.user.",
+      "language": "typescript",
+      "file": "school-sveltekit/src/routes/attendance/registers/+page.server.ts",
+      "scanAs": "src/routes/attendance/registers/+page.server.ts",
+      "kind": "safe",
+      "runtimeVerifiable": true,
+      "pairedWith": "h6-school-sveltekit-pupil-roll-search",
+      "why": "Structurally the same free-text-plus-filter register search, but every registrar-supplied value (including the LIKE wildcards) is pushed onto the bound-parameter array and the sort column is resolved through the fixed SORT_COLUMNS map, so the SQL text is constant.",
+      "packageJson": {
+        "name": "school-portal",
+        "version": "2.4.0",
+        "private": true,
+        "type": "module",
+        "scripts": {
+          "dev": "vite dev",
+          "build": "vite build",
+          "preview": "vite preview",
+          "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json"
+        },
+        "dependencies": {
+          "better-sqlite3": "^11.5.0",
+          "csv-parse": "^5.5.6"
+        },
+        "devDependencies": {
+          "@sveltejs/adapter-node": "^5.2.9",
+          "@sveltejs/kit": "^2.8.3",
+          "@sveltejs/vite-plugin-svelte": "^4.0.1",
+          "@types/better-sqlite3": "^7.6.11",
+          "svelte": "^5.2.7",
+          "svelte-check": "^4.0.9",
+          "typescript": "^5.6.3",
+          "vite": "^5.4.11"
+        }
+      },
+      "extraFiles": {
+        "src/hooks.server.ts": "import { randomUUID } from 'node:crypto';\nimport type { Handle } from '@sveltejs/kit';\nimport { db } from '$lib/server/db';\nimport type { StaffUser } from '$lib/server/staffSession';\n\nconst SESSION_COOKIE = 'school_session';\n\nconst lookupSession = db.prepare(\n\t`select s.id as id,\n\t        s.full_name as fullName,\n\t        s.role as role,\n\t        s.form_class_id as formClassId\n\t   from staff_session ss\n\t   join staff s on s.id = ss.staff_id\n\t  where ss.token = ?\n\t    and ss.revoked_at is null\n\t    and ss.expires_at > datetime('now')`\n);\n\nexport const handle: Handle = async ({ event, resolve }) => {\n\tevent.locals.requestId = randomUUID();\n\tevent.locals.user = null;\n\n\tconst token = event.cookies.get(SESSION_COOKIE);\n\tif (token) {\n\t\tconst row = lookupSession.get(token) as StaffUser | undefined;\n\t\tif (row) {\n\t\t\tevent.locals.user = row;\n\t\t} else {\n\t\t\t// Revoked or expired: drop the cookie so the browser stops sending it.\n\t\t\tevent.cookies.delete(SESSION_COOKIE, { path: '/' });\n\t\t}\n\t}\n\n\tconst response = await resolve(event);\n\tresponse.headers.set('x-request-id', event.locals.requestId);\n\tresponse.headers.set('referrer-policy', 'same-origin');\n\treturn response;\n};\n",
+        "src/lib/server/db.ts": "import Database from 'better-sqlite3';\nimport { env } from '$env/dynamic/private';\n\n/**\n * One connection for the whole process. better-sqlite3 is synchronous, which is\n * fine for a school of this size: the nightly MIS sync is the only writer that\n * competes with the portal, and WAL keeps it out of our way.\n */\nexport const db = new Database(env.SCHOOL_DB_FILE ?? '/srv/school-portal/var/school.sqlite', {\n\tfileMustExist: true\n});\n\ndb.pragma('journal_mode = WAL');\ndb.pragma('foreign_keys = ON');\ndb.pragma('busy_timeout = 5000');\n\nexport interface PupilRow {\n\tid: number;\n\treference: string;\n\tgiven_name: string;\n\tsurname: string;\n\tyear_group: string;\n\tform_class_id: number;\n}\n\nexport interface GuardianRow {\n\tid: number;\n\tfull_name: string;\n\trelationship: string;\n\tphone: string | null;\n\temail: string | null;\n}\n\nexport interface StaffRow {\n\tid: number;\n\tfull_name: string;\n\trole: string;\n\tform_class_id: number | null;\n}\n\nexport interface AuditEntry {\n\tstaffId: number;\n\taction: string;\n\tsubject: string;\n\tdetail?: string | null;\n}\n\nconst insertAudit = db.prepare(\n\t`insert into audit_log (staff_id, action, subject, detail, created_at)\n\t values (?, ?, ?, ?, datetime('now'))`\n);\n\n/** Every read of a pupil record has to be attributable \u2014 safeguarding audit asks for this yearly. */\nexport function recordAudit(entry: AuditEntry): void {\n\tinsertAudit.run(entry.staffId, entry.action, entry.subject, entry.detail ?? null);\n}\n",
+        "src/lib/server/staffSession.ts": "import { error } from '@sveltejs/kit';\n\nexport type StaffRole = 'teacher' | 'office' | 'senior_leader' | 'headteacher';\n\nexport interface StaffUser {\n\tid: number;\n\tfullName: string;\n\trole: StaffRole;\n\t/** The form group this member of staff registers, when they have one. */\n\tformClassId: number | null;\n}\n\n/** Structural shape of event.locals; declared here so the helpers stay testable. */\nexport interface RequestLocals {\n\tuser: StaffUser | null;\n\trequestId?: string;\n}\n\nexport function requireStaff(locals: RequestLocals): StaffUser {\n\tif (!locals.user) {\n\t\tthrow error(401, 'Sign in with your staff account to continue.');\n\t}\n\treturn locals.user;\n}\n\nexport function requireRole(locals: RequestLocals, ...allowed: StaffRole[]): StaffUser {\n\tconst user = requireStaff(locals);\n\tif (!allowed.includes(user.role)) {\n\t\tthrow error(403, 'Your staff role does not cover this part of the portal.');\n\t}\n\treturn user;\n}\n\n/**\n * Office, SLT and the head run the switchboard and the roll, so they see every\n * pupil. A form teacher only ever sees their own group unless a query widens it\n * on purpose.\n */\nexport function hasWholeSchoolScope(user: StaffUser): boolean {\n\treturn user.role === 'office' || user.role === 'senior_leader' || user.role === 'headteacher';\n}\n"
+      },
+      "route": "GET /attendance/registers"
+    },
+    {
+      "id": "h6-school-sveltekit-pupil-record-view",
+      "family": "school-sveltekit",
+      "architecture": "SvelteKit 2 server routes (+page.server.ts form actions and +server.ts handlers) over a synchronous better-sqlite3 connection, with the staff session resolved from a signed cookie in hooks.server.ts and exposed as event.locals.user.",
+      "language": "typescript",
+      "file": "school-sveltekit/src/routes/pupils/[id]/+page.server.ts",
+      "scanAs": "src/routes/pupils/[id]/+page.server.ts",
+      "kind": "vulnerable",
+      "category": "cross_class_pupil_record_exposure",
+      "cwe": "CWE-639",
+      "severityBand": [
+        "high"
+      ],
+      "line": 69,
+      "lineRange": [
+        56,
+        85
+      ],
+      "runtimeVerifiable": true,
+      "why": "params.id is used as the only key into the pupil record: the loader proves the caller is some signed-in member of staff and then returns medical notes, safeguarding notes and guardian phone numbers for any id, so a form teacher can enumerate ids and read pupils outside their own group. The code knows the relation exists \u2014 it uses it for canEdit.",
+      "packageJson": {
+        "name": "school-portal",
+        "version": "2.4.0",
+        "private": true,
+        "type": "module",
+        "scripts": {
+          "dev": "vite dev",
+          "build": "vite build",
+          "preview": "vite preview",
+          "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json"
+        },
+        "dependencies": {
+          "better-sqlite3": "^11.5.0",
+          "csv-parse": "^5.5.6"
+        },
+        "devDependencies": {
+          "@sveltejs/adapter-node": "^5.2.9",
+          "@sveltejs/kit": "^2.8.3",
+          "@sveltejs/vite-plugin-svelte": "^4.0.1",
+          "@types/better-sqlite3": "^7.6.11",
+          "svelte": "^5.2.7",
+          "svelte-check": "^4.0.9",
+          "typescript": "^5.6.3",
+          "vite": "^5.4.11"
+        }
+      },
+      "extraFiles": {
+        "src/hooks.server.ts": "import { randomUUID } from 'node:crypto';\nimport type { Handle } from '@sveltejs/kit';\nimport { db } from '$lib/server/db';\nimport type { StaffUser } from '$lib/server/staffSession';\n\nconst SESSION_COOKIE = 'school_session';\n\nconst lookupSession = db.prepare(\n\t`select s.id as id,\n\t        s.full_name as fullName,\n\t        s.role as role,\n\t        s.form_class_id as formClassId\n\t   from staff_session ss\n\t   join staff s on s.id = ss.staff_id\n\t  where ss.token = ?\n\t    and ss.revoked_at is null\n\t    and ss.expires_at > datetime('now')`\n);\n\nexport const handle: Handle = async ({ event, resolve }) => {\n\tevent.locals.requestId = randomUUID();\n\tevent.locals.user = null;\n\n\tconst token = event.cookies.get(SESSION_COOKIE);\n\tif (token) {\n\t\tconst row = lookupSession.get(token) as StaffUser | undefined;\n\t\tif (row) {\n\t\t\tevent.locals.user = row;\n\t\t} else {\n\t\t\t// Revoked or expired: drop the cookie so the browser stops sending it.\n\t\t\tevent.cookies.delete(SESSION_COOKIE, { path: '/' });\n\t\t}\n\t}\n\n\tconst response = await resolve(event);\n\tresponse.headers.set('x-request-id', event.locals.requestId);\n\tresponse.headers.set('referrer-policy', 'same-origin');\n\treturn response;\n};\n",
+        "src/lib/server/db.ts": "import Database from 'better-sqlite3';\nimport { env } from '$env/dynamic/private';\n\n/**\n * One connection for the whole process. better-sqlite3 is synchronous, which is\n * fine for a school of this size: the nightly MIS sync is the only writer that\n * competes with the portal, and WAL keeps it out of our way.\n */\nexport const db = new Database(env.SCHOOL_DB_FILE ?? '/srv/school-portal/var/school.sqlite', {\n\tfileMustExist: true\n});\n\ndb.pragma('journal_mode = WAL');\ndb.pragma('foreign_keys = ON');\ndb.pragma('busy_timeout = 5000');\n\nexport interface PupilRow {\n\tid: number;\n\treference: string;\n\tgiven_name: string;\n\tsurname: string;\n\tyear_group: string;\n\tform_class_id: number;\n}\n\nexport interface GuardianRow {\n\tid: number;\n\tfull_name: string;\n\trelationship: string;\n\tphone: string | null;\n\temail: string | null;\n}\n\nexport interface StaffRow {\n\tid: number;\n\tfull_name: string;\n\trole: string;\n\tform_class_id: number | null;\n}\n\nexport interface AuditEntry {\n\tstaffId: number;\n\taction: string;\n\tsubject: string;\n\tdetail?: string | null;\n}\n\nconst insertAudit = db.prepare(\n\t`insert into audit_log (staff_id, action, subject, detail, created_at)\n\t values (?, ?, ?, ?, datetime('now'))`\n);\n\n/** Every read of a pupil record has to be attributable \u2014 safeguarding audit asks for this yearly. */\nexport function recordAudit(entry: AuditEntry): void {\n\tinsertAudit.run(entry.staffId, entry.action, entry.subject, entry.detail ?? null);\n}\n",
+        "src/lib/server/staffSession.ts": "import { error } from '@sveltejs/kit';\n\nexport type StaffRole = 'teacher' | 'office' | 'senior_leader' | 'headteacher';\n\nexport interface StaffUser {\n\tid: number;\n\tfullName: string;\n\trole: StaffRole;\n\t/** The form group this member of staff registers, when they have one. */\n\tformClassId: number | null;\n}\n\n/** Structural shape of event.locals; declared here so the helpers stay testable. */\nexport interface RequestLocals {\n\tuser: StaffUser | null;\n\trequestId?: string;\n}\n\nexport function requireStaff(locals: RequestLocals): StaffUser {\n\tif (!locals.user) {\n\t\tthrow error(401, 'Sign in with your staff account to continue.');\n\t}\n\treturn locals.user;\n}\n\nexport function requireRole(locals: RequestLocals, ...allowed: StaffRole[]): StaffUser {\n\tconst user = requireStaff(locals);\n\tif (!allowed.includes(user.role)) {\n\t\tthrow error(403, 'Your staff role does not cover this part of the portal.');\n\t}\n\treturn user;\n}\n\n/**\n * Office, SLT and the head run the switchboard and the roll, so they see every\n * pupil. A form teacher only ever sees their own group unless a query widens it\n * on purpose.\n */\nexport function hasWholeSchoolScope(user: StaffUser): boolean {\n\treturn user.role === 'office' || user.role === 'senior_leader' || user.role === 'headteacher';\n}\n"
+      },
+      "route": "GET /pupils/[id]"
+    },
+    {
+      "id": "h6-school-sveltekit-guardian-contact-view",
+      "family": "school-sveltekit",
+      "architecture": "SvelteKit 2 server routes (+page.server.ts form actions and +server.ts handlers) over a synchronous better-sqlite3 connection, with the staff session resolved from a signed cookie in hooks.server.ts and exposed as event.locals.user.",
+      "language": "typescript",
+      "file": "school-sveltekit/src/routes/guardians/[id]/+page.server.ts",
+      "scanAs": "src/routes/guardians/[id]/+page.server.ts",
+      "kind": "safe",
+      "runtimeVerifiable": true,
+      "pairedWith": "h6-school-sveltekit-pupil-record-view",
+      "why": "The same id-in-the-path contact lookup, but a teacher's query joins guardian to pupil to form_class and requires c.form_teacher_id = the caller, so a contact outside their group never loads and returns the same 404 as a missing id; only whole-school roles skip the join.",
+      "packageJson": {
+        "name": "school-portal",
+        "version": "2.4.0",
+        "private": true,
+        "type": "module",
+        "scripts": {
+          "dev": "vite dev",
+          "build": "vite build",
+          "preview": "vite preview",
+          "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json"
+        },
+        "dependencies": {
+          "better-sqlite3": "^11.5.0",
+          "csv-parse": "^5.5.6"
+        },
+        "devDependencies": {
+          "@sveltejs/adapter-node": "^5.2.9",
+          "@sveltejs/kit": "^2.8.3",
+          "@sveltejs/vite-plugin-svelte": "^4.0.1",
+          "@types/better-sqlite3": "^7.6.11",
+          "svelte": "^5.2.7",
+          "svelte-check": "^4.0.9",
+          "typescript": "^5.6.3",
+          "vite": "^5.4.11"
+        }
+      },
+      "extraFiles": {
+        "src/hooks.server.ts": "import { randomUUID } from 'node:crypto';\nimport type { Handle } from '@sveltejs/kit';\nimport { db } from '$lib/server/db';\nimport type { StaffUser } from '$lib/server/staffSession';\n\nconst SESSION_COOKIE = 'school_session';\n\nconst lookupSession = db.prepare(\n\t`select s.id as id,\n\t        s.full_name as fullName,\n\t        s.role as role,\n\t        s.form_class_id as formClassId\n\t   from staff_session ss\n\t   join staff s on s.id = ss.staff_id\n\t  where ss.token = ?\n\t    and ss.revoked_at is null\n\t    and ss.expires_at > datetime('now')`\n);\n\nexport const handle: Handle = async ({ event, resolve }) => {\n\tevent.locals.requestId = randomUUID();\n\tevent.locals.user = null;\n\n\tconst token = event.cookies.get(SESSION_COOKIE);\n\tif (token) {\n\t\tconst row = lookupSession.get(token) as StaffUser | undefined;\n\t\tif (row) {\n\t\t\tevent.locals.user = row;\n\t\t} else {\n\t\t\t// Revoked or expired: drop the cookie so the browser stops sending it.\n\t\t\tevent.cookies.delete(SESSION_COOKIE, { path: '/' });\n\t\t}\n\t}\n\n\tconst response = await resolve(event);\n\tresponse.headers.set('x-request-id', event.locals.requestId);\n\tresponse.headers.set('referrer-policy', 'same-origin');\n\treturn response;\n};\n",
+        "src/lib/server/db.ts": "import Database from 'better-sqlite3';\nimport { env } from '$env/dynamic/private';\n\n/**\n * One connection for the whole process. better-sqlite3 is synchronous, which is\n * fine for a school of this size: the nightly MIS sync is the only writer that\n * competes with the portal, and WAL keeps it out of our way.\n */\nexport const db = new Database(env.SCHOOL_DB_FILE ?? '/srv/school-portal/var/school.sqlite', {\n\tfileMustExist: true\n});\n\ndb.pragma('journal_mode = WAL');\ndb.pragma('foreign_keys = ON');\ndb.pragma('busy_timeout = 5000');\n\nexport interface PupilRow {\n\tid: number;\n\treference: string;\n\tgiven_name: string;\n\tsurname: string;\n\tyear_group: string;\n\tform_class_id: number;\n}\n\nexport interface GuardianRow {\n\tid: number;\n\tfull_name: string;\n\trelationship: string;\n\tphone: string | null;\n\temail: string | null;\n}\n\nexport interface StaffRow {\n\tid: number;\n\tfull_name: string;\n\trole: string;\n\tform_class_id: number | null;\n}\n\nexport interface AuditEntry {\n\tstaffId: number;\n\taction: string;\n\tsubject: string;\n\tdetail?: string | null;\n}\n\nconst insertAudit = db.prepare(\n\t`insert into audit_log (staff_id, action, subject, detail, created_at)\n\t values (?, ?, ?, ?, datetime('now'))`\n);\n\n/** Every read of a pupil record has to be attributable \u2014 safeguarding audit asks for this yearly. */\nexport function recordAudit(entry: AuditEntry): void {\n\tinsertAudit.run(entry.staffId, entry.action, entry.subject, entry.detail ?? null);\n}\n",
+        "src/lib/server/staffSession.ts": "import { error } from '@sveltejs/kit';\n\nexport type StaffRole = 'teacher' | 'office' | 'senior_leader' | 'headteacher';\n\nexport interface StaffUser {\n\tid: number;\n\tfullName: string;\n\trole: StaffRole;\n\t/** The form group this member of staff registers, when they have one. */\n\tformClassId: number | null;\n}\n\n/** Structural shape of event.locals; declared here so the helpers stay testable. */\nexport interface RequestLocals {\n\tuser: StaffUser | null;\n\trequestId?: string;\n}\n\nexport function requireStaff(locals: RequestLocals): StaffUser {\n\tif (!locals.user) {\n\t\tthrow error(401, 'Sign in with your staff account to continue.');\n\t}\n\treturn locals.user;\n}\n\nexport function requireRole(locals: RequestLocals, ...allowed: StaffRole[]): StaffUser {\n\tconst user = requireStaff(locals);\n\tif (!allowed.includes(user.role)) {\n\t\tthrow error(403, 'Your staff role does not cover this part of the portal.');\n\t}\n\treturn user;\n}\n\n/**\n * Office, SLT and the head run the switchboard and the roll, so they see every\n * pupil. A form teacher only ever sees their own group unless a query widens it\n * on purpose.\n */\nexport function hasWholeSchoolScope(user: StaffUser): boolean {\n\treturn user.role === 'office' || user.role === 'senior_leader' || user.role === 'headteacher';\n}\n"
+      },
+      "route": "GET /guardians/[id]"
+    },
+    {
+      "id": "h6-school-sveltekit-report-card-download",
+      "family": "school-sveltekit",
+      "architecture": "SvelteKit 2 server routes (+page.server.ts form actions and +server.ts handlers) over a synchronous better-sqlite3 connection, with the staff session resolved from a signed cookie in hooks.server.ts and exposed as event.locals.user.",
+      "language": "typescript",
+      "file": "school-sveltekit/src/routes/api/reports/[document]/+server.ts",
+      "scanAs": "src/routes/api/reports/[document]/+server.ts",
+      "kind": "vulnerable",
+      "category": "report_card_store_path_escape",
+      "cwe": "CWE-22",
+      "severityBand": [
+        "high"
+      ],
+      "line": 28,
+      "lineRange": [
+        21,
+        33
+      ],
+      "runtimeVerifiable": true,
+      "why": "The [document] segment is percent-decoded and joined onto REPORT_CARD_ROOT with no containment check, so ..%2f sequences walk out of the report-card store and readFileSync returns any .pdf on the host to any signed-in member of staff.",
+      "packageJson": {
+        "name": "school-portal",
+        "version": "2.4.0",
+        "private": true,
+        "type": "module",
+        "scripts": {
+          "dev": "vite dev",
+          "build": "vite build",
+          "preview": "vite preview",
+          "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json"
+        },
+        "dependencies": {
+          "better-sqlite3": "^11.5.0",
+          "csv-parse": "^5.5.6"
+        },
+        "devDependencies": {
+          "@sveltejs/adapter-node": "^5.2.9",
+          "@sveltejs/kit": "^2.8.3",
+          "@sveltejs/vite-plugin-svelte": "^4.0.1",
+          "@types/better-sqlite3": "^7.6.11",
+          "svelte": "^5.2.7",
+          "svelte-check": "^4.0.9",
+          "typescript": "^5.6.3",
+          "vite": "^5.4.11"
+        }
+      },
+      "extraFiles": {
+        "src/hooks.server.ts": "import { randomUUID } from 'node:crypto';\nimport type { Handle } from '@sveltejs/kit';\nimport { db } from '$lib/server/db';\nimport type { StaffUser } from '$lib/server/staffSession';\n\nconst SESSION_COOKIE = 'school_session';\n\nconst lookupSession = db.prepare(\n\t`select s.id as id,\n\t        s.full_name as fullName,\n\t        s.role as role,\n\t        s.form_class_id as formClassId\n\t   from staff_session ss\n\t   join staff s on s.id = ss.staff_id\n\t  where ss.token = ?\n\t    and ss.revoked_at is null\n\t    and ss.expires_at > datetime('now')`\n);\n\nexport const handle: Handle = async ({ event, resolve }) => {\n\tevent.locals.requestId = randomUUID();\n\tevent.locals.user = null;\n\n\tconst token = event.cookies.get(SESSION_COOKIE);\n\tif (token) {\n\t\tconst row = lookupSession.get(token) as StaffUser | undefined;\n\t\tif (row) {\n\t\t\tevent.locals.user = row;\n\t\t} else {\n\t\t\t// Revoked or expired: drop the cookie so the browser stops sending it.\n\t\t\tevent.cookies.delete(SESSION_COOKIE, { path: '/' });\n\t\t}\n\t}\n\n\tconst response = await resolve(event);\n\tresponse.headers.set('x-request-id', event.locals.requestId);\n\tresponse.headers.set('referrer-policy', 'same-origin');\n\treturn response;\n};\n",
+        "src/lib/server/db.ts": "import Database from 'better-sqlite3';\nimport { env } from '$env/dynamic/private';\n\n/**\n * One connection for the whole process. better-sqlite3 is synchronous, which is\n * fine for a school of this size: the nightly MIS sync is the only writer that\n * competes with the portal, and WAL keeps it out of our way.\n */\nexport const db = new Database(env.SCHOOL_DB_FILE ?? '/srv/school-portal/var/school.sqlite', {\n\tfileMustExist: true\n});\n\ndb.pragma('journal_mode = WAL');\ndb.pragma('foreign_keys = ON');\ndb.pragma('busy_timeout = 5000');\n\nexport interface PupilRow {\n\tid: number;\n\treference: string;\n\tgiven_name: string;\n\tsurname: string;\n\tyear_group: string;\n\tform_class_id: number;\n}\n\nexport interface GuardianRow {\n\tid: number;\n\tfull_name: string;\n\trelationship: string;\n\tphone: string | null;\n\temail: string | null;\n}\n\nexport interface StaffRow {\n\tid: number;\n\tfull_name: string;\n\trole: string;\n\tform_class_id: number | null;\n}\n\nexport interface AuditEntry {\n\tstaffId: number;\n\taction: string;\n\tsubject: string;\n\tdetail?: string | null;\n}\n\nconst insertAudit = db.prepare(\n\t`insert into audit_log (staff_id, action, subject, detail, created_at)\n\t values (?, ?, ?, ?, datetime('now'))`\n);\n\n/** Every read of a pupil record has to be attributable \u2014 safeguarding audit asks for this yearly. */\nexport function recordAudit(entry: AuditEntry): void {\n\tinsertAudit.run(entry.staffId, entry.action, entry.subject, entry.detail ?? null);\n}\n",
+        "src/lib/server/staffSession.ts": "import { error } from '@sveltejs/kit';\n\nexport type StaffRole = 'teacher' | 'office' | 'senior_leader' | 'headteacher';\n\nexport interface StaffUser {\n\tid: number;\n\tfullName: string;\n\trole: StaffRole;\n\t/** The form group this member of staff registers, when they have one. */\n\tformClassId: number | null;\n}\n\n/** Structural shape of event.locals; declared here so the helpers stay testable. */\nexport interface RequestLocals {\n\tuser: StaffUser | null;\n\trequestId?: string;\n}\n\nexport function requireStaff(locals: RequestLocals): StaffUser {\n\tif (!locals.user) {\n\t\tthrow error(401, 'Sign in with your staff account to continue.');\n\t}\n\treturn locals.user;\n}\n\nexport function requireRole(locals: RequestLocals, ...allowed: StaffRole[]): StaffUser {\n\tconst user = requireStaff(locals);\n\tif (!allowed.includes(user.role)) {\n\t\tthrow error(403, 'Your staff role does not cover this part of the portal.');\n\t}\n\treturn user;\n}\n\n/**\n * Office, SLT and the head run the switchboard and the roll, so they see every\n * pupil. A form teacher only ever sees their own group unless a query widens it\n * on purpose.\n */\nexport function hasWholeSchoolScope(user: StaffUser): boolean {\n\treturn user.role === 'office' || user.role === 'senior_leader' || user.role === 'headteacher';\n}\n"
+      },
+      "route": "GET /api/reports/[document]"
+    },
+    {
+      "id": "h6-school-sveltekit-transcript-download",
+      "family": "school-sveltekit",
+      "architecture": "SvelteKit 2 server routes (+page.server.ts form actions and +server.ts handlers) over a synchronous better-sqlite3 connection, with the staff session resolved from a signed cookie in hooks.server.ts and exposed as event.locals.user.",
+      "language": "typescript",
+      "file": "school-sveltekit/src/routes/api/transcripts/[id]/+server.ts",
+      "scanAs": "src/routes/api/transcripts/[id]/+server.ts",
+      "kind": "safe",
+      "runtimeVerifiable": true,
+      "pairedWith": "h6-school-sveltekit-report-card-download",
+      "why": "Same read-a-pdf-off-disk handler, but the path never comes from the URL: the numeric id is looked up in the transcript table, only path.basename of the stored filename is used, and the resolved path must sit under the resolved TRANSCRIPT_ROOT before the read happens.",
+      "packageJson": {
+        "name": "school-portal",
+        "version": "2.4.0",
+        "private": true,
+        "type": "module",
+        "scripts": {
+          "dev": "vite dev",
+          "build": "vite build",
+          "preview": "vite preview",
+          "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json"
+        },
+        "dependencies": {
+          "better-sqlite3": "^11.5.0",
+          "csv-parse": "^5.5.6"
+        },
+        "devDependencies": {
+          "@sveltejs/adapter-node": "^5.2.9",
+          "@sveltejs/kit": "^2.8.3",
+          "@sveltejs/vite-plugin-svelte": "^4.0.1",
+          "@types/better-sqlite3": "^7.6.11",
+          "svelte": "^5.2.7",
+          "svelte-check": "^4.0.9",
+          "typescript": "^5.6.3",
+          "vite": "^5.4.11"
+        }
+      },
+      "extraFiles": {
+        "src/hooks.server.ts": "import { randomUUID } from 'node:crypto';\nimport type { Handle } from '@sveltejs/kit';\nimport { db } from '$lib/server/db';\nimport type { StaffUser } from '$lib/server/staffSession';\n\nconst SESSION_COOKIE = 'school_session';\n\nconst lookupSession = db.prepare(\n\t`select s.id as id,\n\t        s.full_name as fullName,\n\t        s.role as role,\n\t        s.form_class_id as formClassId\n\t   from staff_session ss\n\t   join staff s on s.id = ss.staff_id\n\t  where ss.token = ?\n\t    and ss.revoked_at is null\n\t    and ss.expires_at > datetime('now')`\n);\n\nexport const handle: Handle = async ({ event, resolve }) => {\n\tevent.locals.requestId = randomUUID();\n\tevent.locals.user = null;\n\n\tconst token = event.cookies.get(SESSION_COOKIE);\n\tif (token) {\n\t\tconst row = lookupSession.get(token) as StaffUser | undefined;\n\t\tif (row) {\n\t\t\tevent.locals.user = row;\n\t\t} else {\n\t\t\t// Revoked or expired: drop the cookie so the browser stops sending it.\n\t\t\tevent.cookies.delete(SESSION_COOKIE, { path: '/' });\n\t\t}\n\t}\n\n\tconst response = await resolve(event);\n\tresponse.headers.set('x-request-id', event.locals.requestId);\n\tresponse.headers.set('referrer-policy', 'same-origin');\n\treturn response;\n};\n",
+        "src/lib/server/db.ts": "import Database from 'better-sqlite3';\nimport { env } from '$env/dynamic/private';\n\n/**\n * One connection for the whole process. better-sqlite3 is synchronous, which is\n * fine for a school of this size: the nightly MIS sync is the only writer that\n * competes with the portal, and WAL keeps it out of our way.\n */\nexport const db = new Database(env.SCHOOL_DB_FILE ?? '/srv/school-portal/var/school.sqlite', {\n\tfileMustExist: true\n});\n\ndb.pragma('journal_mode = WAL');\ndb.pragma('foreign_keys = ON');\ndb.pragma('busy_timeout = 5000');\n\nexport interface PupilRow {\n\tid: number;\n\treference: string;\n\tgiven_name: string;\n\tsurname: string;\n\tyear_group: string;\n\tform_class_id: number;\n}\n\nexport interface GuardianRow {\n\tid: number;\n\tfull_name: string;\n\trelationship: string;\n\tphone: string | null;\n\temail: string | null;\n}\n\nexport interface StaffRow {\n\tid: number;\n\tfull_name: string;\n\trole: string;\n\tform_class_id: number | null;\n}\n\nexport interface AuditEntry {\n\tstaffId: number;\n\taction: string;\n\tsubject: string;\n\tdetail?: string | null;\n}\n\nconst insertAudit = db.prepare(\n\t`insert into audit_log (staff_id, action, subject, detail, created_at)\n\t values (?, ?, ?, ?, datetime('now'))`\n);\n\n/** Every read of a pupil record has to be attributable \u2014 safeguarding audit asks for this yearly. */\nexport function recordAudit(entry: AuditEntry): void {\n\tinsertAudit.run(entry.staffId, entry.action, entry.subject, entry.detail ?? null);\n}\n",
+        "src/lib/server/staffSession.ts": "import { error } from '@sveltejs/kit';\n\nexport type StaffRole = 'teacher' | 'office' | 'senior_leader' | 'headteacher';\n\nexport interface StaffUser {\n\tid: number;\n\tfullName: string;\n\trole: StaffRole;\n\t/** The form group this member of staff registers, when they have one. */\n\tformClassId: number | null;\n}\n\n/** Structural shape of event.locals; declared here so the helpers stay testable. */\nexport interface RequestLocals {\n\tuser: StaffUser | null;\n\trequestId?: string;\n}\n\nexport function requireStaff(locals: RequestLocals): StaffUser {\n\tif (!locals.user) {\n\t\tthrow error(401, 'Sign in with your staff account to continue.');\n\t}\n\treturn locals.user;\n}\n\nexport function requireRole(locals: RequestLocals, ...allowed: StaffRole[]): StaffUser {\n\tconst user = requireStaff(locals);\n\tif (!allowed.includes(user.role)) {\n\t\tthrow error(403, 'Your staff role does not cover this part of the portal.');\n\t}\n\treturn user;\n}\n\n/**\n * Office, SLT and the head run the switchboard and the roll, so they see every\n * pupil. A form teacher only ever sees their own group unless a query widens it\n * on purpose.\n */\nexport function hasWholeSchoolScope(user: StaffUser): boolean {\n\treturn user.role === 'office' || user.role === 'senior_leader' || user.role === 'headteacher';\n}\n"
+      },
+      "route": "GET /api/transcripts/[id]"
+    },
+    {
+      "id": "h6-school-sveltekit-report-card-render",
+      "family": "school-sveltekit",
+      "architecture": "SvelteKit 2 server routes (+page.server.ts form actions and +server.ts handlers) over a synchronous better-sqlite3 connection, with the staff session resolved from a signed cookie in hooks.server.ts and exposed as event.locals.user.",
+      "language": "typescript",
+      "file": "school-sveltekit/src/routes/admin/report-cards/+page.server.ts",
+      "scanAs": "src/routes/admin/report-cards/+page.server.ts",
+      "kind": "vulnerable",
+      "category": "pdf_renderer_shell_argument_injection",
+      "cwe": "CWE-78",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 132,
+      "lineRange": [
+        94,
+        132
+      ],
+      "runtimeVerifiable": true,
+      "why": "closingRemark comes off the form action's FormData and is concatenated, inside double quotes, into the wkhtmltopdf command string handed to execSync, which runs it through a shell; a remark containing \" ; or $( executes attacker-chosen commands as the portal user.",
+      "packageJson": {
+        "name": "school-portal",
+        "version": "2.4.0",
+        "private": true,
+        "type": "module",
+        "scripts": {
+          "dev": "vite dev",
+          "build": "vite build",
+          "preview": "vite preview",
+          "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json"
+        },
+        "dependencies": {
+          "better-sqlite3": "^11.5.0",
+          "csv-parse": "^5.5.6"
+        },
+        "devDependencies": {
+          "@sveltejs/adapter-node": "^5.2.9",
+          "@sveltejs/kit": "^2.8.3",
+          "@sveltejs/vite-plugin-svelte": "^4.0.1",
+          "@types/better-sqlite3": "^7.6.11",
+          "svelte": "^5.2.7",
+          "svelte-check": "^4.0.9",
+          "typescript": "^5.6.3",
+          "vite": "^5.4.11"
+        }
+      },
+      "extraFiles": {
+        "src/hooks.server.ts": "import { randomUUID } from 'node:crypto';\nimport type { Handle } from '@sveltejs/kit';\nimport { db } from '$lib/server/db';\nimport type { StaffUser } from '$lib/server/staffSession';\n\nconst SESSION_COOKIE = 'school_session';\n\nconst lookupSession = db.prepare(\n\t`select s.id as id,\n\t        s.full_name as fullName,\n\t        s.role as role,\n\t        s.form_class_id as formClassId\n\t   from staff_session ss\n\t   join staff s on s.id = ss.staff_id\n\t  where ss.token = ?\n\t    and ss.revoked_at is null\n\t    and ss.expires_at > datetime('now')`\n);\n\nexport const handle: Handle = async ({ event, resolve }) => {\n\tevent.locals.requestId = randomUUID();\n\tevent.locals.user = null;\n\n\tconst token = event.cookies.get(SESSION_COOKIE);\n\tif (token) {\n\t\tconst row = lookupSession.get(token) as StaffUser | undefined;\n\t\tif (row) {\n\t\t\tevent.locals.user = row;\n\t\t} else {\n\t\t\t// Revoked or expired: drop the cookie so the browser stops sending it.\n\t\t\tevent.cookies.delete(SESSION_COOKIE, { path: '/' });\n\t\t}\n\t}\n\n\tconst response = await resolve(event);\n\tresponse.headers.set('x-request-id', event.locals.requestId);\n\tresponse.headers.set('referrer-policy', 'same-origin');\n\treturn response;\n};\n",
+        "src/lib/server/db.ts": "import Database from 'better-sqlite3';\nimport { env } from '$env/dynamic/private';\n\n/**\n * One connection for the whole process. better-sqlite3 is synchronous, which is\n * fine for a school of this size: the nightly MIS sync is the only writer that\n * competes with the portal, and WAL keeps it out of our way.\n */\nexport const db = new Database(env.SCHOOL_DB_FILE ?? '/srv/school-portal/var/school.sqlite', {\n\tfileMustExist: true\n});\n\ndb.pragma('journal_mode = WAL');\ndb.pragma('foreign_keys = ON');\ndb.pragma('busy_timeout = 5000');\n\nexport interface PupilRow {\n\tid: number;\n\treference: string;\n\tgiven_name: string;\n\tsurname: string;\n\tyear_group: string;\n\tform_class_id: number;\n}\n\nexport interface GuardianRow {\n\tid: number;\n\tfull_name: string;\n\trelationship: string;\n\tphone: string | null;\n\temail: string | null;\n}\n\nexport interface StaffRow {\n\tid: number;\n\tfull_name: string;\n\trole: string;\n\tform_class_id: number | null;\n}\n\nexport interface AuditEntry {\n\tstaffId: number;\n\taction: string;\n\tsubject: string;\n\tdetail?: string | null;\n}\n\nconst insertAudit = db.prepare(\n\t`insert into audit_log (staff_id, action, subject, detail, created_at)\n\t values (?, ?, ?, ?, datetime('now'))`\n);\n\n/** Every read of a pupil record has to be attributable \u2014 safeguarding audit asks for this yearly. */\nexport function recordAudit(entry: AuditEntry): void {\n\tinsertAudit.run(entry.staffId, entry.action, entry.subject, entry.detail ?? null);\n}\n",
+        "src/lib/server/staffSession.ts": "import { error } from '@sveltejs/kit';\n\nexport type StaffRole = 'teacher' | 'office' | 'senior_leader' | 'headteacher';\n\nexport interface StaffUser {\n\tid: number;\n\tfullName: string;\n\trole: StaffRole;\n\t/** The form group this member of staff registers, when they have one. */\n\tformClassId: number | null;\n}\n\n/** Structural shape of event.locals; declared here so the helpers stay testable. */\nexport interface RequestLocals {\n\tuser: StaffUser | null;\n\trequestId?: string;\n}\n\nexport function requireStaff(locals: RequestLocals): StaffUser {\n\tif (!locals.user) {\n\t\tthrow error(401, 'Sign in with your staff account to continue.');\n\t}\n\treturn locals.user;\n}\n\nexport function requireRole(locals: RequestLocals, ...allowed: StaffRole[]): StaffUser {\n\tconst user = requireStaff(locals);\n\tif (!allowed.includes(user.role)) {\n\t\tthrow error(403, 'Your staff role does not cover this part of the portal.');\n\t}\n\treturn user;\n}\n\n/**\n * Office, SLT and the head run the switchboard and the roll, so they see every\n * pupil. A form teacher only ever sees their own group unless a query widens it\n * on purpose.\n */\nexport function hasWholeSchoolScope(user: StaffUser): boolean {\n\treturn user.role === 'office' || user.role === 'senior_leader' || user.role === 'headteacher';\n}\n"
+      },
+      "route": "POST /admin/report-cards"
+    },
+    {
+      "id": "h6-school-sveltekit-leaving-certificate-render",
+      "family": "school-sveltekit",
+      "architecture": "SvelteKit 2 server routes (+page.server.ts form actions and +server.ts handlers) over a synchronous better-sqlite3 connection, with the staff session resolved from a signed cookie in hooks.server.ts and exposed as event.locals.user.",
+      "language": "typescript",
+      "file": "school-sveltekit/src/routes/admin/leaving-certificates/+page.server.ts",
+      "scanAs": "src/routes/admin/leaving-certificates/+page.server.ts",
+      "kind": "safe",
+      "runtimeVerifiable": true,
+      "pairedWith": "h6-school-sveltekit-report-card-render",
+      "why": "The same wkhtmltopdf render driven by the same staff-typed remark, but invoked with execFileSync, an argv array and shell: false, and both file paths are built from the row id and a regex-validated term code, so shell metacharacters stay a literal footer string.",
+      "packageJson": {
+        "name": "school-portal",
+        "version": "2.4.0",
+        "private": true,
+        "type": "module",
+        "scripts": {
+          "dev": "vite dev",
+          "build": "vite build",
+          "preview": "vite preview",
+          "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json"
+        },
+        "dependencies": {
+          "better-sqlite3": "^11.5.0",
+          "csv-parse": "^5.5.6"
+        },
+        "devDependencies": {
+          "@sveltejs/adapter-node": "^5.2.9",
+          "@sveltejs/kit": "^2.8.3",
+          "@sveltejs/vite-plugin-svelte": "^4.0.1",
+          "@types/better-sqlite3": "^7.6.11",
+          "svelte": "^5.2.7",
+          "svelte-check": "^4.0.9",
+          "typescript": "^5.6.3",
+          "vite": "^5.4.11"
+        }
+      },
+      "extraFiles": {
+        "src/hooks.server.ts": "import { randomUUID } from 'node:crypto';\nimport type { Handle } from '@sveltejs/kit';\nimport { db } from '$lib/server/db';\nimport type { StaffUser } from '$lib/server/staffSession';\n\nconst SESSION_COOKIE = 'school_session';\n\nconst lookupSession = db.prepare(\n\t`select s.id as id,\n\t        s.full_name as fullName,\n\t        s.role as role,\n\t        s.form_class_id as formClassId\n\t   from staff_session ss\n\t   join staff s on s.id = ss.staff_id\n\t  where ss.token = ?\n\t    and ss.revoked_at is null\n\t    and ss.expires_at > datetime('now')`\n);\n\nexport const handle: Handle = async ({ event, resolve }) => {\n\tevent.locals.requestId = randomUUID();\n\tevent.locals.user = null;\n\n\tconst token = event.cookies.get(SESSION_COOKIE);\n\tif (token) {\n\t\tconst row = lookupSession.get(token) as StaffUser | undefined;\n\t\tif (row) {\n\t\t\tevent.locals.user = row;\n\t\t} else {\n\t\t\t// Revoked or expired: drop the cookie so the browser stops sending it.\n\t\t\tevent.cookies.delete(SESSION_COOKIE, { path: '/' });\n\t\t}\n\t}\n\n\tconst response = await resolve(event);\n\tresponse.headers.set('x-request-id', event.locals.requestId);\n\tresponse.headers.set('referrer-policy', 'same-origin');\n\treturn response;\n};\n",
+        "src/lib/server/db.ts": "import Database from 'better-sqlite3';\nimport { env } from '$env/dynamic/private';\n\n/**\n * One connection for the whole process. better-sqlite3 is synchronous, which is\n * fine for a school of this size: the nightly MIS sync is the only writer that\n * competes with the portal, and WAL keeps it out of our way.\n */\nexport const db = new Database(env.SCHOOL_DB_FILE ?? '/srv/school-portal/var/school.sqlite', {\n\tfileMustExist: true\n});\n\ndb.pragma('journal_mode = WAL');\ndb.pragma('foreign_keys = ON');\ndb.pragma('busy_timeout = 5000');\n\nexport interface PupilRow {\n\tid: number;\n\treference: string;\n\tgiven_name: string;\n\tsurname: string;\n\tyear_group: string;\n\tform_class_id: number;\n}\n\nexport interface GuardianRow {\n\tid: number;\n\tfull_name: string;\n\trelationship: string;\n\tphone: string | null;\n\temail: string | null;\n}\n\nexport interface StaffRow {\n\tid: number;\n\tfull_name: string;\n\trole: string;\n\tform_class_id: number | null;\n}\n\nexport interface AuditEntry {\n\tstaffId: number;\n\taction: string;\n\tsubject: string;\n\tdetail?: string | null;\n}\n\nconst insertAudit = db.prepare(\n\t`insert into audit_log (staff_id, action, subject, detail, created_at)\n\t values (?, ?, ?, ?, datetime('now'))`\n);\n\n/** Every read of a pupil record has to be attributable \u2014 safeguarding audit asks for this yearly. */\nexport function recordAudit(entry: AuditEntry): void {\n\tinsertAudit.run(entry.staffId, entry.action, entry.subject, entry.detail ?? null);\n}\n",
+        "src/lib/server/staffSession.ts": "import { error } from '@sveltejs/kit';\n\nexport type StaffRole = 'teacher' | 'office' | 'senior_leader' | 'headteacher';\n\nexport interface StaffUser {\n\tid: number;\n\tfullName: string;\n\trole: StaffRole;\n\t/** The form group this member of staff registers, when they have one. */\n\tformClassId: number | null;\n}\n\n/** Structural shape of event.locals; declared here so the helpers stay testable. */\nexport interface RequestLocals {\n\tuser: StaffUser | null;\n\trequestId?: string;\n}\n\nexport function requireStaff(locals: RequestLocals): StaffUser {\n\tif (!locals.user) {\n\t\tthrow error(401, 'Sign in with your staff account to continue.');\n\t}\n\treturn locals.user;\n}\n\nexport function requireRole(locals: RequestLocals, ...allowed: StaffRole[]): StaffUser {\n\tconst user = requireStaff(locals);\n\tif (!allowed.includes(user.role)) {\n\t\tthrow error(403, 'Your staff role does not cover this part of the portal.');\n\t}\n\treturn user;\n}\n\n/**\n * Office, SLT and the head run the switchboard and the roll, so they see every\n * pupil. A form teacher only ever sees their own group unless a query widens it\n * on purpose.\n */\nexport function hasWholeSchoolScope(user: StaffUser): boolean {\n\treturn user.role === 'office' || user.role === 'senior_leader' || user.role === 'headteacher';\n}\n"
+      },
+      "route": "POST /admin/leaving-certificates"
+    },
+    {
+      "id": "h6-school-sveltekit-staff-role-assignment",
+      "family": "school-sveltekit",
+      "architecture": "SvelteKit 2 server routes (+page.server.ts form actions and +server.ts handlers) over a synchronous better-sqlite3 connection, with the staff session resolved from a signed cookie in hooks.server.ts and exposed as event.locals.user.",
+      "language": "typescript",
+      "file": "school-sveltekit/src/routes/admin/staff/+page.server.ts",
+      "scanAs": "src/routes/admin/staff/+page.server.ts",
+      "kind": "vulnerable",
+      "category": "staff_role_assignment_missing_privilege_check",
+      "cwe": "CWE-269",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 46,
+      "lineRange": [
+        40,
+        68
+      ],
+      "runtimeVerifiable": true,
+      "why": "The assignRole action only calls requireStaff, trusting the /admin layout load to have checked the headteacher role \u2014 but SvelteKit runs form actions before any load, so any signed-in teacher can POST staffId=self&role=headteacher and elevate their own account. The sibling assignFormClass action in the same file does call requireRole.",
+      "packageJson": {
+        "name": "school-portal",
+        "version": "2.4.0",
+        "private": true,
+        "type": "module",
+        "scripts": {
+          "dev": "vite dev",
+          "build": "vite build",
+          "preview": "vite preview",
+          "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json"
+        },
+        "dependencies": {
+          "better-sqlite3": "^11.5.0",
+          "csv-parse": "^5.5.6"
+        },
+        "devDependencies": {
+          "@sveltejs/adapter-node": "^5.2.9",
+          "@sveltejs/kit": "^2.8.3",
+          "@sveltejs/vite-plugin-svelte": "^4.0.1",
+          "@types/better-sqlite3": "^7.6.11",
+          "svelte": "^5.2.7",
+          "svelte-check": "^4.0.9",
+          "typescript": "^5.6.3",
+          "vite": "^5.4.11"
+        }
+      },
+      "extraFiles": {
+        "src/hooks.server.ts": "import { randomUUID } from 'node:crypto';\nimport type { Handle } from '@sveltejs/kit';\nimport { db } from '$lib/server/db';\nimport type { StaffUser } from '$lib/server/staffSession';\n\nconst SESSION_COOKIE = 'school_session';\n\nconst lookupSession = db.prepare(\n\t`select s.id as id,\n\t        s.full_name as fullName,\n\t        s.role as role,\n\t        s.form_class_id as formClassId\n\t   from staff_session ss\n\t   join staff s on s.id = ss.staff_id\n\t  where ss.token = ?\n\t    and ss.revoked_at is null\n\t    and ss.expires_at > datetime('now')`\n);\n\nexport const handle: Handle = async ({ event, resolve }) => {\n\tevent.locals.requestId = randomUUID();\n\tevent.locals.user = null;\n\n\tconst token = event.cookies.get(SESSION_COOKIE);\n\tif (token) {\n\t\tconst row = lookupSession.get(token) as StaffUser | undefined;\n\t\tif (row) {\n\t\t\tevent.locals.user = row;\n\t\t} else {\n\t\t\t// Revoked or expired: drop the cookie so the browser stops sending it.\n\t\t\tevent.cookies.delete(SESSION_COOKIE, { path: '/' });\n\t\t}\n\t}\n\n\tconst response = await resolve(event);\n\tresponse.headers.set('x-request-id', event.locals.requestId);\n\tresponse.headers.set('referrer-policy', 'same-origin');\n\treturn response;\n};\n",
+        "src/lib/server/db.ts": "import Database from 'better-sqlite3';\nimport { env } from '$env/dynamic/private';\n\n/**\n * One connection for the whole process. better-sqlite3 is synchronous, which is\n * fine for a school of this size: the nightly MIS sync is the only writer that\n * competes with the portal, and WAL keeps it out of our way.\n */\nexport const db = new Database(env.SCHOOL_DB_FILE ?? '/srv/school-portal/var/school.sqlite', {\n\tfileMustExist: true\n});\n\ndb.pragma('journal_mode = WAL');\ndb.pragma('foreign_keys = ON');\ndb.pragma('busy_timeout = 5000');\n\nexport interface PupilRow {\n\tid: number;\n\treference: string;\n\tgiven_name: string;\n\tsurname: string;\n\tyear_group: string;\n\tform_class_id: number;\n}\n\nexport interface GuardianRow {\n\tid: number;\n\tfull_name: string;\n\trelationship: string;\n\tphone: string | null;\n\temail: string | null;\n}\n\nexport interface StaffRow {\n\tid: number;\n\tfull_name: string;\n\trole: string;\n\tform_class_id: number | null;\n}\n\nexport interface AuditEntry {\n\tstaffId: number;\n\taction: string;\n\tsubject: string;\n\tdetail?: string | null;\n}\n\nconst insertAudit = db.prepare(\n\t`insert into audit_log (staff_id, action, subject, detail, created_at)\n\t values (?, ?, ?, ?, datetime('now'))`\n);\n\n/** Every read of a pupil record has to be attributable \u2014 safeguarding audit asks for this yearly. */\nexport function recordAudit(entry: AuditEntry): void {\n\tinsertAudit.run(entry.staffId, entry.action, entry.subject, entry.detail ?? null);\n}\n",
+        "src/lib/server/staffSession.ts": "import { error } from '@sveltejs/kit';\n\nexport type StaffRole = 'teacher' | 'office' | 'senior_leader' | 'headteacher';\n\nexport interface StaffUser {\n\tid: number;\n\tfullName: string;\n\trole: StaffRole;\n\t/** The form group this member of staff registers, when they have one. */\n\tformClassId: number | null;\n}\n\n/** Structural shape of event.locals; declared here so the helpers stay testable. */\nexport interface RequestLocals {\n\tuser: StaffUser | null;\n\trequestId?: string;\n}\n\nexport function requireStaff(locals: RequestLocals): StaffUser {\n\tif (!locals.user) {\n\t\tthrow error(401, 'Sign in with your staff account to continue.');\n\t}\n\treturn locals.user;\n}\n\nexport function requireRole(locals: RequestLocals, ...allowed: StaffRole[]): StaffUser {\n\tconst user = requireStaff(locals);\n\tif (!allowed.includes(user.role)) {\n\t\tthrow error(403, 'Your staff role does not cover this part of the portal.');\n\t}\n\treturn user;\n}\n\n/**\n * Office, SLT and the head run the switchboard and the roll, so they see every\n * pupil. A form teacher only ever sees their own group unless a query widens it\n * on purpose.\n */\nexport function hasWholeSchoolScope(user: StaffUser): boolean {\n\treturn user.role === 'office' || user.role === 'senior_leader' || user.role === 'headteacher';\n}\n"
+      },
+      "route": "POST /admin/staff"
+    },
+    {
+      "id": "h6-school-sveltekit-staff-permission-update",
+      "family": "school-sveltekit",
+      "architecture": "SvelteKit 2 server routes (+page.server.ts form actions and +server.ts handlers) over a synchronous better-sqlite3 connection, with the staff session resolved from a signed cookie in hooks.server.ts and exposed as event.locals.user.",
+      "language": "typescript",
+      "file": "school-sveltekit/src/routes/admin/staff/[id]/+page.server.ts",
+      "scanAs": "src/routes/admin/staff/[id]/+page.server.ts",
+      "kind": "safe",
+      "runtimeVerifiable": true,
+      "pairedWith": "h6-school-sveltekit-staff-role-assignment",
+      "why": "The same kind of privilege-granting form action, but it calls requireRole(locals, 'headteacher') inside the action rather than relying on the layout, refuses when the target id is the caller's own, and only accepts flags present in GRANTABLE_FLAGS.",
+      "packageJson": {
+        "name": "school-portal",
+        "version": "2.4.0",
+        "private": true,
+        "type": "module",
+        "scripts": {
+          "dev": "vite dev",
+          "build": "vite build",
+          "preview": "vite preview",
+          "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json"
+        },
+        "dependencies": {
+          "better-sqlite3": "^11.5.0",
+          "csv-parse": "^5.5.6"
+        },
+        "devDependencies": {
+          "@sveltejs/adapter-node": "^5.2.9",
+          "@sveltejs/kit": "^2.8.3",
+          "@sveltejs/vite-plugin-svelte": "^4.0.1",
+          "@types/better-sqlite3": "^7.6.11",
+          "svelte": "^5.2.7",
+          "svelte-check": "^4.0.9",
+          "typescript": "^5.6.3",
+          "vite": "^5.4.11"
+        }
+      },
+      "extraFiles": {
+        "src/hooks.server.ts": "import { randomUUID } from 'node:crypto';\nimport type { Handle } from '@sveltejs/kit';\nimport { db } from '$lib/server/db';\nimport type { StaffUser } from '$lib/server/staffSession';\n\nconst SESSION_COOKIE = 'school_session';\n\nconst lookupSession = db.prepare(\n\t`select s.id as id,\n\t        s.full_name as fullName,\n\t        s.role as role,\n\t        s.form_class_id as formClassId\n\t   from staff_session ss\n\t   join staff s on s.id = ss.staff_id\n\t  where ss.token = ?\n\t    and ss.revoked_at is null\n\t    and ss.expires_at > datetime('now')`\n);\n\nexport const handle: Handle = async ({ event, resolve }) => {\n\tevent.locals.requestId = randomUUID();\n\tevent.locals.user = null;\n\n\tconst token = event.cookies.get(SESSION_COOKIE);\n\tif (token) {\n\t\tconst row = lookupSession.get(token) as StaffUser | undefined;\n\t\tif (row) {\n\t\t\tevent.locals.user = row;\n\t\t} else {\n\t\t\t// Revoked or expired: drop the cookie so the browser stops sending it.\n\t\t\tevent.cookies.delete(SESSION_COOKIE, { path: '/' });\n\t\t}\n\t}\n\n\tconst response = await resolve(event);\n\tresponse.headers.set('x-request-id', event.locals.requestId);\n\tresponse.headers.set('referrer-policy', 'same-origin');\n\treturn response;\n};\n",
+        "src/lib/server/db.ts": "import Database from 'better-sqlite3';\nimport { env } from '$env/dynamic/private';\n\n/**\n * One connection for the whole process. better-sqlite3 is synchronous, which is\n * fine for a school of this size: the nightly MIS sync is the only writer that\n * competes with the portal, and WAL keeps it out of our way.\n */\nexport const db = new Database(env.SCHOOL_DB_FILE ?? '/srv/school-portal/var/school.sqlite', {\n\tfileMustExist: true\n});\n\ndb.pragma('journal_mode = WAL');\ndb.pragma('foreign_keys = ON');\ndb.pragma('busy_timeout = 5000');\n\nexport interface PupilRow {\n\tid: number;\n\treference: string;\n\tgiven_name: string;\n\tsurname: string;\n\tyear_group: string;\n\tform_class_id: number;\n}\n\nexport interface GuardianRow {\n\tid: number;\n\tfull_name: string;\n\trelationship: string;\n\tphone: string | null;\n\temail: string | null;\n}\n\nexport interface StaffRow {\n\tid: number;\n\tfull_name: string;\n\trole: string;\n\tform_class_id: number | null;\n}\n\nexport interface AuditEntry {\n\tstaffId: number;\n\taction: string;\n\tsubject: string;\n\tdetail?: string | null;\n}\n\nconst insertAudit = db.prepare(\n\t`insert into audit_log (staff_id, action, subject, detail, created_at)\n\t values (?, ?, ?, ?, datetime('now'))`\n);\n\n/** Every read of a pupil record has to be attributable \u2014 safeguarding audit asks for this yearly. */\nexport function recordAudit(entry: AuditEntry): void {\n\tinsertAudit.run(entry.staffId, entry.action, entry.subject, entry.detail ?? null);\n}\n",
+        "src/lib/server/staffSession.ts": "import { error } from '@sveltejs/kit';\n\nexport type StaffRole = 'teacher' | 'office' | 'senior_leader' | 'headteacher';\n\nexport interface StaffUser {\n\tid: number;\n\tfullName: string;\n\trole: StaffRole;\n\t/** The form group this member of staff registers, when they have one. */\n\tformClassId: number | null;\n}\n\n/** Structural shape of event.locals; declared here so the helpers stay testable. */\nexport interface RequestLocals {\n\tuser: StaffUser | null;\n\trequestId?: string;\n}\n\nexport function requireStaff(locals: RequestLocals): StaffUser {\n\tif (!locals.user) {\n\t\tthrow error(401, 'Sign in with your staff account to continue.');\n\t}\n\treturn locals.user;\n}\n\nexport function requireRole(locals: RequestLocals, ...allowed: StaffRole[]): StaffUser {\n\tconst user = requireStaff(locals);\n\tif (!allowed.includes(user.role)) {\n\t\tthrow error(403, 'Your staff role does not cover this part of the portal.');\n\t}\n\treturn user;\n}\n\n/**\n * Office, SLT and the head run the switchboard and the roll, so they see every\n * pupil. A form teacher only ever sees their own group unless a query widens it\n * on purpose.\n */\nexport function hasWholeSchoolScope(user: StaffUser): boolean {\n\treturn user.role === 'office' || user.role === 'senior_leader' || user.role === 'headteacher';\n}\n"
+      },
+      "route": "POST /admin/staff/[id]"
+    },
+    {
+      "id": "h6-school-sveltekit-pupil-roll-import",
+      "family": "school-sveltekit",
+      "architecture": "SvelteKit 2 server routes (+page.server.ts form actions and +server.ts handlers) over a synchronous better-sqlite3 connection, with the staff session resolved from a signed cookie in hooks.server.ts and exposed as event.locals.user.",
+      "language": "typescript",
+      "file": "school-sveltekit/src/routes/imports/pupils/+server.ts",
+      "scanAs": "src/routes/imports/pupils/+server.ts",
+      "kind": "vulnerable",
+      "category": "bulk_import_reflective_column_assignment",
+      "cwe": "CWE-915",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "line": 61,
+      "lineRange": [
+        52,
+        86
+      ],
+      "runtimeVerifiable": true,
+      "why": "The uploaded CSV's own header row decides which pupil columns get written: any header that matches the reflected sqlite schema becomes part of the UPDATE, so an office-role clerk can add a safeguarding_restricted, fee_waiver_approved_by or left_on column to the spreadsheet and overwrite fields that belong to other workflows.",
+      "packageJson": {
+        "name": "school-portal",
+        "version": "2.4.0",
+        "private": true,
+        "type": "module",
+        "scripts": {
+          "dev": "vite dev",
+          "build": "vite build",
+          "preview": "vite preview",
+          "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json"
+        },
+        "dependencies": {
+          "better-sqlite3": "^11.5.0",
+          "csv-parse": "^5.5.6"
+        },
+        "devDependencies": {
+          "@sveltejs/adapter-node": "^5.2.9",
+          "@sveltejs/kit": "^2.8.3",
+          "@sveltejs/vite-plugin-svelte": "^4.0.1",
+          "@types/better-sqlite3": "^7.6.11",
+          "svelte": "^5.2.7",
+          "svelte-check": "^4.0.9",
+          "typescript": "^5.6.3",
+          "vite": "^5.4.11"
+        }
+      },
+      "extraFiles": {
+        "src/hooks.server.ts": "import { randomUUID } from 'node:crypto';\nimport type { Handle } from '@sveltejs/kit';\nimport { db } from '$lib/server/db';\nimport type { StaffUser } from '$lib/server/staffSession';\n\nconst SESSION_COOKIE = 'school_session';\n\nconst lookupSession = db.prepare(\n\t`select s.id as id,\n\t        s.full_name as fullName,\n\t        s.role as role,\n\t        s.form_class_id as formClassId\n\t   from staff_session ss\n\t   join staff s on s.id = ss.staff_id\n\t  where ss.token = ?\n\t    and ss.revoked_at is null\n\t    and ss.expires_at > datetime('now')`\n);\n\nexport const handle: Handle = async ({ event, resolve }) => {\n\tevent.locals.requestId = randomUUID();\n\tevent.locals.user = null;\n\n\tconst token = event.cookies.get(SESSION_COOKIE);\n\tif (token) {\n\t\tconst row = lookupSession.get(token) as StaffUser | undefined;\n\t\tif (row) {\n\t\t\tevent.locals.user = row;\n\t\t} else {\n\t\t\t// Revoked or expired: drop the cookie so the browser stops sending it.\n\t\t\tevent.cookies.delete(SESSION_COOKIE, { path: '/' });\n\t\t}\n\t}\n\n\tconst response = await resolve(event);\n\tresponse.headers.set('x-request-id', event.locals.requestId);\n\tresponse.headers.set('referrer-policy', 'same-origin');\n\treturn response;\n};\n",
+        "src/lib/server/db.ts": "import Database from 'better-sqlite3';\nimport { env } from '$env/dynamic/private';\n\n/**\n * One connection for the whole process. better-sqlite3 is synchronous, which is\n * fine for a school of this size: the nightly MIS sync is the only writer that\n * competes with the portal, and WAL keeps it out of our way.\n */\nexport const db = new Database(env.SCHOOL_DB_FILE ?? '/srv/school-portal/var/school.sqlite', {\n\tfileMustExist: true\n});\n\ndb.pragma('journal_mode = WAL');\ndb.pragma('foreign_keys = ON');\ndb.pragma('busy_timeout = 5000');\n\nexport interface PupilRow {\n\tid: number;\n\treference: string;\n\tgiven_name: string;\n\tsurname: string;\n\tyear_group: string;\n\tform_class_id: number;\n}\n\nexport interface GuardianRow {\n\tid: number;\n\tfull_name: string;\n\trelationship: string;\n\tphone: string | null;\n\temail: string | null;\n}\n\nexport interface StaffRow {\n\tid: number;\n\tfull_name: string;\n\trole: string;\n\tform_class_id: number | null;\n}\n\nexport interface AuditEntry {\n\tstaffId: number;\n\taction: string;\n\tsubject: string;\n\tdetail?: string | null;\n}\n\nconst insertAudit = db.prepare(\n\t`insert into audit_log (staff_id, action, subject, detail, created_at)\n\t values (?, ?, ?, ?, datetime('now'))`\n);\n\n/** Every read of a pupil record has to be attributable \u2014 safeguarding audit asks for this yearly. */\nexport function recordAudit(entry: AuditEntry): void {\n\tinsertAudit.run(entry.staffId, entry.action, entry.subject, entry.detail ?? null);\n}\n",
+        "src/lib/server/staffSession.ts": "import { error } from '@sveltejs/kit';\n\nexport type StaffRole = 'teacher' | 'office' | 'senior_leader' | 'headteacher';\n\nexport interface StaffUser {\n\tid: number;\n\tfullName: string;\n\trole: StaffRole;\n\t/** The form group this member of staff registers, when they have one. */\n\tformClassId: number | null;\n}\n\n/** Structural shape of event.locals; declared here so the helpers stay testable. */\nexport interface RequestLocals {\n\tuser: StaffUser | null;\n\trequestId?: string;\n}\n\nexport function requireStaff(locals: RequestLocals): StaffUser {\n\tif (!locals.user) {\n\t\tthrow error(401, 'Sign in with your staff account to continue.');\n\t}\n\treturn locals.user;\n}\n\nexport function requireRole(locals: RequestLocals, ...allowed: StaffRole[]): StaffUser {\n\tconst user = requireStaff(locals);\n\tif (!allowed.includes(user.role)) {\n\t\tthrow error(403, 'Your staff role does not cover this part of the portal.');\n\t}\n\treturn user;\n}\n\n/**\n * Office, SLT and the head run the switchboard and the roll, so they see every\n * pupil. A form teacher only ever sees their own group unless a query widens it\n * on purpose.\n */\nexport function hasWholeSchoolScope(user: StaffUser): boolean {\n\treturn user.role === 'office' || user.role === 'senior_leader' || user.role === 'headteacher';\n}\n"
+      },
+      "route": "POST /imports/pupils"
+    },
+    {
+      "id": "h6-school-sveltekit-guardian-contact-import",
+      "family": "school-sveltekit",
+      "architecture": "SvelteKit 2 server routes (+page.server.ts form actions and +server.ts handlers) over a synchronous better-sqlite3 connection, with the staff session resolved from a signed cookie in hooks.server.ts and exposed as event.locals.user.",
+      "language": "typescript",
+      "file": "school-sveltekit/src/routes/imports/guardians/+server.ts",
+      "scanAs": "src/routes/imports/guardians/+server.ts",
+      "kind": "safe",
+      "runtimeVerifiable": true,
+      "pairedWith": "h6-school-sveltekit-pupil-roll-import",
+      "why": "The same csv-parse bulk UPDATE, but the writable set is the intersection of the header row with the fixed IMPORTABLE_COLUMNS allow list, and any other column aborts the import with a 422, so safeguarding-owned fields cannot be reached from a spreadsheet.",
+      "packageJson": {
+        "name": "school-portal",
+        "version": "2.4.0",
+        "private": true,
+        "type": "module",
+        "scripts": {
+          "dev": "vite dev",
+          "build": "vite build",
+          "preview": "vite preview",
+          "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json"
+        },
+        "dependencies": {
+          "better-sqlite3": "^11.5.0",
+          "csv-parse": "^5.5.6"
+        },
+        "devDependencies": {
+          "@sveltejs/adapter-node": "^5.2.9",
+          "@sveltejs/kit": "^2.8.3",
+          "@sveltejs/vite-plugin-svelte": "^4.0.1",
+          "@types/better-sqlite3": "^7.6.11",
+          "svelte": "^5.2.7",
+          "svelte-check": "^4.0.9",
+          "typescript": "^5.6.3",
+          "vite": "^5.4.11"
+        }
+      },
+      "extraFiles": {
+        "src/hooks.server.ts": "import { randomUUID } from 'node:crypto';\nimport type { Handle } from '@sveltejs/kit';\nimport { db } from '$lib/server/db';\nimport type { StaffUser } from '$lib/server/staffSession';\n\nconst SESSION_COOKIE = 'school_session';\n\nconst lookupSession = db.prepare(\n\t`select s.id as id,\n\t        s.full_name as fullName,\n\t        s.role as role,\n\t        s.form_class_id as formClassId\n\t   from staff_session ss\n\t   join staff s on s.id = ss.staff_id\n\t  where ss.token = ?\n\t    and ss.revoked_at is null\n\t    and ss.expires_at > datetime('now')`\n);\n\nexport const handle: Handle = async ({ event, resolve }) => {\n\tevent.locals.requestId = randomUUID();\n\tevent.locals.user = null;\n\n\tconst token = event.cookies.get(SESSION_COOKIE);\n\tif (token) {\n\t\tconst row = lookupSession.get(token) as StaffUser | undefined;\n\t\tif (row) {\n\t\t\tevent.locals.user = row;\n\t\t} else {\n\t\t\t// Revoked or expired: drop the cookie so the browser stops sending it.\n\t\t\tevent.cookies.delete(SESSION_COOKIE, { path: '/' });\n\t\t}\n\t}\n\n\tconst response = await resolve(event);\n\tresponse.headers.set('x-request-id', event.locals.requestId);\n\tresponse.headers.set('referrer-policy', 'same-origin');\n\treturn response;\n};\n",
+        "src/lib/server/db.ts": "import Database from 'better-sqlite3';\nimport { env } from '$env/dynamic/private';\n\n/**\n * One connection for the whole process. better-sqlite3 is synchronous, which is\n * fine for a school of this size: the nightly MIS sync is the only writer that\n * competes with the portal, and WAL keeps it out of our way.\n */\nexport const db = new Database(env.SCHOOL_DB_FILE ?? '/srv/school-portal/var/school.sqlite', {\n\tfileMustExist: true\n});\n\ndb.pragma('journal_mode = WAL');\ndb.pragma('foreign_keys = ON');\ndb.pragma('busy_timeout = 5000');\n\nexport interface PupilRow {\n\tid: number;\n\treference: string;\n\tgiven_name: string;\n\tsurname: string;\n\tyear_group: string;\n\tform_class_id: number;\n}\n\nexport interface GuardianRow {\n\tid: number;\n\tfull_name: string;\n\trelationship: string;\n\tphone: string | null;\n\temail: string | null;\n}\n\nexport interface StaffRow {\n\tid: number;\n\tfull_name: string;\n\trole: string;\n\tform_class_id: number | null;\n}\n\nexport interface AuditEntry {\n\tstaffId: number;\n\taction: string;\n\tsubject: string;\n\tdetail?: string | null;\n}\n\nconst insertAudit = db.prepare(\n\t`insert into audit_log (staff_id, action, subject, detail, created_at)\n\t values (?, ?, ?, ?, datetime('now'))`\n);\n\n/** Every read of a pupil record has to be attributable \u2014 safeguarding audit asks for this yearly. */\nexport function recordAudit(entry: AuditEntry): void {\n\tinsertAudit.run(entry.staffId, entry.action, entry.subject, entry.detail ?? null);\n}\n",
+        "src/lib/server/staffSession.ts": "import { error } from '@sveltejs/kit';\n\nexport type StaffRole = 'teacher' | 'office' | 'senior_leader' | 'headteacher';\n\nexport interface StaffUser {\n\tid: number;\n\tfullName: string;\n\trole: StaffRole;\n\t/** The form group this member of staff registers, when they have one. */\n\tformClassId: number | null;\n}\n\n/** Structural shape of event.locals; declared here so the helpers stay testable. */\nexport interface RequestLocals {\n\tuser: StaffUser | null;\n\trequestId?: string;\n}\n\nexport function requireStaff(locals: RequestLocals): StaffUser {\n\tif (!locals.user) {\n\t\tthrow error(401, 'Sign in with your staff account to continue.');\n\t}\n\treturn locals.user;\n}\n\nexport function requireRole(locals: RequestLocals, ...allowed: StaffRole[]): StaffUser {\n\tconst user = requireStaff(locals);\n\tif (!allowed.includes(user.role)) {\n\t\tthrow error(403, 'Your staff role does not cover this part of the portal.');\n\t}\n\treturn user;\n}\n\n/**\n * Office, SLT and the head run the switchboard and the roll, so they see every\n * pupil. A form teacher only ever sees their own group unless a query widens it\n * on purpose.\n */\nexport function hasWholeSchoolScope(user: StaffUser): boolean {\n\treturn user.role === 'office' || user.role === 'senior_leader' || user.role === 'headteacher';\n}\n"
+      },
+      "route": "POST /imports/guardians"
+    }
+  ]
+}

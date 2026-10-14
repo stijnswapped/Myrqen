@@ -1,21 +1,65 @@
 {
   "name": "myrqen",
-  "version": "0.1.0",
-  "private": true,
+  "version": "0.3.0",
+  "description": "Authorized, local-first application security assessment for JavaScript, TypeScript and Python (FastAPI, Flask), run by the coding agent you already use. No separate model API key.",
+  "keywords": [
+    "security",
+    "appsec",
+    "application-security",
+    "security-testing",
+    "vulnerability-scanner",
+    "sast",
+    "static-analysis",
+    "coding-agent",
+    "agent-skill",
+    "claude-code",
+    "codex",
+    "opencode",
+    "cursor",
+    "copilot",
+    "javascript-security",
+    "typescript-security",
+    "nodejs-security",
+    "python-security",
+    "fastapi",
+    "flask",
+    "local-first",
+    "runtime-verification",
+    "sarif",
+    "cli"
+  ],
+  "homepage": "https://myrqen.cc",
+  "bugs": {
+    "url": "https://github.com/stijnswapped/Myrqen/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/stijnswapped/Myrqen.git",
+    "directory": "apps/cli"
+  },
+  "license": "SEE LICENSE IN LICENSE",
+  "author": "Stijn",
   "type": "module",
   "bin": {
-    "myrqen": "./dist/myrqen.mjs"
+    "myrqen": "dist/myrqen.mjs"
   },
   "files": [
-    "dist",
-    "skill"
+    "dist/myrqen.mjs",
+    "skill",
+    "README.md",
+    "LICENSE"
   ],
+  "engines": {
+    "node": ">=20.12"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json && node build.mjs",
+    "prepack": "npm run build",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --test test/*.test.mjs"
   },
-  "dependencies": {
+  "dependencies": {},
+  "devDependencies": {
     "@myrqen/analytics": "workspace:*",
     "@myrqen/auth": "workspace:*",
     "@myrqen/brand": "workspace:*",
@@ -25,9 +69,7 @@
     "@myrqen/scan": "workspace:*",
     "@myrqen/skill": "workspace:*",
     "@myrqen/updater": "workspace:*",
-    "commander": "^15.0.0"
-  },
-  "devDependencies": {
+    "commander": "^15.0.0",
     "typescript": "^5.9.3",
     "@types/node": "^24.10.1",
     "esbuild": "^0.25.12"

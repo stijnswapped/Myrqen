@@ -2,7 +2,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { BRAND } from "@myrqen/brand";
 import type { ScanMetadata, ScanReport, SessionFinishResult } from "@myrqen/contracts";
-import { buildReport, renderMarkdown, renderSarif, renderStandaloneHtml } from "@myrqen/report";
+import { buildReport, renderMarkdown, renderSarif, renderStandaloneHtml, type BaselineFile } from "@myrqen/report";
+import { readBaselineFile } from "../commands/baseline.js";
 import { redactDeep } from "@myrqen/policy";
 import { resolveClient } from "../api/client.js";
 import { reportDirectory } from "../config/paths.js";
@@ -11,6 +12,8 @@ import { finalizeCloudReport, emitProgress, retryHint } from "./sync.js";
 import type { SessionState } from "./state.js";
 import { elapsedMs, loadKnownSecrets, markPhase, saveSession } from "./state.js";
 import { track } from "../api/telemetry.js";
+import { detectHostAgent, installedAgentIds, staticOnlySummary, verificationHints } from "../agent/host.js";
+import { snapshotFromSession, stageTimings } from "../ui/progress.js";
 
 export interface FinishOptions {
   state: SessionState;
@@ -81,29 +84,50 @@ function scanMetadata(state: SessionState, endedAt: Date): ScanMetadata {
       localTargets: state.stack.services.length > 0 ? state.stack.services : state.scope.localTargets,
       externalTargets: state.scope.authorizedExternalTargets
     },
-    phases: state.phases,
+    // The report is written as the last step of the reporting phase, so the copy
+    // inside it records that phase as complete rather than frozen mid-run.
+    phases: state.phases.map((phase) =>
+      phase.phase === "reporting" && phase.state === "running"
+        ? { ...phase, state: "complete" as const, completedAt: endedAt.toISOString(), durationMs: 0 }
+        : phase
+    ),
     stack: state.stack
   };
 }
 
+/** A committed baseline, if the project has one. A broken one is reported, never fatal. */
+async function loadBaseline(repoRoot: string, warnings: string[]): Promise<BaselineFile | undefined> {
+  try {
+    return (await readBaselineFile(repoRoot)) ?? undefined;
+  } catch (error) {
+    warnings.push(`.myrqen/baseline.json was not used: ${error instanceof Error ? error.message : String(error)}`);
+    return undefined;
+  }
+}
+
+export interface LocalReportFiles {
+  json: string;
+  html: string;
+  markdown: string;
+  sarif: string;
+}
+
 /**
- * Validate, redact, write every local format, then sync if this scan opted in.
- * A cloud failure never invalidates the local report.
+ * Redact, build, and write every local format. Shared by `session finish` and by
+ * anything that changes a finished session afterwards (a retest that marks a
+ * finding fixed), so the files on disk never disagree with the session.
  */
-export async function finishSession(options: FinishOptions): Promise<SessionFinishResult> {
-  const state = options.state;
-  const endedAt = new Date();
-  const warnings: string[] = [];
-
-  markPhase(state, "reporting", "running", endedAt);
-  const { coverage, limitations } = coverageDefaults(state);
-
+export async function writeLocalReport(
+  state: SessionState,
+  endedAt: Date,
+  coverage: string[],
+  limitations: string[],
+  warnings: string[] = []
+): Promise<{ report: ScanReport; files: LocalReportFiles; redactions: number }> {
   const knownSecrets = await loadKnownSecrets(state);
   const redacted = redactDeep(state.findings, knownSecrets);
-  if (redacted.replacements > 0) {
-    warnings.push(`${redacted.replacements} secret-like value(s) were redacted during report generation.`);
-  }
 
+  const baseline = await loadBaseline(state.repoRoot, warnings);
   const report: ScanReport = buildReport({
     id: state.localReportId,
     ...(state.cloud.reportId ? { cloudReportId: state.cloud.reportId } : {}),
@@ -120,13 +144,14 @@ export async function finishSession(options: FinishOptions): Promise<SessionFini
     coverageAreas: state.coverageAreas,
     limitations,
     candidateCount: state.candidateCount,
-    duplicateCount: state.duplicateCount
+    duplicateCount: state.duplicateCount,
+    ...(baseline ? { baseline } : {})
   });
 
   const directory = reportDirectory(state.repoRoot, state.localReportId);
   await fs.mkdir(directory, { recursive: true, mode: 0o700 });
 
-  const files = {
+  const files: LocalReportFiles = {
     json: path.join(directory, "report.json"),
     html: path.join(directory, "report.html"),
     markdown: path.join(directory, "report.md"),
@@ -145,6 +170,35 @@ export async function finishSession(options: FinishOptions): Promise<SessionFini
   );
   await fs.writeFile(files.markdown, renderMarkdown(report), { mode: 0o600 });
   await fs.writeFile(files.sarif, renderSarif(report), { mode: 0o600 });
+  return { report, files, redactions: redacted.replacements };
+}
+
+/**
+ * Re-render a finished session's local report from its current state. A no-op
+ * for a session that was never finished: it has no report to keep in step.
+ */
+export async function refreshLocalReport(state: SessionState): Promise<boolean> {
+  if (!state.finishedAt) return false;
+  await writeLocalReport(state, new Date(state.finishedAt), state.coverage, state.limitations);
+  return true;
+}
+
+/**
+ * Validate, redact, write every local format, then sync if this scan opted in.
+ * A cloud failure never invalidates the local report.
+ */
+export async function finishSession(options: FinishOptions): Promise<SessionFinishResult> {
+  const state = options.state;
+  const endedAt = new Date();
+  const warnings: string[] = [];
+
+  markPhase(state, "reporting", "running", endedAt);
+  const { coverage, limitations } = coverageDefaults(state);
+
+  const { report, files, redactions } = await writeLocalReport(state, endedAt, coverage, limitations, warnings);
+  if (redactions > 0) {
+    warnings.push(`${redactions} secret-like value(s) were redacted during report generation.`);
+  }
 
   markPhase(state, "reporting", "complete", endedAt);
   state.state = options.cancelled ? "cancelled" : "complete";
@@ -232,6 +286,7 @@ export async function finishSession(options: FinishOptions): Promise<SessionFini
 
   heading("assessment complete");
   field("Project", state.project.name);
+  if (report.verdict) field("Verdict", report.verdict.headline);
   field(
     "Findings",
     `${report.summary.findingCount} (${report.summary.verificationCounts.verified} verified, ${report.summary.verificationCounts.strong_evidence} strong evidence, ${report.summary.verificationCounts.needs_review} needs review)`
@@ -240,6 +295,12 @@ export async function finishSession(options: FinishOptions): Promise<SessionFini
     "Severity",
     `critical ${report.summary.severityCounts.critical} · high ${report.summary.severityCounts.high} · medium ${report.summary.severityCounts.medium} · low ${report.summary.severityCounts.low} · info ${report.summary.severityCounts.info}`
   );
+  if (report.baseline) {
+    field(
+      "Baseline",
+      `${report.baseline.counts.new} new · ${report.baseline.counts.unchanged} already known · ${report.baseline.counts.fixed} gone`
+    );
+  }
   blank();
   write(style.bold("Local report"));
   bullet(files.html);
@@ -262,7 +323,19 @@ export async function finishSession(options: FinishOptions): Promise<SessionFini
     );
   } else {
     blank();
-    write(`Copy a remediation prompt with "${BRAND.cliName} fix prompt <finding-id>".`);
+    write(`Fix one on its own branch and retest it with "${BRAND.cliName} fix <finding-id>", or copy a prompt with "${BRAND.cliName} fix prompt <finding-id>".`);
+  }
+  blank();
+  write(style.dim(stageTimings(snapshotFromSession(state, endedAt))));
+
+  const host = detectHostAgent(process.env, state.agent.name);
+  const unproven = report.findings.filter(
+    (finding) => finding.verification !== "verified" && finding.status !== "false_positive" && finding.status !== "fixed_verified"
+  ).length;
+  if (!host.detected && report.summary.verificationCounts.verified === 0) {
+    const hints = verificationHints(await installedAgentIds(state.repoRoot), state.effort.requested);
+    blank();
+    write(style.bold(staticOnlySummary(unproven, hints)));
   }
   for (const warning of warnings) write(style.warn(warning));
   return result;

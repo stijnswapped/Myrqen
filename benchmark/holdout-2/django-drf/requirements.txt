@@ -1,0 +1,6 @@
+Django==5.0.6
+djangorestframework==3.15.1
+celery[redis]==5.4.0
+psycopg[binary]==3.1.19
+requests==2.32.3
+gunicorn==22.0.0

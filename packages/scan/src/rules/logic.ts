@@ -151,11 +151,15 @@ const BOUND_GUARD =
 export const unboundedMonetaryArithmetic: Rule = {
   id: "unbounded-monetary-arithmetic",
   category: "business_logic_price_manipulation",
-  describes: "caller-controlled money: unbounded quantities, client-set prices, and non-atomic debits",
+  describes:
+    "caller-controlled money: unbounded quantities, client-set prices, non-atomic debits, and single-use things consumed without a compare-and-set",
   run(context: RuleContext) {
-    // Three ways a caller ends up deciding how much money moves. They share a
+    // Four ways a caller ends up deciding how much money moves. They share a
     // rule registration because they share a reader: whoever owns the checkout
-    // and the ledger.
+    // and the ledger. `reportNonAtomicLedgerUpdate` covers two of them — the
+    // arithmetic read-modify-write and the single-use state transition — and
+    // reports one finding per handler across both, because a handler that
+    // decrements a balance *and* marks the row spent has one race, not two.
     reportClientControlledPricing(context);
     reportNonAtomicLedgerUpdate(context);
 

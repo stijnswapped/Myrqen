@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "Deploy Companion",
+  "version": "2.0.1",
+  "description": "Pin an environment's release status to the toolbar and open logs in one click.",
+  "background": {
+    "service_worker": "background/service-worker.js",
+    "type": "module"
+  },
+  "action": { "default_popup": "popup/index.html" },
+  "permissions": ["storage", "alarms", "notifications"],
+  "host_permissions": ["https://api.deploy.example.com/*"],
+  "externally_connectable": {
+    "matches": ["https://app.deploy.example.com/*"]
+  }
+}

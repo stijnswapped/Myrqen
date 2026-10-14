@@ -83,7 +83,7 @@ export async function syncCommand(localReportId: string, options: { asJson?: boo
   const report = await readLocalReport(repoRoot, localReportId);
   const { client, account } = await resolveClient();
   if (!client.authenticated || !account) {
-    throw new Error(`This device is not linked. Run "${BRAND.cliName} link" first.`);
+    throw new Error(`This device is not linked. Run "${BRAND.cliName} login" first.`);
   }
   if (!session.project.workspaceId || !session.project.projectId) {
     throw new Error(

@@ -352,6 +352,32 @@
       "kind": "safe",
       "pairedWith": "nextjs-app-router-metrics-uploader",
       "why": "The service key is read only in a server component, where it never reaches the bundle, and the client child receives a short-lived token minted for one dataset and the ingest:append scope instead of the credential itself."
+    },
+    {
+      "id": "nextjs-app-router-member-profile-patch",
+      "family": "nextjs-app-router",
+      "architecture": "Next.js 15/16 App Router route handlers and async React server components in TypeScript, with cookie sessions read through await cookies() and Drizzle ORM for data access",
+      "language": "typescript",
+      "file": "nextjs-app-router/member-profile-route.ts",
+      "kind": "vulnerable",
+      "category": "mass_assignment",
+      "severityBand": ["medium", "high"],
+      "route": "PATCH /api/me",
+      "line": 27,
+      "lineRange": [24, 27],
+      "runtimeVerifiable": true,
+      "scanAs": "app/api/me/route.ts",
+      "why": "The parsed JSON body is handed to Drizzle's set() as it arrived, so the caller chooses which columns of their own users row are written. Sending role, email or any other column alongside displayName updates it too."
+    },
+    {
+      "id": "nextjs-app-router-member-settings-patch",
+      "family": "nextjs-app-router",
+      "language": "typescript",
+      "file": "nextjs-app-router/member-settings-route.ts",
+      "kind": "safe",
+      "pairedWith": "nextjs-app-router-member-profile-patch",
+      "scanAs": "app/api/me/settings/route.ts",
+      "why": "The same profile update, but the body is parsed by a strict Zod schema that admits only the four editable fields, so role and every other column are rejected before the write."
     }
   ]
 }

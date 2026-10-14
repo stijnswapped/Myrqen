@@ -1,0 +1,1668 @@
+{
+  "generatedBy": "benchmark/holdout (held-out evaluation corpus, authored blind to packages/scan)",
+  "families": [
+    {
+      "family": "cli-tooling",
+      "architecture": "Node command-line tools shipped in the product's own npm package: commander for argument parsing, yauzl for archives downloaded from the export API, execFile for git operations and lodash.template for report rendering, all run unattended in CI",
+      "vulnerable": 3,
+      "safe": 3
+    },
+    {
+      "family": "electron-ipc",
+      "architecture": "Electron main-process modules registering ipcMain.handle channels for a renderer that also loads remote documentation and embedded partner content, with app.getPath storage and a pairing relay",
+      "vulnerable": 2,
+      "safe": 2
+    },
+    {
+      "family": "lambda-apigw",
+      "architecture": "AWS Lambda handlers behind API Gateway, wired by serverless.yml: exports.handler taking the proxy event, a JWT authorizer for identity, mysql2 against RDS and the DynamoDB document client for per-user documents",
+      "vulnerable": 4,
+      "safe": 4
+    },
+    {
+      "family": "nestjs",
+      "architecture": "NestJS 10 HTTP controllers with decorator routing, JwtAuthGuard/RolesGuard middleware chains, TypeORM repositories and a Prisma service for persistence, and injectable services for credential handling",
+      "vulnerable": 5,
+      "safe": 5
+    },
+    {
+      "family": "nuxt-nitro",
+      "architecture": "Nuxt 3 server routes on Nitro: defineEventHandler modules under server/api with method suffixes, server/middleware for cross-cutting authentication, the MongoDB driver for collection queries and a pg pool for relational reads",
+      "vulnerable": 3,
+      "safe": 3
+    },
+    {
+      "family": "polyglot",
+      "architecture": "The service tier that predates the Node rewrite: Rails controllers behind Devise, Laravel controllers behind Sanctum, and Go net/http handlers over database/sql, all fronted by the same gateway",
+      "vulnerable": 3,
+      "safe": 3
+    },
+    {
+      "family": "sveltekit",
+      "architecture": "SvelteKit 2 file-routed server endpoints (+server.ts) and form actions (+page.server.ts) on the Node adapter, with locals.session populated by a hook, Prisma for relational reads and node:fs for generated files",
+      "vulnerable": 4,
+      "safe": 4
+    },
+    {
+      "family": "webhook-receivers",
+      "architecture": "Cloudflare Workers modules routed with itty-router: a default export exposing fetch, D1 for relational writes, KV for sessions and OAuth state, secrets bound through the Env interface and WebCrypto for signature verification",
+      "vulnerable": 3,
+      "safe": 3
+    },
+    {
+      "family": "worker-queue",
+      "architecture": "BullMQ workers on Redis: one processor module per queue, fed by public intake endpoints and internal schedulers, with a pino logger, an HMAC-signed control-plane callback and provisioning helpers",
+      "vulnerable": 3,
+      "safe": 3
+    }
+  ],
+  "totals": {
+    "vulnerable": 30,
+    "safe": 30,
+    "classes": 26
+  },
+  "classes": [
+    "argument_injection",
+    "broken_function_level_authorization",
+    "broken_object_level_authorization",
+    "business_logic_price_manipulation",
+    "command_injection",
+    "hardcoded_secret",
+    "insecure_cookie_configuration",
+    "insecure_cors_configuration",
+    "insecure_randomness",
+    "jwt_verification_bypass",
+    "mass_assignment",
+    "missing_authentication",
+    "nosql_injection",
+    "open_redirect",
+    "path_traversal",
+    "prototype_pollution",
+    "reflected_cross_site_scripting",
+    "sensitive_data_in_logs",
+    "server_side_request_forgery",
+    "sql_injection",
+    "template_injection",
+    "timing_unsafe_comparison",
+    "unsafe_deserialization",
+    "verbose_error_response",
+    "weak_password_hashing",
+    "zip_slip"
+  ],
+  "cases": [
+    {
+      "id": "holdout-cli-bundle-entries",
+      "family": "cli-tooling",
+      "architecture": "commander CLI extracting an archive downloaded from the workspace export API",
+      "language": "javascript",
+      "file": "cli-tooling/bin/bundle-restore.js",
+      "kind": "vulnerable",
+      "category": "zip_slip",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 49,
+      "lineRange": [
+        49,
+        52
+      ],
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "@acme-suite/cli",
+        "version": "1.0.0",
+        "bin": {
+          "acme-restore": "bin/bundle-restore.js"
+        },
+        "dependencies": {
+          "commander": "^12.0.0",
+          "yauzl": "^3.1.3",
+          "lodash.template": "^4.5.0"
+        }
+      },
+      "why": "The manifest entry is deliberately reduced to its basename, so the file shows that its author knew entry names are not trustworthy. Every other entry is joined onto the destination as-is and its parent directories are created on demand, so an archive entry named with leading ../ segments writes anywhere the CI user can write, including the shell profile and the checked-out build scripts."
+    },
+    {
+      "id": "holdout-cli-snapshot-entries",
+      "family": "cli-tooling",
+      "architecture": "commander CLI extracting an archive downloaded from the workspace export API",
+      "language": "javascript",
+      "file": "cli-tooling/bin/snapshot-restore.js",
+      "kind": "safe",
+      "pairedWith": "holdout-cli-bundle-entries",
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "@acme-suite/cli",
+        "version": "1.0.0",
+        "bin": {
+          "acme-restore": "bin/snapshot-restore.js"
+        },
+        "dependencies": {
+          "commander": "^12.0.0",
+          "yauzl": "^3.1.3",
+          "lodash.template": "^4.5.0"
+        }
+      },
+      "why": "The archive entry name still decides the output path and directories are still created from it, but the resolved path is required to sit inside the destination root before anything is written, and entries that fail are recorded and skipped."
+    },
+    {
+      "id": "holdout-cli-mirror-remote",
+      "family": "cli-tooling",
+      "architecture": "commander CLI running git through execFile with per-tenant remote URLs from the console",
+      "language": "javascript",
+      "file": "cli-tooling/bin/mirror-sync.js",
+      "kind": "vulnerable",
+      "category": "argument_injection",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 21,
+      "lineRange": [
+        21,
+        23
+      ],
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "@acme-suite/cli",
+        "version": "1.0.0",
+        "bin": {
+          "acme-mirror": "bin/mirror-sync.js"
+        },
+        "dependencies": {
+          "commander": "^12.0.0",
+          "yauzl": "^3.1.3",
+          "lodash.template": "^4.5.0"
+        }
+      },
+      "why": "There is no shell anywhere in this file and the branch name is pattern-checked, so the usual shape of the problem is absent. The source URL is passed as a positional argument with no separator and no validation, and git treats a value beginning with --upload-pack= as an option rather than a repository, which runs the attacker's command as the CI user."
+    },
+    {
+      "id": "holdout-cli-fork-remote",
+      "family": "cli-tooling",
+      "architecture": "commander CLI running git through execFile with per-tenant remote URLs from the console",
+      "language": "javascript",
+      "file": "cli-tooling/bin/fork-sync.js",
+      "kind": "safe",
+      "pairedWith": "holdout-cli-mirror-remote",
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "@acme-suite/cli",
+        "version": "1.0.0",
+        "bin": {
+          "acme-mirror": "bin/fork-sync.js"
+        },
+        "dependencies": {
+          "commander": "^12.0.0",
+          "yauzl": "^3.1.3",
+          "lodash.template": "^4.5.0"
+        }
+      },
+      "why": "The same git subcommands run through the same execFile wrapper with the same caller-supplied remotes, but each remote must parse as an https URL on an allowed host with no embedded credentials, and the positional arguments are separated from the options with --."
+    },
+    {
+      "id": "holdout-cli-theme-layout",
+      "family": "cli-tooling",
+      "architecture": "commander CLI rendering a report through a theme package fetched from a tenant-configured URL",
+      "language": "javascript",
+      "file": "cli-tooling/bin/theme-render.js",
+      "kind": "vulnerable",
+      "category": "template_injection",
+      "severityBand": [
+        "critical",
+        "high"
+      ],
+      "line": 20,
+      "lineRange": [
+        19,
+        26
+      ],
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "@acme-suite/cli",
+        "version": "1.0.0",
+        "bin": {
+          "acme-render": "bin/theme-render.js"
+        },
+        "dependencies": {
+          "commander": "^12.0.0",
+          "yauzl": "^3.1.3",
+          "lodash.template": "^4.5.0"
+        }
+      },
+      "why": "The layout is fetched from a URL a tenant sets in their branding settings and handed to lodash.template, which compiles the text into a JavaScript function; the <% %> body of that text runs with the privileges of the rendering job, so whoever controls the theme host controls the reporting worker. The fixed summary template in the same file is the shape that is safe."
+    },
+    {
+      "id": "holdout-cli-statement-layout",
+      "family": "cli-tooling",
+      "architecture": "commander CLI rendering a report through a theme package fetched from a tenant-configured URL",
+      "language": "javascript",
+      "file": "cli-tooling/bin/statement-render.js",
+      "kind": "safe",
+      "pairedWith": "holdout-cli-theme-layout",
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "@acme-suite/cli",
+        "version": "1.0.0",
+        "bin": {
+          "acme-render": "bin/statement-render.js"
+        },
+        "dependencies": {
+          "commander": "^12.0.0",
+          "yauzl": "^3.1.3",
+          "lodash.template": "^4.5.0"
+        }
+      },
+      "why": "The tenant's theme URL is still fetched at render time and still shapes the output, but only as JSON values interpolated with the escaping delimiter into a layout that is compiled from a constant in this file, so nothing remote is ever compiled."
+    },
+    {
+      "id": "holdout-desktop-workspace-read",
+      "family": "electron-ipc",
+      "architecture": "Electron main-process IPC handlers reading and writing notes under the user data directory",
+      "language": "javascript",
+      "file": "electron-ipc/main/workspace-bridge.js",
+      "kind": "vulnerable",
+      "category": "path_traversal",
+      "severityBand": [
+        "high",
+        "medium"
+      ],
+      "line": 27,
+      "lineRange": [
+        26,
+        29
+      ],
+      "runtimeVerifiable": false,
+      "packageJson": {
+        "name": "acme-suite-desktop",
+        "version": "1.0.0",
+        "main": "main/index.js",
+        "devDependencies": {
+          "electron": "^29.3.0"
+        }
+      },
+      "why": "The workspace id is validated by a shared helper and the write handler reduces its note name to a basename, so two of the three channels defend themselves. The read channel joins the renderer's relative path straight onto the workspace directory, so any content the renderer loads can walk out of it and read arbitrary files from the user's machine through the privileged main process."
+    },
+    {
+      "id": "holdout-desktop-library-read",
+      "family": "electron-ipc",
+      "architecture": "Electron main-process IPC handlers reading and writing notes under the user data directory",
+      "language": "javascript",
+      "file": "electron-ipc/main/library-bridge.js",
+      "kind": "safe",
+      "pairedWith": "holdout-desktop-workspace-read",
+      "runtimeVerifiable": false,
+      "packageJson": {
+        "name": "acme-suite-desktop",
+        "version": "1.0.0",
+        "main": "main/index.js",
+        "devDependencies": {
+          "electron": "^29.3.0"
+        }
+      },
+      "why": "The renderer still supplies a relative path that is resolved against the library directory and read from disk, but the resolved path must remain inside that directory or the handler throws, so traversal cannot leave it."
+    },
+    {
+      "id": "holdout-desktop-pairing-code",
+      "family": "electron-ipc",
+      "architecture": "Electron main-process IPC handlers issuing a device pairing code through a relay",
+      "language": "javascript",
+      "file": "electron-ipc/main/pairing-bridge.js",
+      "kind": "vulnerable",
+      "category": "insecure_randomness",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "line": 20,
+      "lineRange": [
+        18,
+        22
+      ],
+      "runtimeVerifiable": false,
+      "packageJson": {
+        "name": "acme-suite-desktop",
+        "version": "1.0.0",
+        "main": "main/index.js",
+        "devDependencies": {
+          "electron": "^29.3.0"
+        }
+      },
+      "why": "The pairing id uses randomUUID, so node:crypto is imported and the author reached for it once already. The eight-character code that actually authorises a new device to join the account is drawn from Math.random, whose state is recoverable from a handful of observed outputs, so an attacker who sees one pairing code can predict the next."
+    },
+    {
+      "id": "holdout-desktop-enrollment-code",
+      "family": "electron-ipc",
+      "architecture": "Electron main-process IPC handlers issuing a device pairing code through a relay",
+      "language": "javascript",
+      "file": "electron-ipc/main/enrollment-bridge.js",
+      "kind": "safe",
+      "pairedWith": "holdout-desktop-pairing-code",
+      "runtimeVerifiable": false,
+      "packageJson": {
+        "name": "acme-suite-desktop",
+        "version": "1.0.0",
+        "main": "main/index.js",
+        "devDependencies": {
+          "electron": "^29.3.0"
+        }
+      },
+      "why": "Math.random is still in the file, deciding how long to wait before announcing the enrollment, which is not a security decision; the code itself is drawn from randomBytes with the biased byte values rejected rather than folded in."
+    },
+    {
+      "id": "holdout-lambda-customer-filter",
+      "family": "lambda-apigw",
+      "architecture": "API Gateway proxy handler building an incremental WHERE clause against mysql2",
+      "language": "javascript",
+      "file": "lambda-apigw/handlers/customer-lookup.js",
+      "kind": "vulnerable",
+      "category": "sql_injection",
+      "severityBand": [
+        "critical",
+        "high"
+      ],
+      "line": 35,
+      "lineRange": [
+        34,
+        48
+      ],
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-lambdas",
+        "version": "1.0.0",
+        "dependencies": {
+          "mysql2": "^3.9.7",
+          "jsonwebtoken": "^9.0.2",
+          "@aws-sdk/client-dynamodb": "^3.554.0",
+          "@aws-sdk/lib-dynamodb": "^3.554.0"
+        }
+      },
+      "extraFiles": {
+        "serverless.yml": "service: acme-suite-api\nprovider:\n  name: aws\n  runtime: nodejs20.x\n  httpApi:\n    authorizers:\n      sessionAuthorizer:\n        type: request\n        functionName: sessionAuthorizer\nfunctions:\n  customerLookup:\n    handler: src/customer-lookup.handler\n    events:\n      - httpApi:\n          path: /customers\n          method: get\n          authorizer: sessionAuthorizer\n"
+      },
+      "why": "Three of the four filters bind their value as a placeholder and the tenant scope is bound too, which is what makes the fourth easy to read past: the email filter splices the query parameter into a single-quoted LIKE pattern, so a value containing a quote closes the literal and appends attacker-chosen SQL to the statement mysql2 prepares."
+    },
+    {
+      "id": "holdout-lambda-subscriber-filter",
+      "family": "lambda-apigw",
+      "architecture": "API Gateway proxy handler building an incremental WHERE clause against mysql2",
+      "language": "javascript",
+      "file": "lambda-apigw/handlers/subscriber-lookup.js",
+      "kind": "safe",
+      "pairedWith": "holdout-lambda-customer-filter",
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-lambdas",
+        "version": "1.0.0",
+        "dependencies": {
+          "mysql2": "^3.9.7",
+          "jsonwebtoken": "^9.0.2",
+          "@aws-sdk/client-dynamodb": "^3.554.0",
+          "@aws-sdk/lib-dynamodb": "^3.554.0"
+        }
+      },
+      "extraFiles": {
+        "serverless.yml": "service: acme-suite-api\nprovider:\n  name: aws\n  runtime: nodejs20.x\nfunctions:\n  subscriberLookup:\n    handler: src/subscriber-lookup.handler\n    events:\n      - httpApi:\n          path: /subscribers\n          method: get\n"
+      },
+      "why": "The SQL is still assembled at runtime from an array of clauses and still ends with an interpolated ordering and limit, but those two come from a fixed map and a constant, and every request value including the LIKE pattern is bound as a placeholder."
+    },
+    {
+      "id": "holdout-lambda-token-authorizer",
+      "family": "lambda-apigw",
+      "architecture": "API Gateway request authorizer returning an IAM policy from bearer-token claims",
+      "language": "javascript",
+      "file": "lambda-apigw/handlers/session-authorizer.js",
+      "kind": "vulnerable",
+      "category": "jwt_verification_bypass",
+      "severityBand": [
+        "critical",
+        "high"
+      ],
+      "line": 42,
+      "lineRange": [
+        42,
+        48
+      ],
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-lambdas",
+        "version": "1.0.0",
+        "dependencies": {
+          "jsonwebtoken": "^9.0.2",
+          "jwks-rsa": "^3.1.0"
+        }
+      },
+      "extraFiles": {
+        "serverless.yml": "service: acme-suite-api\nprovider:\n  name: aws\n  runtime: nodejs20.x\nfunctions:\n  sessionAuthorizer:\n    handler: src/session-authorizer.handler\n"
+      },
+      "why": "The authorizer checks the issuer, the audience, the expiry and the presence of a tenant claim, and the refresh-token helper directly above it calls jwt.verify with a JWKS key and a pinned algorithm. The access path only decodes: no signature is checked, so anyone can mint claims and receive an Allow policy with any tenant id and any role."
+    },
+    {
+      "id": "holdout-lambda-console-authorizer",
+      "family": "lambda-apigw",
+      "architecture": "API Gateway request authorizer returning an IAM policy from bearer-token claims",
+      "language": "javascript",
+      "file": "lambda-apigw/handlers/console-authorizer.js",
+      "kind": "safe",
+      "pairedWith": "holdout-lambda-token-authorizer",
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-lambdas",
+        "version": "1.0.0",
+        "dependencies": {
+          "jsonwebtoken": "^9.0.2",
+          "jwks-rsa": "^3.1.0"
+        }
+      },
+      "extraFiles": {
+        "serverless.yml": "service: acme-suite-api\nprovider:\n  name: aws\n  runtime: nodejs20.x\nfunctions:\n  consoleAuthorizer:\n    handler: src/console-authorizer.handler\n"
+      },
+      "why": "jwt.decode is still called on the raw token, but only to read the kid from the header so the JWKS key can be fetched; the claims the policy is built from come from jwt.verify with a pinned RS256 algorithm, a fixed issuer and an audience."
+    },
+    {
+      "id": "holdout-lambda-preferences-merge",
+      "family": "lambda-apigw",
+      "architecture": "API Gateway proxy handler deep-merging a JSON patch into stored DynamoDB preferences",
+      "language": "javascript",
+      "file": "lambda-apigw/handlers/preferences-update.js",
+      "kind": "vulnerable",
+      "category": "prototype_pollution",
+      "severityBand": [
+        "high",
+        "medium"
+      ],
+      "line": 26,
+      "lineRange": [
+        22,
+        46
+      ],
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-lambdas",
+        "version": "1.0.0",
+        "dependencies": {
+          "@aws-sdk/client-dynamodb": "^3.554.0",
+          "@aws-sdk/lib-dynamodb": "^3.554.0"
+        }
+      },
+      "extraFiles": {
+        "serverless.yml": "service: acme-suite-api\nprovider:\n  name: aws\n  runtime: nodejs20.x\nfunctions:\n  preferencesUpdate:\n    handler: src/preferences-update.handler\n    events:\n      - httpApi:\n          path: /me/preferences\n          method: patch\n"
+      },
+      "why": "The recursive merge walks Object.keys of a JSON.parse'd request body with no reserved-key guard, so a body whose own __proto__ key holds an object recurses into Object.prototype and assigns onto it. Every later property read in the same container inherits the injected value, which is how the seat and export caps enforced two lines below the merge get subverted."
+    },
+    {
+      "id": "holdout-lambda-settings-merge",
+      "family": "lambda-apigw",
+      "architecture": "API Gateway proxy handler deep-merging a JSON patch into stored DynamoDB preferences",
+      "language": "javascript",
+      "file": "lambda-apigw/handlers/workspace-settings-update.js",
+      "kind": "safe",
+      "pairedWith": "holdout-lambda-preferences-merge",
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-lambdas",
+        "version": "1.0.0",
+        "dependencies": {
+          "@aws-sdk/client-dynamodb": "^3.554.0",
+          "@aws-sdk/lib-dynamodb": "^3.554.0"
+        }
+      },
+      "extraFiles": {
+        "serverless.yml": "service: acme-suite-api\nprovider:\n  name: aws\n  runtime: nodejs20.x\nfunctions:\n  workspaceSettingsUpdate:\n    handler: src/workspace-settings-update.handler\n    events:\n      - httpApi:\n          path: /workspace/settings\n          method: patch\n"
+      },
+      "why": "The same recursive merge over the same parsed request body, but the three keys that can reach a prototype are skipped before assignment, so no request can escape the object it is merged into."
+    },
+    {
+      "id": "holdout-lambda-quote-total",
+      "family": "lambda-apigw",
+      "architecture": "API Gateway proxy handler pricing a cart against a per-tenant catalog",
+      "language": "javascript",
+      "file": "lambda-apigw/handlers/checkout-quote.js",
+      "kind": "vulnerable",
+      "category": "business_logic_price_manipulation",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 33,
+      "lineRange": [
+        33,
+        35
+      ],
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-lambdas",
+        "version": "1.0.0",
+        "dependencies": {
+          "@aws-sdk/client-dynamodb": "^3.554.0",
+          "@aws-sdk/lib-dynamodb": "^3.554.0"
+        }
+      },
+      "extraFiles": {
+        "serverless.yml": "service: acme-suite-api\nprovider:\n  name: aws\n  runtime: nodejs20.x\nfunctions:\n  checkoutQuote:\n    handler: src/checkout-quote.handler\n    events:\n      - httpApi:\n          path: /checkout/quote\n          method: post\n"
+      },
+      "why": "Every other input is defended: the SKU must exist and be available to the tenant, the quantity is parsed and bounded, and the discount is computed server-side. The unit price prefers the value from the request body and only falls back to the catalog price, so a caller can price any line at one cent, or negative, and the quote it receives is the one the order is written from."
+    },
+    {
+      "id": "holdout-lambda-renewal-total",
+      "family": "lambda-apigw",
+      "architecture": "API Gateway proxy handler pricing a cart against a per-tenant catalog",
+      "language": "javascript",
+      "file": "lambda-apigw/handlers/renewal-quote.js",
+      "kind": "safe",
+      "pairedWith": "holdout-lambda-quote-total",
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-lambdas",
+        "version": "1.0.0",
+        "dependencies": {
+          "@aws-sdk/client-dynamodb": "^3.554.0",
+          "@aws-sdk/lib-dynamodb": "^3.554.0"
+        }
+      },
+      "extraFiles": {
+        "serverless.yml": "service: acme-suite-api\nprovider:\n  name: aws\n  runtime: nodejs20.x\nfunctions:\n  renewalQuote:\n    handler: src/renewal-quote.handler\n    events:\n      - httpApi:\n          path: /renewal/quote\n          method: post\n"
+      },
+      "why": "The request may still carry a unit price and the handler still reads it, but only to detect a stale client and answer 409; the money is always computed from the catalog price the server loaded."
+    },
+    {
+      "id": "holdout-nestjs-invoice-document",
+      "family": "nestjs",
+      "architecture": "NestJS 10 controller behind JwtAuthGuard, TypeORM repository, PDF rendering service",
+      "language": "typescript",
+      "file": "nestjs/invoices.controller.ts",
+      "kind": "vulnerable",
+      "category": "broken_object_level_authorization",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "GET /billing/invoices/:id/document",
+      "line": 45,
+      "lineRange": [
+        42,
+        48
+      ],
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-api",
+        "version": "1.0.0",
+        "dependencies": {
+          "@nestjs/common": "^10.3.7",
+          "@nestjs/core": "^10.3.7",
+          "@nestjs/typeorm": "^10.0.2",
+          "typeorm": "^0.3.20",
+          "@prisma/client": "^5.11.0",
+          "argon2": "^0.40.1",
+          "reflect-metadata": "^0.2.2",
+          "rxjs": "^7.8.1"
+        }
+      },
+      "why": "The two sibling handlers in the same controller scope their repository lookups to req.user.organizationId; the document handler resolves the invoice from the path parameter alone. It does read the caller's role, but only to decide on a watermark, so any authenticated user of any organization can fetch another tenant's invoice PDF including its bank details."
+    },
+    {
+      "id": "holdout-nestjs-statement-document",
+      "family": "nestjs",
+      "architecture": "NestJS 10 controller behind JwtAuthGuard, TypeORM repository, PDF rendering service",
+      "language": "typescript",
+      "file": "nestjs/statements.controller.ts",
+      "kind": "safe",
+      "pairedWith": "holdout-nestjs-invoice-document",
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-api",
+        "version": "1.0.0",
+        "dependencies": {
+          "@nestjs/common": "^10.3.7",
+          "@nestjs/core": "^10.3.7",
+          "@nestjs/typeorm": "^10.0.2",
+          "typeorm": "^0.3.20",
+          "@prisma/client": "^5.11.0",
+          "reflect-metadata": "^0.2.2",
+          "rxjs": "^7.8.1"
+        }
+      },
+      "why": "Identical controller shape, guard, repository and role-driven watermark, but every lookup including the document handler carries organizationId from the authenticated subject, so the path parameter alone cannot reach another tenant's record."
+    },
+    {
+      "id": "holdout-nestjs-report-conversion",
+      "family": "nestjs",
+      "architecture": "NestJS 10 controller behind role guards, child_process conversion of generated CSV files",
+      "language": "typescript",
+      "file": "nestjs/report-export.controller.ts",
+      "kind": "vulnerable",
+      "category": "command_injection",
+      "severityBand": [
+        "critical",
+        "high"
+      ],
+      "route": "POST /reports/export",
+      "line": 56,
+      "lineRange": [
+        54,
+        58
+      ],
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-api",
+        "version": "1.0.0",
+        "dependencies": {
+          "@nestjs/common": "^10.3.7",
+          "@nestjs/core": "^10.3.7",
+          "reflect-metadata": "^0.2.2",
+          "rxjs": "^7.8.1"
+        }
+      },
+      "why": "The output format is checked against an allow list and the sibling archive handler uses execFile with an argument array, but the export handler joins body.filename into a destination path and interpolates that path into a shell pipeline that exec then runs, so a filename containing a shell metacharacter executes as the API process."
+    },
+    {
+      "id": "holdout-nestjs-ledger-conversion",
+      "family": "nestjs",
+      "architecture": "NestJS 10 controller behind role guards, child_process conversion of generated CSV files",
+      "language": "typescript",
+      "file": "nestjs/ledger-export.controller.ts",
+      "kind": "safe",
+      "pairedWith": "holdout-nestjs-report-conversion",
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-api",
+        "version": "1.0.0",
+        "dependencies": {
+          "@nestjs/common": "^10.3.7",
+          "@nestjs/core": "^10.3.7",
+          "reflect-metadata": "^0.2.2",
+          "rxjs": "^7.8.1"
+        }
+      },
+      "why": "The same converter, the same request-supplied filename and the same promisified exec import remain, but the conversion runs through execFile with an argument array and the filename is reduced to its basename before being joined onto a temporary directory; the one exec call left takes a fixed command over a path the process generated itself."
+    },
+    {
+      "id": "holdout-nestjs-member-role-change",
+      "family": "nestjs",
+      "architecture": "NestJS 10 controller with JwtAuthGuard plus RolesGuard and a Prisma membership model",
+      "language": "typescript",
+      "file": "nestjs/organization-members.controller.ts",
+      "kind": "vulnerable",
+      "category": "broken_function_level_authorization",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "PATCH /organizations/:orgId/members/:memberId/role",
+      "line": 72,
+      "lineRange": [
+        52,
+        75
+      ],
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-api",
+        "version": "1.0.0",
+        "dependencies": {
+          "@nestjs/common": "^10.3.7",
+          "@nestjs/core": "^10.3.7",
+          "@prisma/client": "^5.11.0",
+          "reflect-metadata": "^0.2.2",
+          "rxjs": "^7.8.1"
+        }
+      },
+      "why": "The delete handler one method above carries @Roles(\"admin\", \"owner\") and compares the requester's rank against the target's before acting. The role-change handler carries no @Roles decorator and never consults RANK: it resolves the requester's membership and only checks that it exists, so any member of the organization can promote themselves or anyone else to owner."
+    },
+    {
+      "id": "holdout-nestjs-collaborator-role-change",
+      "family": "nestjs",
+      "architecture": "NestJS 10 controller with JwtAuthGuard plus RolesGuard and a Prisma membership model",
+      "language": "typescript",
+      "file": "nestjs/project-collaborators.controller.ts",
+      "kind": "safe",
+      "pairedWith": "holdout-nestjs-member-role-change",
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-api",
+        "version": "1.0.0",
+        "dependencies": {
+          "@nestjs/common": "^10.3.7",
+          "@nestjs/core": "^10.3.7",
+          "@prisma/client": "^5.11.0",
+          "reflect-metadata": "^0.2.2",
+          "rxjs": "^7.8.1"
+        }
+      },
+      "why": "Same controller, same guards, same Prisma model and the same rank table, but the role-change route carries the @Roles decorator and compares the requester's rank against both the target's current role and the role being granted, so privilege cannot be raised sideways or upwards."
+    },
+    {
+      "id": "holdout-nestjs-profile-patch",
+      "family": "nestjs",
+      "architecture": "NestJS 10 controller behind JwtAuthGuard writing through a TypeORM entity",
+      "language": "typescript",
+      "file": "nestjs/profile.controller.ts",
+      "kind": "vulnerable",
+      "category": "mass_assignment",
+      "severityBand": [
+        "high",
+        "medium"
+      ],
+      "route": "PATCH /me",
+      "line": 42,
+      "lineRange": [
+        40,
+        45
+      ],
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-api",
+        "version": "1.0.0",
+        "dependencies": {
+          "@nestjs/common": "^10.3.7",
+          "@nestjs/core": "^10.3.7",
+          "@nestjs/typeorm": "^10.0.2",
+          "typeorm": "^0.3.20",
+          "reflect-metadata": "^0.2.2",
+          "rxjs": "^7.8.1"
+        }
+      },
+      "why": "The controller owns an allow list of writable fields and uses it when serialising the account on the way out, and the notifications handler assigns its two fields explicitly. The bare PATCH copies the whole request body onto the loaded entity with Object.assign and saves it, so a request can set columns the API never meant to expose, such as the account's plan, seat entitlement or verified flag."
+    },
+    {
+      "id": "holdout-nestjs-workspace-profile-patch",
+      "family": "nestjs",
+      "architecture": "NestJS 10 controller behind JwtAuthGuard writing through a TypeORM entity",
+      "language": "typescript",
+      "file": "nestjs/workspace-profile.controller.ts",
+      "kind": "safe",
+      "pairedWith": "holdout-nestjs-profile-patch",
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-api",
+        "version": "1.0.0",
+        "dependencies": {
+          "@nestjs/common": "^10.3.7",
+          "@nestjs/core": "^10.3.7",
+          "@nestjs/typeorm": "^10.0.2",
+          "typeorm": "^0.3.20",
+          "reflect-metadata": "^0.2.2",
+          "rxjs": "^7.8.1"
+        }
+      },
+      "why": "The handler still takes a Partial entity as its body and still writes through Object.assign and save, but it iterates the allow list rather than the body, so only the four presentation fields can reach the entity no matter what the request contains."
+    },
+    {
+      "id": "holdout-nestjs-password-digest",
+      "family": "nestjs",
+      "architecture": "NestJS 10 injectable credential service over Prisma, with argon2 available in the same module",
+      "language": "typescript",
+      "file": "nestjs/credentials.service.ts",
+      "kind": "vulnerable",
+      "category": "weak_password_hashing",
+      "severityBand": [
+        "high",
+        "medium"
+      ],
+      "line": 39,
+      "lineRange": [
+        37,
+        48
+      ],
+      "runtimeVerifiable": false,
+      "packageJson": {
+        "name": "acme-suite-api",
+        "version": "1.0.0",
+        "dependencies": {
+          "@nestjs/common": "^10.3.7",
+          "@nestjs/core": "^10.3.7",
+          "@prisma/client": "^5.11.0",
+          "argon2": "^0.40.1",
+          "reflect-metadata": "^0.2.2",
+          "rxjs": "^7.8.1"
+        }
+      },
+      "why": "Recovery codes in the same service are hashed with argon2, so the dependency and the habit are both present, yet account passwords are stored as a single salted SHA-256 digest. A fast unsalted-speed hash over a per-user salt gives no work factor at all, so a stolen users table is bulk-crackable at GPU rates."
+    },
+    {
+      "id": "holdout-nestjs-operator-password-digest",
+      "family": "nestjs",
+      "architecture": "NestJS 10 injectable credential service over Prisma, with argon2 available in the same module",
+      "language": "typescript",
+      "file": "nestjs/operator-credentials.service.ts",
+      "kind": "safe",
+      "pairedWith": "holdout-nestjs-password-digest",
+      "runtimeVerifiable": false,
+      "packageJson": {
+        "name": "acme-suite-api",
+        "version": "1.0.0",
+        "dependencies": {
+          "@nestjs/common": "^10.3.7",
+          "@nestjs/core": "^10.3.7",
+          "@prisma/client": "^5.11.0",
+          "argon2": "^0.40.1",
+          "reflect-metadata": "^0.2.2",
+          "rxjs": "^7.8.1"
+        }
+      },
+      "why": "The same service still calls createHash(\"sha256\"), but only to derive a non-secret avatar key from an email address; passwords go through argon2id with an explicit memory and time cost, and verification uses argon2.verify."
+    },
+    {
+      "id": "holdout-nuxt-member-search",
+      "family": "nuxt-nitro",
+      "architecture": "Nitro server route over a MongoDB collection, session resolved by a shared util",
+      "language": "typescript",
+      "file": "nuxt-nitro/server/api/members/search.post.ts",
+      "scanAs": "server/api/members/search.post.ts",
+      "kind": "vulnerable",
+      "category": "nosql_injection",
+      "severityBand": [
+        "critical",
+        "high"
+      ],
+      "route": "POST /api/members/search",
+      "line": 24,
+      "lineRange": [
+        22,
+        32
+      ],
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-nuxt",
+        "version": "1.0.0",
+        "type": "module",
+        "dependencies": {
+          "nuxt": "^3.11.2",
+          "h3": "^1.11.1",
+          "mongodb": "^6.5.0",
+          "pg": "^8.11.5"
+        }
+      },
+      "why": "The team filter is coerced with String and the sort field is checked against an allow list, so the handler looks careful. The credit floor is interpolated into a $where clause, which Mongo evaluates as JavaScript on the server, so a crafted minCredits value rewrites the predicate and returns or enumerates records the tenant filter was meant to exclude."
+    },
+    {
+      "id": "holdout-nuxt-contact-search",
+      "family": "nuxt-nitro",
+      "architecture": "Nitro server route over a MongoDB collection, session resolved by a shared util",
+      "language": "typescript",
+      "file": "nuxt-nitro/server/api/contacts/search.post.ts",
+      "scanAs": "server/api/contacts/search.post.ts",
+      "kind": "safe",
+      "pairedWith": "holdout-nuxt-member-search",
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-nuxt",
+        "version": "1.0.0",
+        "type": "module",
+        "dependencies": {
+          "nuxt": "^3.11.2",
+          "h3": "^1.11.1",
+          "mongodb": "^6.5.0",
+          "pg": "^8.11.5"
+        }
+      },
+      "why": "The same collection, the same incrementally built filter object and the same request body, but the credit floor is coerced to a finite number and expressed as a $gte comparison, so no part of the request reaches the query as an expression or an operator."
+    },
+    {
+      "id": "holdout-nuxt-service-token",
+      "family": "nuxt-nitro",
+      "architecture": "Nitro server middleware guarding internal and callback route prefixes",
+      "language": "typescript",
+      "file": "nuxt-nitro/server/middleware/service-auth.ts",
+      "scanAs": "server/middleware/service-auth.ts",
+      "kind": "vulnerable",
+      "category": "timing_unsafe_comparison",
+      "severityBand": [
+        "medium",
+        "low",
+        "high"
+      ],
+      "line": 31,
+      "lineRange": [
+        29,
+        34
+      ],
+      "runtimeVerifiable": false,
+      "packageJson": {
+        "name": "acme-suite-nuxt",
+        "version": "1.0.0",
+        "type": "module",
+        "dependencies": {
+          "nuxt": "^3.11.2",
+          "h3": "^1.11.1"
+        }
+      },
+      "why": "The callback branch in the same middleware compares its HMAC digest with timingSafeEqual after a length check, so the correct primitive is imported and used ten lines above. The internal service token is compared with a plain !== against the secret, which short-circuits on the first differing byte and leaks the shared secret to an attacker who can measure enough requests."
+    },
+    {
+      "id": "holdout-nuxt-partner-token",
+      "family": "nuxt-nitro",
+      "architecture": "Nitro server middleware guarding internal and callback route prefixes",
+      "language": "typescript",
+      "file": "nuxt-nitro/server/middleware/partner-auth.ts",
+      "scanAs": "server/middleware/partner-auth.ts",
+      "kind": "safe",
+      "pairedWith": "holdout-nuxt-service-token",
+      "runtimeVerifiable": false,
+      "packageJson": {
+        "name": "acme-suite-nuxt",
+        "version": "1.0.0",
+        "type": "module",
+        "dependencies": {
+          "nuxt": "^3.11.2",
+          "h3": "^1.11.1"
+        }
+      },
+      "why": "The same middleware still compares a header against a process-held secret and still rejects with a 401, but both the token check and the digest check route through one constant-time helper that compares lengths before calling timingSafeEqual."
+    },
+    {
+      "id": "holdout-nuxt-import-status",
+      "family": "nuxt-nitro",
+      "architecture": "Nitro server route reading a tenant-scoped row from Postgres and signing an object-store URL",
+      "language": "typescript",
+      "file": "nuxt-nitro/server/api/imports/[id]/status.get.ts",
+      "scanAs": "server/api/imports/[id]/status.get.ts",
+      "kind": "vulnerable",
+      "category": "verbose_error_response",
+      "severityBand": [
+        "low",
+        "medium"
+      ],
+      "route": "GET /api/imports/[id]/status",
+      "line": 48,
+      "lineRange": [
+        40,
+        52
+      ],
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-nuxt",
+        "version": "1.0.0",
+        "type": "module",
+        "dependencies": {
+          "nuxt": "^3.11.2",
+          "h3": "^1.11.1",
+          "pg": "^8.11.5"
+        }
+      },
+      "why": "The inner catch around the object-store call degrades quietly, which is the shape a reader expects from the whole handler. The outer catch attaches the driver message, the driver error code, the detail line, the stack, the SQL text and the bound parameters to the 500 response, handing a caller the schema, the query shape and the tenant identifier of the failing request."
+    },
+    {
+      "id": "holdout-nuxt-upload-status",
+      "family": "nuxt-nitro",
+      "architecture": "Nitro server route reading a tenant-scoped row from Postgres and signing an object-store URL",
+      "language": "typescript",
+      "file": "nuxt-nitro/server/api/uploads/[id]/status.get.ts",
+      "scanAs": "server/api/uploads/[id]/status.get.ts",
+      "kind": "safe",
+      "pairedWith": "holdout-nuxt-import-status",
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-nuxt",
+        "version": "1.0.0",
+        "type": "module",
+        "dependencies": {
+          "nuxt": "^3.11.2",
+          "h3": "^1.11.1",
+          "pg": "^8.11.5"
+        }
+      },
+      "why": "The handler still inspects the driver error and still passes a data object to createError, but everything diagnostic goes to the server logger and the response carries only a correlation reference the support team can look up."
+    },
+    {
+      "id": "holdout-rails-statement-show",
+      "family": "polyglot",
+      "architecture": "Rails 7 controller with before_action authentication and ActiveRecord associations",
+      "language": "ruby",
+      "file": "polyglot/statements_controller.rb",
+      "kind": "vulnerable",
+      "category": "broken_object_level_authorization",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "GET /billing/statements/:id",
+      "line": 19,
+      "lineRange": [
+        19,
+        23
+      ],
+      "runtimeVerifiable": true,
+      "why": "index and export both read through current_user.organization.statements, so the association that scopes a query is right there in the file. show calls Statement.find on the raw path parameter, returning any organisation's statement and its line items to any signed-in user."
+    },
+    {
+      "id": "holdout-rails-remittance-show",
+      "family": "polyglot",
+      "architecture": "Rails 7 controller with before_action authentication and ActiveRecord associations",
+      "language": "ruby",
+      "file": "polyglot/remittances_controller.rb",
+      "kind": "safe",
+      "pairedWith": "holdout-rails-statement-show",
+      "runtimeVerifiable": true,
+      "why": "The same controller shape, the same find on a path parameter and the same serialisation, but the find runs on the current user's organisation association, so an id from another organisation raises RecordNotFound."
+    },
+    {
+      "id": "holdout-laravel-invoice-store",
+      "family": "polyglot",
+      "architecture": "Laravel 10 controller behind the auth:sanctum middleware with Eloquent models",
+      "language": "php",
+      "file": "polyglot/InvoiceController.php",
+      "kind": "vulnerable",
+      "category": "mass_assignment",
+      "severityBand": [
+        "high",
+        "medium"
+      ],
+      "route": "POST /invoices",
+      "line": 29,
+      "lineRange": [
+        27,
+        31
+      ],
+      "runtimeVerifiable": true,
+      "extraFiles": {
+        "app/Models/Invoice.php": "<?php\n\nnamespace App\\Models;\n\nuse Illuminate\\Database\\Eloquent\\Model;\n\nclass Invoice extends Model\n{\n    protected $guarded = [];\n\n    public function lines()\n    {\n        return $this->hasMany(InvoiceLine::class);\n    }\n}\n"
+      },
+      "why": "update in the same controller validates an explicit two-field rule set before filling the model, so the habit exists. store hands the entire request to Invoice::create on a model whose $guarded is empty, so the caller chooses tenant_id, total_cents and paid_at — a cross-tenant write and a free invoice in one request."
+    },
+    {
+      "id": "holdout-laravel-credit-note-store",
+      "family": "polyglot",
+      "architecture": "Laravel 10 controller behind the auth:sanctum middleware with Eloquent models",
+      "language": "php",
+      "file": "polyglot/CreditNoteController.php",
+      "kind": "safe",
+      "pairedWith": "holdout-laravel-invoice-store",
+      "runtimeVerifiable": true,
+      "extraFiles": {
+        "app/Models/CreditNote.php": "<?php\n\nnamespace App\\Models;\n\nuse Illuminate\\Database\\Eloquent\\Model;\n\nclass CreditNote extends Model\n{\n    protected $fillable = ['tenant_id', 'reference', 'notes', 'total_cents', 'issued_at'];\n\n    public function lines()\n    {\n        return $this->hasMany(CreditNoteLine::class);\n    }\n}\n"
+      },
+      "why": "store still calls create with an array assembled from the request, but the array is the validated subset and the tenant id and issue date are overwritten from the authenticated user and the clock afterwards."
+    },
+    {
+      "id": "holdout-go-document-filter",
+      "family": "polyglot",
+      "architecture": "Go net/http handler over database/sql with tenant identity from the request context",
+      "language": "go",
+      "file": "polyglot/documents.go",
+      "kind": "vulnerable",
+      "category": "sql_injection",
+      "severityBand": [
+        "critical",
+        "high"
+      ],
+      "line": 43,
+      "lineRange": [
+        42,
+        47
+      ],
+      "runtimeVerifiable": true,
+      "why": "The tenant scope is a bound parameter and the limit is parsed and range-checked before it is formatted, which is what makes the third value easy to read past: the kind query parameter is formatted into a quoted SQL literal, so a value containing a quote closes it and appends chosen SQL to the statement QueryContext executes."
+    },
+    {
+      "id": "holdout-go-attachment-filter",
+      "family": "polyglot",
+      "architecture": "Go net/http handler over database/sql with tenant identity from the request context",
+      "language": "go",
+      "file": "polyglot/attachments.go",
+      "kind": "safe",
+      "pairedWith": "holdout-go-document-filter",
+      "runtimeVerifiable": true,
+      "why": "The query is still built with fmt.Sprintf and still ends with an interpolated limit, but the only interpolated value is the integer the handler parsed and bounded itself; the kind filter is bound as $2."
+    },
+    {
+      "id": "holdout-sveltekit-export-stream",
+      "family": "sveltekit",
+      "architecture": "SvelteKit 2 +server.ts endpoint streaming a generated file from a per-tenant directory",
+      "language": "typescript",
+      "file": "sveltekit/routes/api/exports/[name]/+server.ts",
+      "scanAs": "src/routes/api/exports/[name]/+server.ts",
+      "kind": "vulnerable",
+      "category": "path_traversal",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "GET /api/exports/[name]",
+      "line": 19,
+      "lineRange": [
+        15,
+        24
+      ],
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-web",
+        "version": "1.0.0",
+        "type": "module",
+        "dependencies": {
+          "@sveltejs/kit": "^2.5.5",
+          "svelte": "^4.2.15",
+          "@prisma/client": "^5.11.0"
+        },
+        "devDependencies": {
+          "@sveltejs/adapter-node": "^5.0.1",
+          "vite": "^5.2.8"
+        }
+      },
+      "why": "The join looks scoped because the tenant id is a path segment, but the segment that follows it is the raw request value — the [name] parameter, or the file query parameter that overrides it three lines above — so ../ escapes the tenant directory and streams any file the process can read. The DELETE handler in the same file shows the correct shape: it resolves the storage key from a tenant-scoped database row first."
+    },
+    {
+      "id": "holdout-sveltekit-report-stream",
+      "family": "sveltekit",
+      "architecture": "SvelteKit 2 +server.ts endpoint streaming a generated file from a per-tenant directory",
+      "language": "typescript",
+      "file": "sveltekit/routes/api/reports/[name]/+server.ts",
+      "scanAs": "src/routes/api/reports/[name]/+server.ts",
+      "kind": "safe",
+      "pairedWith": "holdout-sveltekit-export-stream",
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-web",
+        "version": "1.0.0",
+        "type": "module",
+        "dependencies": {
+          "@sveltejs/kit": "^2.5.5",
+          "svelte": "^4.2.15",
+          "@prisma/client": "^5.11.0"
+        },
+        "devDependencies": {
+          "@sveltejs/adapter-node": "^5.0.1",
+          "vite": "^5.2.8"
+        }
+      },
+      "why": "Same endpoint, same join of a request-supplied name onto a tenant directory and the same stream, but the name must match a single-segment CSV pattern with no dot-dot and no separator before it is used, so nothing outside the tenant directory is reachable."
+    },
+    {
+      "id": "holdout-sveltekit-session-cookie",
+      "family": "sveltekit",
+      "architecture": "SvelteKit 2 +page.server.ts form actions issuing a session cookie",
+      "language": "typescript",
+      "file": "sveltekit/routes/session/+page.server.ts",
+      "scanAs": "src/routes/session/+page.server.ts",
+      "kind": "vulnerable",
+      "category": "insecure_cookie_configuration",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "route": "POST /session",
+      "line": 31,
+      "lineRange": [
+        30,
+        32
+      ],
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-web",
+        "version": "1.0.0",
+        "type": "module",
+        "dependencies": {
+          "@sveltejs/kit": "^2.5.5",
+          "svelte": "^4.2.15"
+        },
+        "devDependencies": {
+          "@sveltejs/adapter-node": "^5.0.1",
+          "vite": "^5.2.8"
+        }
+      },
+      "why": "The shared cookie options are correct, and the tenant hint cookie legitimately relaxes them because it carries nothing sensitive. The session cookie spreads the same base and then overrides httpOnly to false, so the bearer token for the whole session becomes readable by any script on the page and any XSS anywhere in the application turns into account takeover."
+    },
+    {
+      "id": "holdout-sveltekit-signin-cookie",
+      "family": "sveltekit",
+      "architecture": "SvelteKit 2 +page.server.ts form actions issuing a session cookie",
+      "language": "typescript",
+      "file": "sveltekit/routes/sign-in/+page.server.ts",
+      "scanAs": "src/routes/sign-in/+page.server.ts",
+      "kind": "safe",
+      "pairedWith": "holdout-sveltekit-session-cookie",
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-web",
+        "version": "1.0.0",
+        "type": "module",
+        "dependencies": {
+          "@sveltejs/kit": "^2.5.5",
+          "svelte": "^4.2.15"
+        },
+        "devDependencies": {
+          "@sveltejs/adapter-node": "^5.0.1",
+          "vite": "^5.2.8"
+        }
+      },
+      "why": "The same action still writes two cookies from the same spread, and the tenant hint cookie is still readable by client script, but the session cookie keeps httpOnly, secure and SameSite from the base options; a readable cookie that carries only a tenant slug is not a finding."
+    },
+    {
+      "id": "holdout-sveltekit-link-preview",
+      "family": "sveltekit",
+      "architecture": "SvelteKit 2 +server.ts endpoint fetching a caller-supplied URL to build a link preview",
+      "language": "typescript",
+      "file": "sveltekit/routes/api/link-preview/+server.ts",
+      "scanAs": "src/routes/api/link-preview/+server.ts",
+      "kind": "vulnerable",
+      "category": "server_side_request_forgery",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "POST /api/link-preview",
+      "line": 46,
+      "lineRange": [
+        42,
+        50
+      ],
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-web",
+        "version": "1.0.0",
+        "type": "module",
+        "dependencies": {
+          "@sveltejs/kit": "^2.5.5",
+          "svelte": "^4.2.15"
+        },
+        "devDependencies": {
+          "@sveltejs/adapter-node": "^5.0.1",
+          "vite": "^5.2.8"
+        }
+      },
+      "why": "The allow list exists and the host is compared against it, but the failing branch only logs a warning and execution falls through to the fetch, which follows redirects with the caller's URL. Any internal address or cloud metadata endpoint is reachable, and the response status and title come back to the caller."
+    },
+    {
+      "id": "holdout-sveltekit-embed-preview",
+      "family": "sveltekit",
+      "architecture": "SvelteKit 2 +server.ts endpoint fetching a caller-supplied URL to build a link preview",
+      "language": "typescript",
+      "file": "sveltekit/routes/api/embed-preview/+server.ts",
+      "scanAs": "src/routes/api/embed-preview/+server.ts",
+      "kind": "safe",
+      "pairedWith": "holdout-sveltekit-link-preview",
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-web",
+        "version": "1.0.0",
+        "type": "module",
+        "dependencies": {
+          "@sveltejs/kit": "^2.5.5",
+          "svelte": "^4.2.15"
+        },
+        "devDependencies": {
+          "@sveltejs/adapter-node": "^5.0.1",
+          "vite": "^5.2.8"
+        }
+      },
+      "why": "The caller still supplies the URL and the same fetch still runs, but the host check throws before the fetch is reached and redirects are not followed, so only the four allowed hosts can ever be contacted."
+    },
+    {
+      "id": "holdout-sveltekit-catalog-fragment",
+      "family": "sveltekit",
+      "architecture": "SvelteKit 2 +server.ts endpoint returning an HTML fragment for progressive enhancement",
+      "language": "typescript",
+      "file": "sveltekit/routes/api/catalog-fragment/+server.ts",
+      "scanAs": "src/routes/api/catalog-fragment/+server.ts",
+      "kind": "vulnerable",
+      "category": "reflected_cross_site_scripting",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "route": "GET /api/catalog-fragment",
+      "line": 35,
+      "lineRange": [
+        33,
+        41
+      ],
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-web",
+        "version": "1.0.0",
+        "type": "module",
+        "dependencies": {
+          "@sveltejs/kit": "^2.5.5",
+          "svelte": "^4.2.15"
+        },
+        "devDependencies": {
+          "@sveltejs/adapter-node": "^5.0.1",
+          "vite": "^5.2.8"
+        }
+      },
+      "why": "The file has a working escape helper and applies it to every field of every result row, which is exactly why the omission is easy to miss: the echoed search term is interpolated raw into the summary line of a text/html response, so a crafted q parameter executes script in the page that injects this fragment."
+    },
+    {
+      "id": "holdout-sveltekit-inventory-fragment",
+      "family": "sveltekit",
+      "architecture": "SvelteKit 2 +server.ts endpoint returning an HTML fragment for progressive enhancement",
+      "language": "typescript",
+      "file": "sveltekit/routes/api/inventory-fragment/+server.ts",
+      "scanAs": "src/routes/api/inventory-fragment/+server.ts",
+      "kind": "safe",
+      "pairedWith": "holdout-sveltekit-catalog-fragment",
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-web",
+        "version": "1.0.0",
+        "type": "module",
+        "dependencies": {
+          "@sveltejs/kit": "^2.5.5",
+          "svelte": "^4.2.15"
+        },
+        "devDependencies": {
+          "@sveltejs/adapter-node": "^5.0.1",
+          "vite": "^5.2.8"
+        }
+      },
+      "why": "The endpoint still builds an HTML string by hand from a query parameter and still returns it as text/html, but every interpolation including the echoed term passes through the escape helper, and the only unescaped value is a number the handler computed itself."
+    },
+    {
+      "id": "holdout-edge-ledger-credit",
+      "family": "webhook-receivers",
+      "architecture": "Cloudflare Worker webhook receiver writing to D1, with HMAC verification available in the same module",
+      "language": "typescript",
+      "file": "webhook-receivers/ledger-events.ts",
+      "kind": "vulnerable",
+      "category": "missing_authentication",
+      "severityBand": [
+        "critical",
+        "high"
+      ],
+      "route": "POST /webhooks/ledger",
+      "line": 44,
+      "lineRange": [
+        44,
+        57
+      ],
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-edge",
+        "version": "1.0.0",
+        "type": "module",
+        "dependencies": {
+          "itty-router": "^4.2.2"
+        },
+        "devDependencies": {
+          "wrangler": "^3.53.0",
+          "@cloudflare/workers-types": "^4.20240419.0"
+        }
+      },
+      "why": "The dunning route above it verifies its HMAC signature with WebCrypto before touching the database, so the helper, the secret binding and the pattern are all present. The ledger route parses the body and credits an account balance with no signature check and no other caller identity, so anyone who knows the URL can add money to any account."
+    },
+    {
+      "id": "holdout-edge-settlement-credit",
+      "family": "webhook-receivers",
+      "architecture": "Cloudflare Worker webhook receiver writing to D1, with HMAC verification available in the same module",
+      "language": "typescript",
+      "file": "webhook-receivers/settlement-events.ts",
+      "kind": "safe",
+      "pairedWith": "holdout-edge-ledger-credit",
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-edge",
+        "version": "1.0.0",
+        "type": "module",
+        "dependencies": {
+          "itty-router": "^4.2.2"
+        },
+        "devDependencies": {
+          "wrangler": "^3.53.0",
+          "@cloudflare/workers-types": "^4.20240419.0"
+        }
+      },
+      "why": "The same balance-crediting SQL runs from the same kind of unauthenticated-looking public route, but the raw body is verified against the route's own HMAC secret before anything is parsed or written."
+    },
+    {
+      "id": "holdout-edge-partner-origins",
+      "family": "webhook-receivers",
+      "architecture": "Cloudflare Worker returning credentialed cross-origin responses to partner embeds",
+      "language": "typescript",
+      "file": "webhook-receivers/embed-bridge.ts",
+      "kind": "vulnerable",
+      "category": "insecure_cors_configuration",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "line": 15,
+      "lineRange": [
+        14,
+        20
+      ],
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-edge",
+        "version": "1.0.0",
+        "type": "module",
+        "dependencies": {
+          "itty-router": "^4.2.2"
+        },
+        "devDependencies": {
+          "wrangler": "^3.53.0",
+          "@cloudflare/workers-types": "^4.20240419.0"
+        }
+      },
+      "why": "The origin is checked, which is why this reads as defended, but the check is a suffix match on the host, so any origin ending in the allowed domain — a host the attacker registers, or a subdomain-shaped label glued to the front — passes and is reflected back with allow-credentials true, letting that origin read the account's plan and balance with the victim's session cookie."
+    },
+    {
+      "id": "holdout-edge-widget-origins",
+      "family": "webhook-receivers",
+      "architecture": "Cloudflare Worker returning credentialed cross-origin responses to partner embeds",
+      "language": "typescript",
+      "file": "webhook-receivers/widget-bridge.ts",
+      "kind": "safe",
+      "pairedWith": "holdout-edge-partner-origins",
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-edge",
+        "version": "1.0.0",
+        "type": "module",
+        "dependencies": {
+          "itty-router": "^4.2.2"
+        },
+        "devDependencies": {
+          "wrangler": "^3.53.0",
+          "@cloudflare/workers-types": "^4.20240419.0"
+        }
+      },
+      "why": "The request origin is still echoed into the allow-origin header alongside allow-credentials, which is the only way a credentialed cross-origin response can work, but it is echoed only after an exact match against a fixed set of full origins."
+    },
+    {
+      "id": "holdout-edge-oauth-destination",
+      "family": "webhook-receivers",
+      "architecture": "Cloudflare Worker OAuth start and return routes with KV-held state",
+      "language": "typescript",
+      "file": "webhook-receivers/oauth-return.ts",
+      "kind": "vulnerable",
+      "category": "open_redirect",
+      "severityBand": [
+        "medium",
+        "low",
+        "high"
+      ],
+      "route": "GET /oauth/return",
+      "line": 65,
+      "lineRange": [
+        64,
+        70
+      ],
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-edge",
+        "version": "1.0.0",
+        "type": "module",
+        "dependencies": {
+          "itty-router": "^4.2.2"
+        },
+        "devDependencies": {
+          "wrangler": "^3.53.0",
+          "@cloudflare/workers-types": "^4.20240419.0"
+        }
+      },
+      "why": "The destination came from the caller's returnTo at /oauth/start and was parked in KV, so being server-held does not make it trusted. The only check is a leading slash, which a protocol-relative //attacker.example passes, so the sign-in flow finishes by sending the freshly authenticated browser to a site the attacker controls."
+    },
+    {
+      "id": "holdout-edge-saml-destination",
+      "family": "webhook-receivers",
+      "architecture": "Cloudflare Worker OAuth start and return routes with KV-held state",
+      "language": "typescript",
+      "file": "webhook-receivers/saml-return.ts",
+      "kind": "safe",
+      "pairedWith": "holdout-edge-oauth-destination",
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-edge",
+        "version": "1.0.0",
+        "type": "module",
+        "dependencies": {
+          "itty-router": "^4.2.2"
+        },
+        "devDependencies": {
+          "wrangler": "^3.53.0",
+          "@cloudflare/workers-types": "^4.20240419.0"
+        }
+      },
+      "why": "The caller-supplied destination still decides where the browser lands after sign-in, but it is resolved against the worker's own origin and rejected unless the resolved origin matches, and only the path and query survive into the Location header."
+    },
+    {
+      "id": "holdout-worker-event-decode",
+      "family": "worker-queue",
+      "architecture": "BullMQ processor decoding payloads enqueued verbatim by a public intake endpoint",
+      "language": "javascript",
+      "file": "worker-queue/processors/inbound-events.js",
+      "kind": "vulnerable",
+      "category": "unsafe_deserialization",
+      "severityBand": [
+        "critical",
+        "high"
+      ],
+      "line": 19,
+      "lineRange": [
+        15,
+        25
+      ],
+      "runtimeVerifiable": false,
+      "packageJson": {
+        "name": "acme-suite-workers",
+        "version": "1.0.0",
+        "dependencies": {
+          "bullmq": "^5.7.2",
+          "ioredis": "^5.4.1",
+          "node-serialize": "^0.0.4",
+          "pino": "^8.20.0"
+        }
+      },
+      "why": "Payloads arrive on this queue exactly as the public intake endpoint received them. The v2 branch parses JSON, but anything without that marker goes to node-serialize's unserialize, which reconstructs functions from the payload and invokes them: a caller who can post to the intake endpoint runs code in the worker."
+    },
+    {
+      "id": "holdout-worker-outbound-decode",
+      "family": "worker-queue",
+      "architecture": "BullMQ processor decoding payloads enqueued verbatim by a public intake endpoint",
+      "language": "javascript",
+      "file": "worker-queue/processors/outbound-events.js",
+      "kind": "safe",
+      "pairedWith": "holdout-worker-event-decode",
+      "runtimeVerifiable": false,
+      "packageJson": {
+        "name": "acme-suite-workers",
+        "version": "1.0.0",
+        "dependencies": {
+          "bullmq": "^5.7.2",
+          "ioredis": "^5.4.1",
+          "node-serialize": "^0.0.4",
+          "pino": "^8.20.0"
+        }
+      },
+      "why": "The same dependency is still installed and still used, but only to serialise a receipt the worker itself produces; both decode branches of the untrusted payload go through JSON.parse, which cannot instantiate behaviour."
+    },
+    {
+      "id": "holdout-worker-sync-failure-log",
+      "family": "worker-queue",
+      "architecture": "BullMQ processor holding OAuth tokens in its job payload, with a redaction helper",
+      "language": "javascript",
+      "file": "worker-queue/processors/mailbox-sync.js",
+      "kind": "vulnerable",
+      "category": "sensitive_data_in_logs",
+      "severityBand": [
+        "medium",
+        "low"
+      ],
+      "line": 36,
+      "lineRange": [
+        35,
+        37
+      ],
+      "runtimeVerifiable": false,
+      "packageJson": {
+        "name": "acme-suite-workers",
+        "version": "1.0.0",
+        "dependencies": {
+          "bullmq": "^5.7.2",
+          "ioredis": "^5.4.1",
+          "pino": "^8.20.0"
+        }
+      },
+      "why": "The redaction helper is written, tested by use on the happy path, and then skipped in the failure branch, which logs the raw job payload — the mailbox access token and refresh token included — into a log stream that is shipped off the host and retained far longer than the tokens live."
+    },
+    {
+      "id": "holdout-worker-calendar-failure-log",
+      "family": "worker-queue",
+      "architecture": "BullMQ processor holding OAuth tokens in its job payload, with a redaction helper",
+      "language": "javascript",
+      "file": "worker-queue/processors/calendar-sync.js",
+      "kind": "safe",
+      "pairedWith": "holdout-worker-sync-failure-log",
+      "runtimeVerifiable": false,
+      "packageJson": {
+        "name": "acme-suite-workers",
+        "version": "1.0.0",
+        "dependencies": {
+          "bullmq": "^5.7.2",
+          "ioredis": "^5.4.1",
+          "pino": "^8.20.0"
+        }
+      },
+      "why": "The failure branch still logs the job for diagnosis and still reads the same token-bearing payload, but it passes it through the redaction helper and narrows the error to its message and code."
+    },
+    {
+      "id": "holdout-worker-provision-key",
+      "family": "worker-queue",
+      "architecture": "BullMQ processor signing control-plane callbacks with an HMAC key read from the environment",
+      "language": "javascript",
+      "file": "worker-queue/processors/tenant-provision.js",
+      "kind": "vulnerable",
+      "category": "hardcoded_secret",
+      "severityBand": [
+        "high",
+        "critical",
+        "medium"
+      ],
+      "line": 11,
+      "lineRange": [
+        11,
+        14
+      ],
+      "runtimeVerifiable": false,
+      "packageJson": {
+        "name": "acme-suite-workers",
+        "version": "1.0.0",
+        "dependencies": {
+          "bullmq": "^5.7.2",
+          "ioredis": "^5.4.1",
+          "pino": "^8.20.0"
+        }
+      },
+      "why": "The signing key reads from the environment first, which is why nobody notices the literal: any deployment that forgets the variable signs its control-plane callbacks with a key that is in the repository, and anyone with read access to the source can forge a provisioning callback for any tenant. The two neighbouring fallbacks are a queue prefix and a public URL, so the pattern itself is not the problem."
+    },
+    {
+      "id": "holdout-worker-region-key",
+      "family": "worker-queue",
+      "architecture": "BullMQ processor signing control-plane callbacks with an HMAC key read from the environment",
+      "language": "javascript",
+      "file": "worker-queue/processors/region-provision.js",
+      "kind": "safe",
+      "pairedWith": "holdout-worker-provision-key",
+      "runtimeVerifiable": false,
+      "packageJson": {
+        "name": "acme-suite-workers",
+        "version": "1.0.0",
+        "dependencies": {
+          "bullmq": "^5.7.2",
+          "ioredis": "^5.4.1",
+          "pino": "^8.20.0"
+        }
+      },
+      "why": "The module still declares its configuration as constants with `||` fallbacks, but the fallbacks left are a queue prefix and a public control-plane URL; the signing key comes from a helper that throws at load time when the variable is missing, so there is nothing secret in the file."
+    }
+  ]
+}

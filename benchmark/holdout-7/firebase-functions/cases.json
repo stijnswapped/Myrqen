@@ -1,0 +1,426 @@
+{
+  "family": "firebase-functions",
+  "cases": [
+    {
+      "id": "h7-firebase-functions-child-profile-read",
+      "family": "firebase-functions",
+      "architecture": "Firebase Cloud Functions 2nd generation (firebase-functions v6, TypeScript) with Firestore through the firebase-admin SDK as the only data layer, and caller identity from Firebase Auth: request.auth custom claims inside onCall handlers and a verified bearer ID token inside onRequest handlers.",
+      "language": "typescript",
+      "file": "firebase-functions/functions/src/enrollment/childProfiles.ts",
+      "scanAs": "functions/src/enrollment/childProfiles.ts",
+      "kind": "vulnerable",
+      "category": "missing_ownership_check_on_document_read",
+      "cwe": "CWE-639",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 51,
+      "lineRange": [
+        45,
+        78
+      ],
+      "runtimeVerifiable": true,
+      "why": "getChildProfile takes childId straight from request.data and reads children/{childId} with the Admin SDK after checking only that the caller is signed in, so any authenticated guardian can pass another family's child id and get back that child's medical notes, emergency contacts and subsidy rate. The firestore.rules clause quoted in the comment is never applied to Admin SDK reads.",
+      "packageJson": {
+        "name": "nestlings-functions",
+        "version": "3.8.2",
+        "private": true,
+        "main": "lib/index.js",
+        "engines": {
+          "node": "20"
+        },
+        "dependencies": {
+          "firebase-admin": "^12.6.0",
+          "firebase-functions": "^6.1.0"
+        },
+        "devDependencies": {
+          "typescript": "^5.5.4"
+        }
+      },
+      "extraFiles": {
+        "functions/src/lib/authorization.ts": "/**\n * Caller identity for the Nestlings platform.\n *\n * Every deployed function resolves \"who is asking\" through this module, so there is\n * one definition of it for callables (Firebase Auth context attached to the request)\n * and one for plain HTTP endpoints (a bearer ID token in the Authorization header).\n *\n * Roles and the centre a member of staff belongs to live in custom claims, written by\n * staff/staffOnboarding.ts. The client refreshes its ID token after a role change, so\n * within a single request token.centreId can be treated as authoritative.\n */\nimport { getAuth } from \"firebase-admin/auth\";\nimport { CallableRequest, HttpsError, Request } from \"firebase-functions/v2/https\";\nimport * as logger from \"firebase-functions/logger\";\n\nexport type Role = \"guardian\" | \"educator\" | \"centre_admin\" | \"platform_support\";\n\n/** Roles that are scoped to exactly one centre. */\nexport const CENTRE_STAFF_ROLES: readonly Role[] = [\"educator\", \"centre_admin\"];\n\nexport interface Caller {\n  uid: string;\n  email: string | null;\n  role: Role;\n  centreId: string | null;\n}\n\n/** Thrown by the HTTP helpers below; handlers turn it into a status code. */\nexport class HttpError extends Error {\n  constructor(readonly status: number, message: string) {\n    super(message);\n    this.name = \"HttpError\";\n  }\n}\n\nfunction toCaller(uid: string, token: Record<string, unknown>): Caller {\n  // Anyone who signs up through the guardian app starts with no role claim at all.\n  const role = typeof token.role === \"string\" ? (token.role as Role) : \"guardian\";\n  return {\n    uid,\n    email: typeof token.email === \"string\" ? token.email : null,\n    role,\n    centreId: typeof token.centreId === \"string\" ? token.centreId : null,\n  };\n}\n\n/** Resolve the caller of a callable function, or reject the call. */\nexport function requireCaller(request: CallableRequest<unknown>): Caller {\n  if (!request.auth) {\n    throw new HttpsError(\"unauthenticated\", \"Sign in to continue.\");\n  }\n  return toCaller(request.auth.uid, request.auth.token as unknown as Record<string, unknown>);\n}\n\n/** Resolve the caller and assert they hold one of the given roles. */\nexport function requireRole(request: CallableRequest<unknown>, ...allowed: Role[]): Caller {\n  const caller = requireCaller(request);\n  if (!allowed.includes(caller.role)) {\n    logger.warn(\"role check failed\", { uid: caller.uid, role: caller.role, allowed });\n    throw new HttpsError(\"permission-denied\", \"Your account cannot perform this action.\");\n  }\n  return caller;\n}\n\n/**\n * Assert the caller belongs to the centre that owns a record. Platform support works\n * across every centre, which is why their sessions are short-lived and audited.\n */\nexport function assertCentreScope(caller: Caller, centreId: string | undefined | null): void {\n  if (caller.role === \"platform_support\") {\n    return;\n  }\n  if (!centreId || caller.centreId !== centreId) {\n    logger.warn(\"centre scope check failed\", {\n      uid: caller.uid,\n      callerCentre: caller.centreId,\n      recordCentre: centreId ?? null,\n    });\n    throw new HttpsError(\"permission-denied\", \"That record belongs to another centre.\");\n  }\n}\n\n/** Resolve the caller of an HTTP function from its bearer ID token. */\nexport async function requireBearerCaller(req: Request): Promise<Caller> {\n  const header = req.header(\"authorization\") ?? \"\";\n  const [scheme, token] = header.split(\" \");\n  if (!/^bearer$/i.test(scheme ?? \"\") || !token) {\n    throw new HttpError(401, \"A bearer ID token is required.\");\n  }\n  try {\n    // checkRevoked, so a guardian we removed from a centre this morning cannot keep\n    // pulling documents with an hour-old token.\n    const decoded = await getAuth().verifyIdToken(token, true);\n    return toCaller(decoded.uid, decoded as unknown as Record<string, unknown>);\n  } catch (err) {\n    logger.warn(\"id token rejected\", { reason: (err as Error).message });\n    throw new HttpError(401, \"Your session has expired. Sign in again.\");\n  }\n}\n"
+      }
+    },
+    {
+      "id": "h7-firebase-functions-staff-role-assignment",
+      "family": "firebase-functions",
+      "architecture": "Firebase Cloud Functions 2nd generation (firebase-functions v6, TypeScript) with Firestore through the firebase-admin SDK as the only data layer, and caller identity from Firebase Auth: request.auth custom claims inside onCall handlers and a verified bearer ID token inside onRequest handlers.",
+      "language": "typescript",
+      "file": "firebase-functions/functions/src/staff/roleAssignments.ts",
+      "scanAs": "functions/src/staff/roleAssignments.ts",
+      "kind": "vulnerable",
+      "category": "privilege_escalation_via_unrestricted_custom_claim_write",
+      "cwe": "CWE-269",
+      "severityBand": [
+        "critical"
+      ],
+      "line": 41,
+      "lineRange": [
+        22,
+        54
+      ],
+      "runtimeVerifiable": true,
+      "why": "assignStaffRole requires only that the caller is authenticated and then writes request.data.role and request.data.centreId into the target account's custom claims, so any signed-in guardian can call it with their own uid and role 'centre_admin' for any centre id and become an administrator of that centre. The only thing standing in the way is the admin console hiding the screen.",
+      "packageJson": {
+        "name": "nestlings-functions",
+        "version": "3.8.2",
+        "private": true,
+        "main": "lib/index.js",
+        "engines": {
+          "node": "20"
+        },
+        "dependencies": {
+          "firebase-admin": "^12.6.0",
+          "firebase-functions": "^6.1.0"
+        },
+        "devDependencies": {
+          "typescript": "^5.5.4"
+        }
+      },
+      "extraFiles": {
+        "functions/src/lib/authorization.ts": "/**\n * Caller identity for the Nestlings platform.\n *\n * Every deployed function resolves \"who is asking\" through this module, so there is\n * one definition of it for callables (Firebase Auth context attached to the request)\n * and one for plain HTTP endpoints (a bearer ID token in the Authorization header).\n *\n * Roles and the centre a member of staff belongs to live in custom claims, written by\n * staff/staffOnboarding.ts. The client refreshes its ID token after a role change, so\n * within a single request token.centreId can be treated as authoritative.\n */\nimport { getAuth } from \"firebase-admin/auth\";\nimport { CallableRequest, HttpsError, Request } from \"firebase-functions/v2/https\";\nimport * as logger from \"firebase-functions/logger\";\n\nexport type Role = \"guardian\" | \"educator\" | \"centre_admin\" | \"platform_support\";\n\n/** Roles that are scoped to exactly one centre. */\nexport const CENTRE_STAFF_ROLES: readonly Role[] = [\"educator\", \"centre_admin\"];\n\nexport interface Caller {\n  uid: string;\n  email: string | null;\n  role: Role;\n  centreId: string | null;\n}\n\n/** Thrown by the HTTP helpers below; handlers turn it into a status code. */\nexport class HttpError extends Error {\n  constructor(readonly status: number, message: string) {\n    super(message);\n    this.name = \"HttpError\";\n  }\n}\n\nfunction toCaller(uid: string, token: Record<string, unknown>): Caller {\n  // Anyone who signs up through the guardian app starts with no role claim at all.\n  const role = typeof token.role === \"string\" ? (token.role as Role) : \"guardian\";\n  return {\n    uid,\n    email: typeof token.email === \"string\" ? token.email : null,\n    role,\n    centreId: typeof token.centreId === \"string\" ? token.centreId : null,\n  };\n}\n\n/** Resolve the caller of a callable function, or reject the call. */\nexport function requireCaller(request: CallableRequest<unknown>): Caller {\n  if (!request.auth) {\n    throw new HttpsError(\"unauthenticated\", \"Sign in to continue.\");\n  }\n  return toCaller(request.auth.uid, request.auth.token as unknown as Record<string, unknown>);\n}\n\n/** Resolve the caller and assert they hold one of the given roles. */\nexport function requireRole(request: CallableRequest<unknown>, ...allowed: Role[]): Caller {\n  const caller = requireCaller(request);\n  if (!allowed.includes(caller.role)) {\n    logger.warn(\"role check failed\", { uid: caller.uid, role: caller.role, allowed });\n    throw new HttpsError(\"permission-denied\", \"Your account cannot perform this action.\");\n  }\n  return caller;\n}\n\n/**\n * Assert the caller belongs to the centre that owns a record. Platform support works\n * across every centre, which is why their sessions are short-lived and audited.\n */\nexport function assertCentreScope(caller: Caller, centreId: string | undefined | null): void {\n  if (caller.role === \"platform_support\") {\n    return;\n  }\n  if (!centreId || caller.centreId !== centreId) {\n    logger.warn(\"centre scope check failed\", {\n      uid: caller.uid,\n      callerCentre: caller.centreId,\n      recordCentre: centreId ?? null,\n    });\n    throw new HttpsError(\"permission-denied\", \"That record belongs to another centre.\");\n  }\n}\n\n/** Resolve the caller of an HTTP function from its bearer ID token. */\nexport async function requireBearerCaller(req: Request): Promise<Caller> {\n  const header = req.header(\"authorization\") ?? \"\";\n  const [scheme, token] = header.split(\" \");\n  if (!/^bearer$/i.test(scheme ?? \"\") || !token) {\n    throw new HttpError(401, \"A bearer ID token is required.\");\n  }\n  try {\n    // checkRevoked, so a guardian we removed from a centre this morning cannot keep\n    // pulling documents with an hour-old token.\n    const decoded = await getAuth().verifyIdToken(token, true);\n    return toCaller(decoded.uid, decoded as unknown as Record<string, unknown>);\n  } catch (err) {\n    logger.warn(\"id token rejected\", { reason: (err as Error).message });\n    throw new HttpError(401, \"Your session has expired. Sign in again.\");\n  }\n}\n"
+      }
+    },
+    {
+      "id": "h7-firebase-functions-child-record-patch",
+      "family": "firebase-functions",
+      "architecture": "Firebase Cloud Functions 2nd generation (firebase-functions v6, TypeScript) with Firestore through the firebase-admin SDK as the only data layer, and caller identity from Firebase Auth: request.auth custom claims inside onCall handlers and a verified bearer ID token inside onRequest handlers.",
+      "language": "typescript",
+      "file": "firebase-functions/functions/src/enrollment/childRecordUpdates.ts",
+      "scanAs": "functions/src/enrollment/childRecordUpdates.ts",
+      "kind": "vulnerable",
+      "category": "mass_assignment_of_privileged_document_fields",
+      "cwe": "CWE-915",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "line": 57,
+      "lineRange": [
+        34,
+        62
+      ],
+      "runtimeVerifiable": true,
+      "why": "updateChildRecord authorises the caller against the child and then merges request.data.patch into the children document wholesale, so a linked guardian can write fields the profile form never renders: centreId, which moves the child into another centre's tenant, subsidyRate, which is billing input, and guardianUids, which hands a third party access to the record.",
+      "packageJson": {
+        "name": "nestlings-functions",
+        "version": "3.8.2",
+        "private": true,
+        "main": "lib/index.js",
+        "engines": {
+          "node": "20"
+        },
+        "dependencies": {
+          "firebase-admin": "^12.6.0",
+          "firebase-functions": "^6.1.0"
+        },
+        "devDependencies": {
+          "typescript": "^5.5.4"
+        }
+      },
+      "extraFiles": {
+        "functions/src/lib/authorization.ts": "/**\n * Caller identity for the Nestlings platform.\n *\n * Every deployed function resolves \"who is asking\" through this module, so there is\n * one definition of it for callables (Firebase Auth context attached to the request)\n * and one for plain HTTP endpoints (a bearer ID token in the Authorization header).\n *\n * Roles and the centre a member of staff belongs to live in custom claims, written by\n * staff/staffOnboarding.ts. The client refreshes its ID token after a role change, so\n * within a single request token.centreId can be treated as authoritative.\n */\nimport { getAuth } from \"firebase-admin/auth\";\nimport { CallableRequest, HttpsError, Request } from \"firebase-functions/v2/https\";\nimport * as logger from \"firebase-functions/logger\";\n\nexport type Role = \"guardian\" | \"educator\" | \"centre_admin\" | \"platform_support\";\n\n/** Roles that are scoped to exactly one centre. */\nexport const CENTRE_STAFF_ROLES: readonly Role[] = [\"educator\", \"centre_admin\"];\n\nexport interface Caller {\n  uid: string;\n  email: string | null;\n  role: Role;\n  centreId: string | null;\n}\n\n/** Thrown by the HTTP helpers below; handlers turn it into a status code. */\nexport class HttpError extends Error {\n  constructor(readonly status: number, message: string) {\n    super(message);\n    this.name = \"HttpError\";\n  }\n}\n\nfunction toCaller(uid: string, token: Record<string, unknown>): Caller {\n  // Anyone who signs up through the guardian app starts with no role claim at all.\n  const role = typeof token.role === \"string\" ? (token.role as Role) : \"guardian\";\n  return {\n    uid,\n    email: typeof token.email === \"string\" ? token.email : null,\n    role,\n    centreId: typeof token.centreId === \"string\" ? token.centreId : null,\n  };\n}\n\n/** Resolve the caller of a callable function, or reject the call. */\nexport function requireCaller(request: CallableRequest<unknown>): Caller {\n  if (!request.auth) {\n    throw new HttpsError(\"unauthenticated\", \"Sign in to continue.\");\n  }\n  return toCaller(request.auth.uid, request.auth.token as unknown as Record<string, unknown>);\n}\n\n/** Resolve the caller and assert they hold one of the given roles. */\nexport function requireRole(request: CallableRequest<unknown>, ...allowed: Role[]): Caller {\n  const caller = requireCaller(request);\n  if (!allowed.includes(caller.role)) {\n    logger.warn(\"role check failed\", { uid: caller.uid, role: caller.role, allowed });\n    throw new HttpsError(\"permission-denied\", \"Your account cannot perform this action.\");\n  }\n  return caller;\n}\n\n/**\n * Assert the caller belongs to the centre that owns a record. Platform support works\n * across every centre, which is why their sessions are short-lived and audited.\n */\nexport function assertCentreScope(caller: Caller, centreId: string | undefined | null): void {\n  if (caller.role === \"platform_support\") {\n    return;\n  }\n  if (!centreId || caller.centreId !== centreId) {\n    logger.warn(\"centre scope check failed\", {\n      uid: caller.uid,\n      callerCentre: caller.centreId,\n      recordCentre: centreId ?? null,\n    });\n    throw new HttpsError(\"permission-denied\", \"That record belongs to another centre.\");\n  }\n}\n\n/** Resolve the caller of an HTTP function from its bearer ID token. */\nexport async function requireBearerCaller(req: Request): Promise<Caller> {\n  const header = req.header(\"authorization\") ?? \"\";\n  const [scheme, token] = header.split(\" \");\n  if (!/^bearer$/i.test(scheme ?? \"\") || !token) {\n    throw new HttpError(401, \"A bearer ID token is required.\");\n  }\n  try {\n    // checkRevoked, so a guardian we removed from a centre this morning cannot keep\n    // pulling documents with an hour-old token.\n    const decoded = await getAuth().verifyIdToken(token, true);\n    return toCaller(decoded.uid, decoded as unknown as Record<string, unknown>);\n  } catch (err) {\n    logger.warn(\"id token rejected\", { reason: (err as Error).message });\n    throw new HttpError(401, \"Your session has expired. Sign in again.\");\n  }\n}\n"
+      }
+    },
+    {
+      "id": "h7-firebase-functions-invoice-document",
+      "family": "firebase-functions",
+      "architecture": "Firebase Cloud Functions 2nd generation (firebase-functions v6, TypeScript) with Firestore through the firebase-admin SDK as the only data layer, and caller identity from Firebase Auth: request.auth custom claims inside onCall handlers and a verified bearer ID token inside onRequest handlers.",
+      "language": "typescript",
+      "file": "firebase-functions/functions/src/billing/invoiceDelivery.ts",
+      "scanAs": "functions/src/billing/invoiceDelivery.ts",
+      "kind": "vulnerable",
+      "category": "missing_authentication_on_http_endpoint",
+      "cwe": "CWE-306",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 42,
+      "lineRange": [
+        21,
+        77
+      ],
+      "runtimeVerifiable": true,
+      "why": "invoiceDocument is a publicly invokable onRequest handler that reads invoices/{req.query.invoiceId} through the Admin SDK and returns the guardian's name, email, billing address and direct debit mandate without verifying any ID token; the firestore.rules clause cited in the comment does not constrain the Admin SDK.",
+      "packageJson": {
+        "name": "nestlings-functions",
+        "version": "3.8.2",
+        "private": true,
+        "main": "lib/index.js",
+        "engines": {
+          "node": "20"
+        },
+        "dependencies": {
+          "firebase-admin": "^12.6.0",
+          "firebase-functions": "^6.1.0"
+        },
+        "devDependencies": {
+          "typescript": "^5.5.4"
+        }
+      }
+    },
+    {
+      "id": "h7-firebase-functions-payment-callbacks",
+      "family": "firebase-functions",
+      "architecture": "Firebase Cloud Functions 2nd generation (firebase-functions v6, TypeScript) with Firestore through the firebase-admin SDK as the only data layer, and caller identity from Firebase Auth: request.auth custom claims inside onCall handlers and a verified bearer ID token inside onRequest handlers.",
+      "language": "typescript",
+      "file": "firebase-functions/functions/src/billing/paymentWebhooks.ts",
+      "scanAs": "functions/src/billing/paymentWebhooks.ts",
+      "kind": "vulnerable",
+      "category": "webhook_signature_verification_skipped_when_header_absent",
+      "cwe": "CWE-347",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 45,
+      "lineRange": [
+        44,
+        92
+      ],
+      "runtimeVerifiable": true,
+      "why": "The HMAC over req.rawBody is computed only when the x-nestlings-signature header happens to be present, so anyone who can POST to this public endpoint omits the header and has an unverified body mark any invoice paid and write a matching ledger entry.",
+      "packageJson": {
+        "name": "nestlings-functions",
+        "version": "3.8.2",
+        "private": true,
+        "main": "lib/index.js",
+        "engines": {
+          "node": "20"
+        },
+        "dependencies": {
+          "firebase-admin": "^12.6.0",
+          "firebase-functions": "^6.1.0"
+        },
+        "devDependencies": {
+          "typescript": "^5.5.4"
+        }
+      }
+    },
+    {
+      "id": "h7-firebase-functions-centre-webhook-registration",
+      "family": "firebase-functions",
+      "architecture": "Firebase Cloud Functions 2nd generation (firebase-functions v6, TypeScript) with Firestore through the firebase-admin SDK as the only data layer, and caller identity from Firebase Auth: request.auth custom claims inside onCall handlers and a verified bearer ID token inside onRequest handlers.",
+      "language": "typescript",
+      "file": "firebase-functions/functions/src/integrations/parentPortalHooks.ts",
+      "scanAs": "functions/src/integrations/parentPortalHooks.ts",
+      "kind": "vulnerable",
+      "category": "server_side_request_forgery_via_stored_webhook_endpoint",
+      "cwe": "CWE-918",
+      "severityBand": [
+        "high"
+      ],
+      "line": 68,
+      "lineRange": [
+        41,
+        98
+      ],
+      "runtimeVerifiable": true,
+      "why": "registerCentreWebhook hands request.data.endpointUrl to fetch() with no scheme or host validation and returns the response status and first 512 bytes to the caller, so a centre admin can read internal-only addresses through the function, including the GCE metadata server, and can point the OUTBOUND_WEBHOOK_KEY header at any host they name.",
+      "packageJson": {
+        "name": "nestlings-functions",
+        "version": "3.8.2",
+        "private": true,
+        "main": "lib/index.js",
+        "engines": {
+          "node": "20"
+        },
+        "dependencies": {
+          "firebase-admin": "^12.6.0",
+          "firebase-functions": "^6.1.0"
+        },
+        "devDependencies": {
+          "typescript": "^5.5.4"
+        }
+      },
+      "extraFiles": {
+        "functions/src/lib/authorization.ts": "/**\n * Caller identity for the Nestlings platform.\n *\n * Every deployed function resolves \"who is asking\" through this module, so there is\n * one definition of it for callables (Firebase Auth context attached to the request)\n * and one for plain HTTP endpoints (a bearer ID token in the Authorization header).\n *\n * Roles and the centre a member of staff belongs to live in custom claims, written by\n * staff/staffOnboarding.ts. The client refreshes its ID token after a role change, so\n * within a single request token.centreId can be treated as authoritative.\n */\nimport { getAuth } from \"firebase-admin/auth\";\nimport { CallableRequest, HttpsError, Request } from \"firebase-functions/v2/https\";\nimport * as logger from \"firebase-functions/logger\";\n\nexport type Role = \"guardian\" | \"educator\" | \"centre_admin\" | \"platform_support\";\n\n/** Roles that are scoped to exactly one centre. */\nexport const CENTRE_STAFF_ROLES: readonly Role[] = [\"educator\", \"centre_admin\"];\n\nexport interface Caller {\n  uid: string;\n  email: string | null;\n  role: Role;\n  centreId: string | null;\n}\n\n/** Thrown by the HTTP helpers below; handlers turn it into a status code. */\nexport class HttpError extends Error {\n  constructor(readonly status: number, message: string) {\n    super(message);\n    this.name = \"HttpError\";\n  }\n}\n\nfunction toCaller(uid: string, token: Record<string, unknown>): Caller {\n  // Anyone who signs up through the guardian app starts with no role claim at all.\n  const role = typeof token.role === \"string\" ? (token.role as Role) : \"guardian\";\n  return {\n    uid,\n    email: typeof token.email === \"string\" ? token.email : null,\n    role,\n    centreId: typeof token.centreId === \"string\" ? token.centreId : null,\n  };\n}\n\n/** Resolve the caller of a callable function, or reject the call. */\nexport function requireCaller(request: CallableRequest<unknown>): Caller {\n  if (!request.auth) {\n    throw new HttpsError(\"unauthenticated\", \"Sign in to continue.\");\n  }\n  return toCaller(request.auth.uid, request.auth.token as unknown as Record<string, unknown>);\n}\n\n/** Resolve the caller and assert they hold one of the given roles. */\nexport function requireRole(request: CallableRequest<unknown>, ...allowed: Role[]): Caller {\n  const caller = requireCaller(request);\n  if (!allowed.includes(caller.role)) {\n    logger.warn(\"role check failed\", { uid: caller.uid, role: caller.role, allowed });\n    throw new HttpsError(\"permission-denied\", \"Your account cannot perform this action.\");\n  }\n  return caller;\n}\n\n/**\n * Assert the caller belongs to the centre that owns a record. Platform support works\n * across every centre, which is why their sessions are short-lived and audited.\n */\nexport function assertCentreScope(caller: Caller, centreId: string | undefined | null): void {\n  if (caller.role === \"platform_support\") {\n    return;\n  }\n  if (!centreId || caller.centreId !== centreId) {\n    logger.warn(\"centre scope check failed\", {\n      uid: caller.uid,\n      callerCentre: caller.centreId,\n      recordCentre: centreId ?? null,\n    });\n    throw new HttpsError(\"permission-denied\", \"That record belongs to another centre.\");\n  }\n}\n\n/** Resolve the caller of an HTTP function from its bearer ID token. */\nexport async function requireBearerCaller(req: Request): Promise<Caller> {\n  const header = req.header(\"authorization\") ?? \"\";\n  const [scheme, token] = header.split(\" \");\n  if (!/^bearer$/i.test(scheme ?? \"\") || !token) {\n    throw new HttpError(401, \"A bearer ID token is required.\");\n  }\n  try {\n    // checkRevoked, so a guardian we removed from a centre this morning cannot keep\n    // pulling documents with an hour-old token.\n    const decoded = await getAuth().verifyIdToken(token, true);\n    return toCaller(decoded.uid, decoded as unknown as Record<string, unknown>);\n  } catch (err) {\n    logger.warn(\"id token rejected\", { reason: (err as Error).message });\n    throw new HttpError(401, \"Your session has expired. Sign in again.\");\n  }\n}\n"
+      }
+    },
+    {
+      "id": "h7-firebase-functions-guardian-child-summary",
+      "family": "firebase-functions",
+      "architecture": "Firebase Cloud Functions 2nd generation (firebase-functions v6, TypeScript) with Firestore through the firebase-admin SDK as the only data layer, and caller identity from Firebase Auth: request.auth custom claims inside onCall handlers and a verified bearer ID token inside onRequest handlers.",
+      "language": "typescript",
+      "file": "firebase-functions/functions/src/enrollment/guardianAccess.ts",
+      "scanAs": "functions/src/enrollment/guardianAccess.ts",
+      "kind": "safe",
+      "runtimeVerifiable": true,
+      "pairedWith": "h7-firebase-functions-child-profile-read",
+      "why": "The same request.data.childId document read, but assertChildVisibleTo rejects the call unless the caller's uid appears in the child's guardianUids or the caller is centre staff whose token centreId equals the child's centreId, so holding an id grants nothing on its own.",
+      "packageJson": {
+        "name": "nestlings-functions",
+        "version": "3.8.2",
+        "private": true,
+        "main": "lib/index.js",
+        "engines": {
+          "node": "20"
+        },
+        "dependencies": {
+          "firebase-admin": "^12.6.0",
+          "firebase-functions": "^6.1.0"
+        },
+        "devDependencies": {
+          "typescript": "^5.5.4"
+        }
+      },
+      "extraFiles": {
+        "functions/src/lib/authorization.ts": "/**\n * Caller identity for the Nestlings platform.\n *\n * Every deployed function resolves \"who is asking\" through this module, so there is\n * one definition of it for callables (Firebase Auth context attached to the request)\n * and one for plain HTTP endpoints (a bearer ID token in the Authorization header).\n *\n * Roles and the centre a member of staff belongs to live in custom claims, written by\n * staff/staffOnboarding.ts. The client refreshes its ID token after a role change, so\n * within a single request token.centreId can be treated as authoritative.\n */\nimport { getAuth } from \"firebase-admin/auth\";\nimport { CallableRequest, HttpsError, Request } from \"firebase-functions/v2/https\";\nimport * as logger from \"firebase-functions/logger\";\n\nexport type Role = \"guardian\" | \"educator\" | \"centre_admin\" | \"platform_support\";\n\n/** Roles that are scoped to exactly one centre. */\nexport const CENTRE_STAFF_ROLES: readonly Role[] = [\"educator\", \"centre_admin\"];\n\nexport interface Caller {\n  uid: string;\n  email: string | null;\n  role: Role;\n  centreId: string | null;\n}\n\n/** Thrown by the HTTP helpers below; handlers turn it into a status code. */\nexport class HttpError extends Error {\n  constructor(readonly status: number, message: string) {\n    super(message);\n    this.name = \"HttpError\";\n  }\n}\n\nfunction toCaller(uid: string, token: Record<string, unknown>): Caller {\n  // Anyone who signs up through the guardian app starts with no role claim at all.\n  const role = typeof token.role === \"string\" ? (token.role as Role) : \"guardian\";\n  return {\n    uid,\n    email: typeof token.email === \"string\" ? token.email : null,\n    role,\n    centreId: typeof token.centreId === \"string\" ? token.centreId : null,\n  };\n}\n\n/** Resolve the caller of a callable function, or reject the call. */\nexport function requireCaller(request: CallableRequest<unknown>): Caller {\n  if (!request.auth) {\n    throw new HttpsError(\"unauthenticated\", \"Sign in to continue.\");\n  }\n  return toCaller(request.auth.uid, request.auth.token as unknown as Record<string, unknown>);\n}\n\n/** Resolve the caller and assert they hold one of the given roles. */\nexport function requireRole(request: CallableRequest<unknown>, ...allowed: Role[]): Caller {\n  const caller = requireCaller(request);\n  if (!allowed.includes(caller.role)) {\n    logger.warn(\"role check failed\", { uid: caller.uid, role: caller.role, allowed });\n    throw new HttpsError(\"permission-denied\", \"Your account cannot perform this action.\");\n  }\n  return caller;\n}\n\n/**\n * Assert the caller belongs to the centre that owns a record. Platform support works\n * across every centre, which is why their sessions are short-lived and audited.\n */\nexport function assertCentreScope(caller: Caller, centreId: string | undefined | null): void {\n  if (caller.role === \"platform_support\") {\n    return;\n  }\n  if (!centreId || caller.centreId !== centreId) {\n    logger.warn(\"centre scope check failed\", {\n      uid: caller.uid,\n      callerCentre: caller.centreId,\n      recordCentre: centreId ?? null,\n    });\n    throw new HttpsError(\"permission-denied\", \"That record belongs to another centre.\");\n  }\n}\n\n/** Resolve the caller of an HTTP function from its bearer ID token. */\nexport async function requireBearerCaller(req: Request): Promise<Caller> {\n  const header = req.header(\"authorization\") ?? \"\";\n  const [scheme, token] = header.split(\" \");\n  if (!/^bearer$/i.test(scheme ?? \"\") || !token) {\n    throw new HttpError(401, \"A bearer ID token is required.\");\n  }\n  try {\n    // checkRevoked, so a guardian we removed from a centre this morning cannot keep\n    // pulling documents with an hour-old token.\n    const decoded = await getAuth().verifyIdToken(token, true);\n    return toCaller(decoded.uid, decoded as unknown as Record<string, unknown>);\n  } catch (err) {\n    logger.warn(\"id token rejected\", { reason: (err as Error).message });\n    throw new HttpError(401, \"Your session has expired. Sign in again.\");\n  }\n}\n"
+      }
+    },
+    {
+      "id": "h7-firebase-functions-staff-invitation",
+      "family": "firebase-functions",
+      "architecture": "Firebase Cloud Functions 2nd generation (firebase-functions v6, TypeScript) with Firestore through the firebase-admin SDK as the only data layer, and caller identity from Firebase Auth: request.auth custom claims inside onCall handlers and a verified bearer ID token inside onRequest handlers.",
+      "language": "typescript",
+      "file": "firebase-functions/functions/src/staff/staffOnboarding.ts",
+      "scanAs": "functions/src/staff/staffOnboarding.ts",
+      "kind": "safe",
+      "runtimeVerifiable": true,
+      "pairedWith": "h7-firebase-functions-staff-role-assignment",
+      "why": "The same setCustomUserClaims write, but requireRole(request, 'centre_admin') gates the call, normaliseRole rejects any role outside the INVITABLE_ROLES allowlist, and the centreId written into the claims comes from the caller's own token rather than from request.data.",
+      "packageJson": {
+        "name": "nestlings-functions",
+        "version": "3.8.2",
+        "private": true,
+        "main": "lib/index.js",
+        "engines": {
+          "node": "20"
+        },
+        "dependencies": {
+          "firebase-admin": "^12.6.0",
+          "firebase-functions": "^6.1.0"
+        },
+        "devDependencies": {
+          "typescript": "^5.5.4"
+        }
+      },
+      "extraFiles": {
+        "functions/src/lib/authorization.ts": "/**\n * Caller identity for the Nestlings platform.\n *\n * Every deployed function resolves \"who is asking\" through this module, so there is\n * one definition of it for callables (Firebase Auth context attached to the request)\n * and one for plain HTTP endpoints (a bearer ID token in the Authorization header).\n *\n * Roles and the centre a member of staff belongs to live in custom claims, written by\n * staff/staffOnboarding.ts. The client refreshes its ID token after a role change, so\n * within a single request token.centreId can be treated as authoritative.\n */\nimport { getAuth } from \"firebase-admin/auth\";\nimport { CallableRequest, HttpsError, Request } from \"firebase-functions/v2/https\";\nimport * as logger from \"firebase-functions/logger\";\n\nexport type Role = \"guardian\" | \"educator\" | \"centre_admin\" | \"platform_support\";\n\n/** Roles that are scoped to exactly one centre. */\nexport const CENTRE_STAFF_ROLES: readonly Role[] = [\"educator\", \"centre_admin\"];\n\nexport interface Caller {\n  uid: string;\n  email: string | null;\n  role: Role;\n  centreId: string | null;\n}\n\n/** Thrown by the HTTP helpers below; handlers turn it into a status code. */\nexport class HttpError extends Error {\n  constructor(readonly status: number, message: string) {\n    super(message);\n    this.name = \"HttpError\";\n  }\n}\n\nfunction toCaller(uid: string, token: Record<string, unknown>): Caller {\n  // Anyone who signs up through the guardian app starts with no role claim at all.\n  const role = typeof token.role === \"string\" ? (token.role as Role) : \"guardian\";\n  return {\n    uid,\n    email: typeof token.email === \"string\" ? token.email : null,\n    role,\n    centreId: typeof token.centreId === \"string\" ? token.centreId : null,\n  };\n}\n\n/** Resolve the caller of a callable function, or reject the call. */\nexport function requireCaller(request: CallableRequest<unknown>): Caller {\n  if (!request.auth) {\n    throw new HttpsError(\"unauthenticated\", \"Sign in to continue.\");\n  }\n  return toCaller(request.auth.uid, request.auth.token as unknown as Record<string, unknown>);\n}\n\n/** Resolve the caller and assert they hold one of the given roles. */\nexport function requireRole(request: CallableRequest<unknown>, ...allowed: Role[]): Caller {\n  const caller = requireCaller(request);\n  if (!allowed.includes(caller.role)) {\n    logger.warn(\"role check failed\", { uid: caller.uid, role: caller.role, allowed });\n    throw new HttpsError(\"permission-denied\", \"Your account cannot perform this action.\");\n  }\n  return caller;\n}\n\n/**\n * Assert the caller belongs to the centre that owns a record. Platform support works\n * across every centre, which is why their sessions are short-lived and audited.\n */\nexport function assertCentreScope(caller: Caller, centreId: string | undefined | null): void {\n  if (caller.role === \"platform_support\") {\n    return;\n  }\n  if (!centreId || caller.centreId !== centreId) {\n    logger.warn(\"centre scope check failed\", {\n      uid: caller.uid,\n      callerCentre: caller.centreId,\n      recordCentre: centreId ?? null,\n    });\n    throw new HttpsError(\"permission-denied\", \"That record belongs to another centre.\");\n  }\n}\n\n/** Resolve the caller of an HTTP function from its bearer ID token. */\nexport async function requireBearerCaller(req: Request): Promise<Caller> {\n  const header = req.header(\"authorization\") ?? \"\";\n  const [scheme, token] = header.split(\" \");\n  if (!/^bearer$/i.test(scheme ?? \"\") || !token) {\n    throw new HttpError(401, \"A bearer ID token is required.\");\n  }\n  try {\n    // checkRevoked, so a guardian we removed from a centre this morning cannot keep\n    // pulling documents with an hour-old token.\n    const decoded = await getAuth().verifyIdToken(token, true);\n    return toCaller(decoded.uid, decoded as unknown as Record<string, unknown>);\n  } catch (err) {\n    logger.warn(\"id token rejected\", { reason: (err as Error).message });\n    throw new HttpError(401, \"Your session has expired. Sign in again.\");\n  }\n}\n"
+      }
+    },
+    {
+      "id": "h7-firebase-functions-daily-report-entry",
+      "family": "firebase-functions",
+      "architecture": "Firebase Cloud Functions 2nd generation (firebase-functions v6, TypeScript) with Firestore through the firebase-admin SDK as the only data layer, and caller identity from Firebase Auth: request.auth custom claims inside onCall handlers and a verified bearer ID token inside onRequest handlers.",
+      "language": "typescript",
+      "file": "firebase-functions/functions/src/daily/dailyReportEntries.ts",
+      "scanAs": "functions/src/daily/dailyReportEntries.ts",
+      "kind": "safe",
+      "runtimeVerifiable": true,
+      "pairedWith": "h7-firebase-functions-child-record-patch",
+      "why": "The same merge of a caller-supplied object into a Firestore document, but only the keys listed in EDITABLE_REPORT_FIELDS are copied across and the server-owned fields (childId, date, centreId, roomId, submittedBy) are stamped after the copy, so nothing the tablet sends can reach a privileged field.",
+      "packageJson": {
+        "name": "nestlings-functions",
+        "version": "3.8.2",
+        "private": true,
+        "main": "lib/index.js",
+        "engines": {
+          "node": "20"
+        },
+        "dependencies": {
+          "firebase-admin": "^12.6.0",
+          "firebase-functions": "^6.1.0"
+        },
+        "devDependencies": {
+          "typescript": "^5.5.4"
+        }
+      },
+      "extraFiles": {
+        "functions/src/lib/authorization.ts": "/**\n * Caller identity for the Nestlings platform.\n *\n * Every deployed function resolves \"who is asking\" through this module, so there is\n * one definition of it for callables (Firebase Auth context attached to the request)\n * and one for plain HTTP endpoints (a bearer ID token in the Authorization header).\n *\n * Roles and the centre a member of staff belongs to live in custom claims, written by\n * staff/staffOnboarding.ts. The client refreshes its ID token after a role change, so\n * within a single request token.centreId can be treated as authoritative.\n */\nimport { getAuth } from \"firebase-admin/auth\";\nimport { CallableRequest, HttpsError, Request } from \"firebase-functions/v2/https\";\nimport * as logger from \"firebase-functions/logger\";\n\nexport type Role = \"guardian\" | \"educator\" | \"centre_admin\" | \"platform_support\";\n\n/** Roles that are scoped to exactly one centre. */\nexport const CENTRE_STAFF_ROLES: readonly Role[] = [\"educator\", \"centre_admin\"];\n\nexport interface Caller {\n  uid: string;\n  email: string | null;\n  role: Role;\n  centreId: string | null;\n}\n\n/** Thrown by the HTTP helpers below; handlers turn it into a status code. */\nexport class HttpError extends Error {\n  constructor(readonly status: number, message: string) {\n    super(message);\n    this.name = \"HttpError\";\n  }\n}\n\nfunction toCaller(uid: string, token: Record<string, unknown>): Caller {\n  // Anyone who signs up through the guardian app starts with no role claim at all.\n  const role = typeof token.role === \"string\" ? (token.role as Role) : \"guardian\";\n  return {\n    uid,\n    email: typeof token.email === \"string\" ? token.email : null,\n    role,\n    centreId: typeof token.centreId === \"string\" ? token.centreId : null,\n  };\n}\n\n/** Resolve the caller of a callable function, or reject the call. */\nexport function requireCaller(request: CallableRequest<unknown>): Caller {\n  if (!request.auth) {\n    throw new HttpsError(\"unauthenticated\", \"Sign in to continue.\");\n  }\n  return toCaller(request.auth.uid, request.auth.token as unknown as Record<string, unknown>);\n}\n\n/** Resolve the caller and assert they hold one of the given roles. */\nexport function requireRole(request: CallableRequest<unknown>, ...allowed: Role[]): Caller {\n  const caller = requireCaller(request);\n  if (!allowed.includes(caller.role)) {\n    logger.warn(\"role check failed\", { uid: caller.uid, role: caller.role, allowed });\n    throw new HttpsError(\"permission-denied\", \"Your account cannot perform this action.\");\n  }\n  return caller;\n}\n\n/**\n * Assert the caller belongs to the centre that owns a record. Platform support works\n * across every centre, which is why their sessions are short-lived and audited.\n */\nexport function assertCentreScope(caller: Caller, centreId: string | undefined | null): void {\n  if (caller.role === \"platform_support\") {\n    return;\n  }\n  if (!centreId || caller.centreId !== centreId) {\n    logger.warn(\"centre scope check failed\", {\n      uid: caller.uid,\n      callerCentre: caller.centreId,\n      recordCentre: centreId ?? null,\n    });\n    throw new HttpsError(\"permission-denied\", \"That record belongs to another centre.\");\n  }\n}\n\n/** Resolve the caller of an HTTP function from its bearer ID token. */\nexport async function requireBearerCaller(req: Request): Promise<Caller> {\n  const header = req.header(\"authorization\") ?? \"\";\n  const [scheme, token] = header.split(\" \");\n  if (!/^bearer$/i.test(scheme ?? \"\") || !token) {\n    throw new HttpError(401, \"A bearer ID token is required.\");\n  }\n  try {\n    // checkRevoked, so a guardian we removed from a centre this morning cannot keep\n    // pulling documents with an hour-old token.\n    const decoded = await getAuth().verifyIdToken(token, true);\n    return toCaller(decoded.uid, decoded as unknown as Record<string, unknown>);\n  } catch (err) {\n    logger.warn(\"id token rejected\", { reason: (err as Error).message });\n    throw new HttpError(401, \"Your session has expired. Sign in again.\");\n  }\n}\n"
+      }
+    },
+    {
+      "id": "h7-firebase-functions-monthly-statement",
+      "family": "firebase-functions",
+      "architecture": "Firebase Cloud Functions 2nd generation (firebase-functions v6, TypeScript) with Firestore through the firebase-admin SDK as the only data layer, and caller identity from Firebase Auth: request.auth custom claims inside onCall handlers and a verified bearer ID token inside onRequest handlers.",
+      "language": "typescript",
+      "file": "firebase-functions/functions/src/billing/statementDelivery.ts",
+      "scanAs": "functions/src/billing/statementDelivery.ts",
+      "kind": "safe",
+      "runtimeVerifiable": true,
+      "pairedWith": "h7-firebase-functions-invoice-document",
+      "why": "The same public onRequest plus Admin SDK read, but requireBearerCaller verifies the Firebase ID token before anything is fetched and mayReadStatement then requires the caller to be the owning guardian or staff at the statement's own centre.",
+      "packageJson": {
+        "name": "nestlings-functions",
+        "version": "3.8.2",
+        "private": true,
+        "main": "lib/index.js",
+        "engines": {
+          "node": "20"
+        },
+        "dependencies": {
+          "firebase-admin": "^12.6.0",
+          "firebase-functions": "^6.1.0"
+        },
+        "devDependencies": {
+          "typescript": "^5.5.4"
+        }
+      },
+      "extraFiles": {
+        "functions/src/lib/authorization.ts": "/**\n * Caller identity for the Nestlings platform.\n *\n * Every deployed function resolves \"who is asking\" through this module, so there is\n * one definition of it for callables (Firebase Auth context attached to the request)\n * and one for plain HTTP endpoints (a bearer ID token in the Authorization header).\n *\n * Roles and the centre a member of staff belongs to live in custom claims, written by\n * staff/staffOnboarding.ts. The client refreshes its ID token after a role change, so\n * within a single request token.centreId can be treated as authoritative.\n */\nimport { getAuth } from \"firebase-admin/auth\";\nimport { CallableRequest, HttpsError, Request } from \"firebase-functions/v2/https\";\nimport * as logger from \"firebase-functions/logger\";\n\nexport type Role = \"guardian\" | \"educator\" | \"centre_admin\" | \"platform_support\";\n\n/** Roles that are scoped to exactly one centre. */\nexport const CENTRE_STAFF_ROLES: readonly Role[] = [\"educator\", \"centre_admin\"];\n\nexport interface Caller {\n  uid: string;\n  email: string | null;\n  role: Role;\n  centreId: string | null;\n}\n\n/** Thrown by the HTTP helpers below; handlers turn it into a status code. */\nexport class HttpError extends Error {\n  constructor(readonly status: number, message: string) {\n    super(message);\n    this.name = \"HttpError\";\n  }\n}\n\nfunction toCaller(uid: string, token: Record<string, unknown>): Caller {\n  // Anyone who signs up through the guardian app starts with no role claim at all.\n  const role = typeof token.role === \"string\" ? (token.role as Role) : \"guardian\";\n  return {\n    uid,\n    email: typeof token.email === \"string\" ? token.email : null,\n    role,\n    centreId: typeof token.centreId === \"string\" ? token.centreId : null,\n  };\n}\n\n/** Resolve the caller of a callable function, or reject the call. */\nexport function requireCaller(request: CallableRequest<unknown>): Caller {\n  if (!request.auth) {\n    throw new HttpsError(\"unauthenticated\", \"Sign in to continue.\");\n  }\n  return toCaller(request.auth.uid, request.auth.token as unknown as Record<string, unknown>);\n}\n\n/** Resolve the caller and assert they hold one of the given roles. */\nexport function requireRole(request: CallableRequest<unknown>, ...allowed: Role[]): Caller {\n  const caller = requireCaller(request);\n  if (!allowed.includes(caller.role)) {\n    logger.warn(\"role check failed\", { uid: caller.uid, role: caller.role, allowed });\n    throw new HttpsError(\"permission-denied\", \"Your account cannot perform this action.\");\n  }\n  return caller;\n}\n\n/**\n * Assert the caller belongs to the centre that owns a record. Platform support works\n * across every centre, which is why their sessions are short-lived and audited.\n */\nexport function assertCentreScope(caller: Caller, centreId: string | undefined | null): void {\n  if (caller.role === \"platform_support\") {\n    return;\n  }\n  if (!centreId || caller.centreId !== centreId) {\n    logger.warn(\"centre scope check failed\", {\n      uid: caller.uid,\n      callerCentre: caller.centreId,\n      recordCentre: centreId ?? null,\n    });\n    throw new HttpsError(\"permission-denied\", \"That record belongs to another centre.\");\n  }\n}\n\n/** Resolve the caller of an HTTP function from its bearer ID token. */\nexport async function requireBearerCaller(req: Request): Promise<Caller> {\n  const header = req.header(\"authorization\") ?? \"\";\n  const [scheme, token] = header.split(\" \");\n  if (!/^bearer$/i.test(scheme ?? \"\") || !token) {\n    throw new HttpError(401, \"A bearer ID token is required.\");\n  }\n  try {\n    // checkRevoked, so a guardian we removed from a centre this morning cannot keep\n    // pulling documents with an hour-old token.\n    const decoded = await getAuth().verifyIdToken(token, true);\n    return toCaller(decoded.uid, decoded as unknown as Record<string, unknown>);\n  } catch (err) {\n    logger.warn(\"id token rejected\", { reason: (err as Error).message });\n    throw new HttpError(401, \"Your session has expired. Sign in again.\");\n  }\n}\n"
+      }
+    },
+    {
+      "id": "h7-firebase-functions-refund-callbacks",
+      "family": "firebase-functions",
+      "architecture": "Firebase Cloud Functions 2nd generation (firebase-functions v6, TypeScript) with Firestore through the firebase-admin SDK as the only data layer, and caller identity from Firebase Auth: request.auth custom claims inside onCall handlers and a verified bearer ID token inside onRequest handlers.",
+      "language": "typescript",
+      "file": "firebase-functions/functions/src/billing/refundNotifications.ts",
+      "scanAs": "functions/src/billing/refundNotifications.ts",
+      "kind": "safe",
+      "runtimeVerifiable": true,
+      "pairedWith": "h7-firebase-functions-payment-callbacks",
+      "why": "The same provider callback, but a missing header and a wrong digest fall into the same 401 branch, and hasValidSignature compares equal-length buffers over req.rawBody with timingSafeEqual before any invoice or ledger entry is touched.",
+      "packageJson": {
+        "name": "nestlings-functions",
+        "version": "3.8.2",
+        "private": true,
+        "main": "lib/index.js",
+        "engines": {
+          "node": "20"
+        },
+        "dependencies": {
+          "firebase-admin": "^12.6.0",
+          "firebase-functions": "^6.1.0"
+        },
+        "devDependencies": {
+          "typescript": "^5.5.4"
+        }
+      }
+    },
+    {
+      "id": "h7-firebase-functions-messaging-provider-config",
+      "family": "firebase-functions",
+      "architecture": "Firebase Cloud Functions 2nd generation (firebase-functions v6, TypeScript) with Firestore through the firebase-admin SDK as the only data layer, and caller identity from Firebase Auth: request.auth custom claims inside onCall handlers and a verified bearer ID token inside onRequest handlers.",
+      "language": "typescript",
+      "file": "firebase-functions/functions/src/integrations/messagingProviders.ts",
+      "scanAs": "functions/src/integrations/messagingProviders.ts",
+      "kind": "safe",
+      "runtimeVerifiable": true,
+      "pairedWith": "h7-firebase-functions-centre-webhook-registration",
+      "why": "The same probe-then-store flow, but parseApprovedEndpoint requires https, the default port and an exact hostname match against APPROVED_PROVIDER_HOSTS before fetch() is reached, so the caller cannot steer the outbound request at an internal address.",
+      "packageJson": {
+        "name": "nestlings-functions",
+        "version": "3.8.2",
+        "private": true,
+        "main": "lib/index.js",
+        "engines": {
+          "node": "20"
+        },
+        "dependencies": {
+          "firebase-admin": "^12.6.0",
+          "firebase-functions": "^6.1.0"
+        },
+        "devDependencies": {
+          "typescript": "^5.5.4"
+        }
+      },
+      "extraFiles": {
+        "functions/src/lib/authorization.ts": "/**\n * Caller identity for the Nestlings platform.\n *\n * Every deployed function resolves \"who is asking\" through this module, so there is\n * one definition of it for callables (Firebase Auth context attached to the request)\n * and one for plain HTTP endpoints (a bearer ID token in the Authorization header).\n *\n * Roles and the centre a member of staff belongs to live in custom claims, written by\n * staff/staffOnboarding.ts. The client refreshes its ID token after a role change, so\n * within a single request token.centreId can be treated as authoritative.\n */\nimport { getAuth } from \"firebase-admin/auth\";\nimport { CallableRequest, HttpsError, Request } from \"firebase-functions/v2/https\";\nimport * as logger from \"firebase-functions/logger\";\n\nexport type Role = \"guardian\" | \"educator\" | \"centre_admin\" | \"platform_support\";\n\n/** Roles that are scoped to exactly one centre. */\nexport const CENTRE_STAFF_ROLES: readonly Role[] = [\"educator\", \"centre_admin\"];\n\nexport interface Caller {\n  uid: string;\n  email: string | null;\n  role: Role;\n  centreId: string | null;\n}\n\n/** Thrown by the HTTP helpers below; handlers turn it into a status code. */\nexport class HttpError extends Error {\n  constructor(readonly status: number, message: string) {\n    super(message);\n    this.name = \"HttpError\";\n  }\n}\n\nfunction toCaller(uid: string, token: Record<string, unknown>): Caller {\n  // Anyone who signs up through the guardian app starts with no role claim at all.\n  const role = typeof token.role === \"string\" ? (token.role as Role) : \"guardian\";\n  return {\n    uid,\n    email: typeof token.email === \"string\" ? token.email : null,\n    role,\n    centreId: typeof token.centreId === \"string\" ? token.centreId : null,\n  };\n}\n\n/** Resolve the caller of a callable function, or reject the call. */\nexport function requireCaller(request: CallableRequest<unknown>): Caller {\n  if (!request.auth) {\n    throw new HttpsError(\"unauthenticated\", \"Sign in to continue.\");\n  }\n  return toCaller(request.auth.uid, request.auth.token as unknown as Record<string, unknown>);\n}\n\n/** Resolve the caller and assert they hold one of the given roles. */\nexport function requireRole(request: CallableRequest<unknown>, ...allowed: Role[]): Caller {\n  const caller = requireCaller(request);\n  if (!allowed.includes(caller.role)) {\n    logger.warn(\"role check failed\", { uid: caller.uid, role: caller.role, allowed });\n    throw new HttpsError(\"permission-denied\", \"Your account cannot perform this action.\");\n  }\n  return caller;\n}\n\n/**\n * Assert the caller belongs to the centre that owns a record. Platform support works\n * across every centre, which is why their sessions are short-lived and audited.\n */\nexport function assertCentreScope(caller: Caller, centreId: string | undefined | null): void {\n  if (caller.role === \"platform_support\") {\n    return;\n  }\n  if (!centreId || caller.centreId !== centreId) {\n    logger.warn(\"centre scope check failed\", {\n      uid: caller.uid,\n      callerCentre: caller.centreId,\n      recordCentre: centreId ?? null,\n    });\n    throw new HttpsError(\"permission-denied\", \"That record belongs to another centre.\");\n  }\n}\n\n/** Resolve the caller of an HTTP function from its bearer ID token. */\nexport async function requireBearerCaller(req: Request): Promise<Caller> {\n  const header = req.header(\"authorization\") ?? \"\";\n  const [scheme, token] = header.split(\" \");\n  if (!/^bearer$/i.test(scheme ?? \"\") || !token) {\n    throw new HttpError(401, \"A bearer ID token is required.\");\n  }\n  try {\n    // checkRevoked, so a guardian we removed from a centre this morning cannot keep\n    // pulling documents with an hour-old token.\n    const decoded = await getAuth().verifyIdToken(token, true);\n    return toCaller(decoded.uid, decoded as unknown as Record<string, unknown>);\n  } catch (err) {\n    logger.warn(\"id token rejected\", { reason: (err as Error).message });\n    throw new HttpError(401, \"Your session has expired. Sign in again.\");\n  }\n}\n"
+      }
+    }
+  ]
+}

@@ -31,6 +31,17 @@ const TRAVERSAL_TARGETS = [
   "..%2f..%2f..%2f..%2fetc%2fhosts",
   "....//....//....//etc/hosts"
 ];
+/** Parameter names tried, in order, by the reflection and template probes. */
+const REFLECTION_PARAMETERS = ["q", "name", "template", "search", "term", "message"];
+/**
+ * A quote, a tautology and a comment. Read-only: it can only widen a SELECT, and
+ * the probes that use it only send it to GET routes.
+ */
+const SQL_PROBE = "zzzz-no-such-term' OR '1'='1' -- ";
+/** Evaluates to 49 in Jinja2, Twig and most template languages; inert elsewhere. */
+const TEMPLATE_PROBE = "{{7*7}}myrqen";
+/** A destination no fixture owns, used only as a Location header to inspect. */
+const REDIRECT_PROBE = "https://example.invalid/myrqen-probe";
 /** A predicate terminator that would widen an interpreted query. */
 const PREDICATE_PROBE = '") || true || ("';
 
@@ -197,19 +208,25 @@ const PROBES = {
     const [method, pathTemplate] = splitRoute(route);
     if (method !== "GET") return unsettled(`Reflection is probed on GET routes; this route is ${method}.`);
 
-    const probe = await request(`${baseUrl}${pathTemplate}?q=${encodeURIComponent(XSS_PROBE)}`);
-    if (probe.text.includes(XSS_PROBE)) {
-      return {
-        outcome: "verified",
-        kind: "runtime",
-        description: `Requested ${pathTemplate} with a markup probe in the q parameter; the response contained the probe unescaped, so the caller controls markup in the document.`,
-        location: route
-      };
+    // `q` first, exactly as before; the other common names only when `q` settled
+    // nothing, so a page that reads `?name=` (a Jinja view, say) can be probed too.
+    let lastStatus = 0;
+    for (const parameter of REFLECTION_PARAMETERS) {
+      const probe = await request(`${baseUrl}${pathTemplate}?${parameter}=${encodeURIComponent(XSS_PROBE)}`);
+      lastStatus = probe.status;
+      if (probe.text.includes(XSS_PROBE)) {
+        return {
+          outcome: "verified",
+          kind: "runtime",
+          description: `Requested ${pathTemplate} with a markup probe in the ${parameter} parameter; the response contained the probe unescaped, so the caller controls markup in the document.`,
+          location: route
+        };
+      }
+      if (probe.status === 200 && probe.text.includes("&lt;")) {
+        return { outcome: "refuted", description: `The probe was returned escaped, so the response is not injectable through ${parameter}.` };
+      }
     }
-    if (probe.status === 200 && probe.text.includes("&lt;")) {
-      return { outcome: "refuted", description: `The probe was returned escaped, so the response is not injectable through q.` };
-    }
-    return unsettled(`The route returned HTTP ${probe.status} and the probe did not appear in either form.`);
+    return unsettled(`The route returned HTTP ${lastStatus} and the probe did not appear in either form.`);
   },
 
   async path_traversal({ baseUrl, finding }) {
@@ -429,8 +446,94 @@ const PROBES = {
       };
     }
     return { outcome: "refuted", description: "The session cookie carries HttpOnly, Secure, and SameSite." };
+  },
+
+  /*
+   * Probes added with Python support (ADR 020). Each is a single read-only GET to
+   * the fixture's own origin; none executes anything on the host, and the
+   * redirect probe only reads the Location header — it never follows it.
+   */
+
+  async sql_injection({ baseUrl, finding }) {
+    const route = finding.affected.route;
+    if (!route) return unsettled("No route was attributed to this candidate.");
+    const [method, pathTemplate] = splitRoute(route);
+    if (method !== "GET") return unsettled(`SQL composition is probed on GET routes; this route is ${method}.`);
+    const benign = await request(`${baseUrl}${pathTemplate}?q=${encodeURIComponent("zzzz-no-such-term")}`);
+    const widened = await request(`${baseUrl}${pathTemplate}?q=${encodeURIComponent(SQL_PROBE)}`);
+    const benignRows = rowCount(benign.body);
+    const widenedRows = rowCount(widened.body);
+    if (benignRows !== null && widenedRows !== null && widenedRows > benignRows) {
+      return {
+        outcome: "verified",
+        kind: "runtime",
+        description: `A term that matches nothing returned ${benignRows} row(s); the same term followed by a quote, a tautology and a comment returned ${widenedRows}. The value is part of the statement text.`,
+        location: route
+      };
+    }
+    if (benignRows !== null && widenedRows !== null) {
+      return { outcome: "refuted", description: `The tautology returned ${widenedRows} row(s) against ${benignRows}, so the value is bound rather than interpreted.` };
+    }
+    return unsettled(`The route returned HTTP ${widened.status} with no countable result set.`);
+  },
+
+  async template_injection({ baseUrl, finding }) {
+    const route = finding.affected.route;
+    if (!route) return unsettled("No route was attributed to this candidate.");
+    const [method, pathTemplate] = splitRoute(route);
+    if (method !== "GET") return unsettled(`Template evaluation is probed on GET routes; this route is ${method}.`);
+    // The parameter the finding names is the one that reaches the template source. Any
+    // other parameter may be a template *value*, and a value echoed literally is how a
+    // correct template behaves, so only the named parameter's echo refutes the finding.
+    const named = namedQueryParameter(finding);
+    const parameters = named ? [named, ...REFLECTION_PARAMETERS.filter((name) => name !== named)] : REFLECTION_PARAMETERS;
+    for (const parameter of parameters) {
+      const probe = await request(`${baseUrl}${pathTemplate}?${parameter}=${encodeURIComponent(TEMPLATE_PROBE)}`);
+      if (probe.text.includes("49myrqen")) {
+        return {
+          outcome: "verified",
+          kind: "runtime",
+          description: `Requested ${pathTemplate} with ${parameter}=${TEMPLATE_PROBE}; the response contained 49myrqen, so the server evaluated the caller's text as a template expression.`,
+          location: route
+        };
+      }
+      if (probe.text.includes(TEMPLATE_PROBE) && (!named || parameter === named)) {
+        return { outcome: "refuted", description: `The expression in ${parameter} was returned literally, not evaluated.` };
+      }
+    }
+    return unsettled("No probed parameter reached the template.");
+  },
+
+  async open_redirect({ baseUrl, finding }) {
+    const route = finding.affected.route;
+    if (!route) return unsettled("No route was attributed to this candidate.");
+    const [method, pathTemplate] = splitRoute(route);
+    if (method !== "GET") return unsettled(`Redirect targets are probed on GET routes; this route is ${method}.`);
+    for (const parameter of ["next", "url", "return_to", "redirect", "redirect_uri", "return", "target"]) {
+      const probe = await request(`${baseUrl}${pathTemplate}?${parameter}=${encodeURIComponent(REDIRECT_PROBE)}`);
+      const location = probe.headers.get("location") ?? "";
+      if (probe.status >= 300 && probe.status < 400 && location.startsWith(REDIRECT_PROBE)) {
+        return {
+          outcome: "verified",
+          kind: "runtime",
+          description: `Requested ${pathTemplate} with ${parameter} set to an external origin; the response was HTTP ${probe.status} with Location ${REDIRECT_PROBE}. The probe did not follow it.`,
+          location: route
+        };
+      }
+    }
+    return unsettled("No probed parameter controlled the Location header.");
+  },
+
+  async missing_authentication(input) {
+    return PROBES.broken_function_level_authorization(input);
   }
 };
+
+/** The query parameter a finding's summary says the tainted value came from, if it names one. */
+function namedQueryParameter(finding) {
+  const match = /\bquery parameter ([A-Za-z_][A-Za-z0-9_]*)/.exec(finding.summary ?? "");
+  return match ? match[1] : null;
+}
 
 /**
  * A path outside the route's base directory, named by an error message. Node's
@@ -501,6 +604,199 @@ async function listOwned(baseUrl, collection, session) {
  * `check` gates any probe with a side effect through the CLI's own action policy,
  * so a refusal is recorded as an unsettled candidate rather than worked around.
  */
+/* ------------------------------------------------------------------------- *
+ * Discovery — finding what the static pass did not
+ *
+ * Everything above settles a candidate the static pass already produced, which is
+ * why `benchmark/run.mjs` used to report recall 1.000 with the same numerator and
+ * denominator: no ground-truth case required a finding the static pass had missed, so
+ * the stage whose entire purpose is to find what static analysis cannot was measured
+ * by nothing at all.
+ *
+ * These probes start from the running application instead. Each one is deliberately
+ * narrow and each is checked through the same `action check` gate as any other probe —
+ * the point is not to build a scanner here, it is to make the whole-product number
+ * capable of moving independently of the static one.
+ *
+ * The deterministic stand-in for a host agent, in other words. A real agent reasons;
+ * this enumerates three shapes. Where it finds nothing, `run.mjs` reports a lower
+ * end-to-end recall, which is the honest outcome and the one this file exists to make
+ * possible.
+ * ------------------------------------------------------------------------- */
+
+/**
+ * A record readable by a customer it does not belong to.
+ *
+ * The differential is the evidence: the same reference, requested by two different
+ * signed-in customers, comes back with a body both times. One of them is reading the
+ * other's invoice. Nothing static is involved — the ownership predicate could be
+ * anywhere, including in a module this probe never sees.
+ */
+async function discoverCrossAccountRead({ baseUrl, sessions, check }) {
+  if (sessions.length < 2) return null;
+  const [first, second] = sessions;
+
+  const allowed = await check({
+    intent: "read_another_customers_record_as_a_signed_in_customer",
+    description: "Request a record reference belonging to one test identity while signed in as a different one, to establish whether ownership is enforced.",
+    method: "GET",
+    target: `${baseUrl}/api/invoices`
+  });
+  if (!allowed) return null;
+
+  const owned = await request(`${baseUrl}/api/invoices`, { headers: { cookie: second.cookie ?? "" } });
+  const references = Array.isArray(owned.body) ? owned.body.map((row) => row?.reference).filter(Boolean) : [];
+  if (references.length === 0) return null;
+
+  const reference = references[0];
+  const theirs = await request(`${baseUrl}/api/invoices/${encodeURIComponent(reference)}`, {
+    headers: { cookie: first.cookie ?? "" }
+  });
+  if (theirs.status !== 200 || !theirs.body?.reference) return null;
+
+  return {
+    category: "broken_object_level_authorization",
+    severity: "high",
+    route: "GET /api/invoices/:reference",
+    file: "src/invoices.js",
+    title: "An invoice is readable by a customer it does not belong to",
+    summary: `Signed in as ${first.label}, requesting ${reference} — an invoice listed as belonging to ${second.label} — returned the record, including the card fragment and delivery address. The handler authenticates and then delegates the lookup, and nothing on that path compares the record's owner to the authenticated subject.`,
+    evidence: `GET /api/invoices/${reference} as ${first.label} returned 200 with owner userId ${theirs.body.userId}; the same reference is listed under ${second.label}.`,
+    kind: "identity_differential",
+    remediation:
+      "Take the authenticated subject as a parameter of the lookup and filter on it in the same query that resolves the reference, so an unscoped read is impossible rather than merely absent. A check in the handler is weaker: the next caller of the repository will not have it.",
+    verificationPlan:
+      "Sign in as two customers, list one's invoices, and request one of those references as the other. The second request must not return the record."
+  };
+}
+
+/**
+ * A response that says whether an address has an account.
+ *
+ * Two requests, one known address and one that cannot exist, compared on status. A
+ * difference is the finding; identical responses are the correct behaviour.
+ */
+async function discoverAccountEnumeration({ baseUrl, identities, check }) {
+  const known = identities[0];
+  if (!known) return null;
+
+  const allowed = await check({
+    intent: "compare_password_reset_responses_for_known_and_unknown_addresses",
+    description: "Send two password-reset requests, one for a test identity and one for an address that cannot exist, and compare the responses.",
+    method: "POST",
+    target: `${baseUrl}/api/password-reset`
+  });
+  if (!allowed) return null;
+
+  const send = (email) =>
+    request(`${baseUrl}/api/password-reset`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email })
+    });
+
+  const real = await send(known.email);
+  const absent = await send("no-such-account-9f31@example.invalid");
+  if (real.status === absent.status) return null;
+
+  return {
+    category: "account_enumeration",
+    severity: "low",
+    route: "POST /api/password-reset",
+    file: "src/server.js",
+    title: "Password reset reveals whether an address has an account",
+    summary: `A reset request for a registered address returned ${real.status} and one for an address that cannot exist returned ${absent.status}. The difference lets anybody test an address list against this application and learn which of them are customers.`,
+    evidence: `POST /api/password-reset returned ${real.status} for a known address and ${absent.status} for no-such-account-9f31@example.invalid.`,
+    kind: "runtime",
+    remediation:
+      "Return the same status and the same body whether or not the address has an account, and send the mail only when it does. Keep the timing comparable too, or the difference simply moves.",
+    verificationPlan:
+      "Send a reset request for a registered address and one for an address that cannot exist. The two responses must be indistinguishable."
+  };
+}
+
+/**
+ * An operation that should be idempotent and is not.
+ *
+ * Sent twice. If the total moves twice, redemption is not being recorded. Two requests
+ * rather than many, deliberately: this is a correctness check, not a volume test, and
+ * the safety gate is right to refuse the latter.
+ */
+async function discoverReplayableRedemption({ baseUrl, sessions, check }) {
+  const [session] = sessions;
+  if (!session) return null;
+
+  const allowed = await check({
+    intent: "submit_the_same_promotion_code_twice_to_test_idempotency",
+    description: "Redeem one promotional code twice against a test identity's own order and compare the resulting totals.",
+    method: "POST",
+    target: `${baseUrl}/api/promotions/redeem`
+  });
+  if (!allowed) return null;
+
+  const owned = await request(`${baseUrl}/api/orders`, { headers: { cookie: session.cookie ?? "" } });
+  const order = Array.isArray(owned.body) ? owned.body[0] : null;
+  if (!order?.id) return null;
+
+  const redeem = () =>
+    request(`${baseUrl}/api/promotions/redeem`, {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: session.cookie ?? "" },
+      body: JSON.stringify({ orderId: order.id, code: "WELCOME10" })
+    });
+
+  const first = await redeem();
+  if (first.status !== 200) return null;
+  const second = await redeem();
+  if (second.status !== 200) return null;
+  if (typeof first.body?.total !== "number" || typeof second.body?.total !== "number") return null;
+  if (second.body.total >= first.body.total) return null;
+
+  return {
+    category: "replayable_promotion_redemption",
+    severity: "medium",
+    route: "POST /api/promotions/redeem",
+    file: "src/invoices.js",
+    title: "A promotional code can be redeemed repeatedly against the same order",
+    summary: `Redeeming WELCOME10 twice against order ${order.id} moved the total from ${order.total} to ${first.body.total} and then to ${second.body.total}. Redemption is not recorded, so the discount applies again on every request and a customer can drive an order's total toward zero.`,
+    evidence: `Two identical POST /api/promotions/redeem requests returned totals ${first.body.total} then ${second.body.total} for order ${order.id}.`,
+    kind: "runtime",
+    remediation:
+      "Record the redemption against the order and refuse a second one, in the same transaction that applies the discount. A check that reads before it writes is still replayable under two concurrent requests.",
+    verificationPlan:
+      "Redeem one code twice against the same order. The total must change once."
+  };
+}
+
+const DISCOVERY = [discoverCrossAccountRead, discoverAccountEnumeration, discoverReplayableRedemption];
+
+/**
+ * Run every discovery probe and return what it found.
+ *
+ * Separate from `validate` so `run.mjs` can score the static pass and the whole
+ * product independently — and so a run with discovery disabled is a one-line change,
+ * which is what the harness test uses to prove this stage can move a number on its own.
+ */
+export async function discover({ baseUrl, identities, check }) {
+  const sessions = [];
+  for (const identity of identities) {
+    const session = await login(baseUrl, identity);
+    if (session) sessions.push(session);
+  }
+
+  const found = [];
+  const failures = [];
+  for (const probe of DISCOVERY) {
+    try {
+      const result = await probe({ baseUrl, sessions, identities, check });
+      if (result) found.push(result);
+    } catch (error) {
+      failures.push(`${probe.name}: ${error instanceof Error ? error.message : "unknown error"}`);
+    }
+  }
+  return { found, failures, identitiesUsed: sessions.map((session) => session.label) };
+}
+
 export async function validate({ baseUrl, findings, identities, check }) {
   const sessions = [];
   for (const identity of identities) {

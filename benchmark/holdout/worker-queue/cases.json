@@ -1,0 +1,111 @@
+{
+  "family": "worker-queue",
+  "architecture": "BullMQ workers on Redis: one processor module per queue, fed by public intake endpoints and internal schedulers, with a pino logger, an HMAC-signed control-plane callback and provisioning helpers",
+  "cases": [
+    {
+      "id": "holdout-worker-event-decode",
+      "family": "worker-queue",
+      "architecture": "BullMQ processor decoding payloads enqueued verbatim by a public intake endpoint",
+      "language": "javascript",
+      "file": "worker-queue/processors/inbound-events.js",
+      "kind": "vulnerable",
+      "category": "unsafe_deserialization",
+      "severityBand": ["critical", "high"],
+      "line": 19,
+      "lineRange": [15, 25],
+      "runtimeVerifiable": false,
+      "packageJson": {
+        "name": "acme-suite-workers",
+        "version": "1.0.0",
+        "dependencies": { "bullmq": "^5.7.2", "ioredis": "^5.4.1", "node-serialize": "^0.0.4", "pino": "^8.20.0" }
+      },
+      "why": "Payloads arrive on this queue exactly as the public intake endpoint received them. The v2 branch parses JSON, but anything without that marker goes to node-serialize's unserialize, which reconstructs functions from the payload and invokes them: a caller who can post to the intake endpoint runs code in the worker."
+    },
+    {
+      "id": "holdout-worker-outbound-decode",
+      "family": "worker-queue",
+      "architecture": "BullMQ processor decoding payloads enqueued verbatim by a public intake endpoint",
+      "language": "javascript",
+      "file": "worker-queue/processors/outbound-events.js",
+      "kind": "safe",
+      "pairedWith": "holdout-worker-event-decode",
+      "runtimeVerifiable": false,
+      "packageJson": {
+        "name": "acme-suite-workers",
+        "version": "1.0.0",
+        "dependencies": { "bullmq": "^5.7.2", "ioredis": "^5.4.1", "node-serialize": "^0.0.4", "pino": "^8.20.0" }
+      },
+      "why": "The same dependency is still installed and still used, but only to serialise a receipt the worker itself produces; both decode branches of the untrusted payload go through JSON.parse, which cannot instantiate behaviour."
+    },
+    {
+      "id": "holdout-worker-sync-failure-log",
+      "family": "worker-queue",
+      "architecture": "BullMQ processor holding OAuth tokens in its job payload, with a redaction helper",
+      "language": "javascript",
+      "file": "worker-queue/processors/mailbox-sync.js",
+      "kind": "vulnerable",
+      "category": "sensitive_data_in_logs",
+      "severityBand": ["medium", "low"],
+      "line": 36,
+      "lineRange": [35, 37],
+      "runtimeVerifiable": false,
+      "packageJson": {
+        "name": "acme-suite-workers",
+        "version": "1.0.0",
+        "dependencies": { "bullmq": "^5.7.2", "ioredis": "^5.4.1", "pino": "^8.20.0" }
+      },
+      "why": "The redaction helper is written, tested by use on the happy path, and then skipped in the failure branch, which logs the raw job payload — the mailbox access token and refresh token included — into a log stream that is shipped off the host and retained far longer than the tokens live."
+    },
+    {
+      "id": "holdout-worker-calendar-failure-log",
+      "family": "worker-queue",
+      "architecture": "BullMQ processor holding OAuth tokens in its job payload, with a redaction helper",
+      "language": "javascript",
+      "file": "worker-queue/processors/calendar-sync.js",
+      "kind": "safe",
+      "pairedWith": "holdout-worker-sync-failure-log",
+      "runtimeVerifiable": false,
+      "packageJson": {
+        "name": "acme-suite-workers",
+        "version": "1.0.0",
+        "dependencies": { "bullmq": "^5.7.2", "ioredis": "^5.4.1", "pino": "^8.20.0" }
+      },
+      "why": "The failure branch still logs the job for diagnosis and still reads the same token-bearing payload, but it passes it through the redaction helper and narrows the error to its message and code."
+    },
+    {
+      "id": "holdout-worker-provision-key",
+      "family": "worker-queue",
+      "architecture": "BullMQ processor signing control-plane callbacks with an HMAC key read from the environment",
+      "language": "javascript",
+      "file": "worker-queue/processors/tenant-provision.js",
+      "kind": "vulnerable",
+      "category": "hardcoded_secret",
+      "severityBand": ["high", "critical", "medium"],
+      "line": 11,
+      "lineRange": [11, 14],
+      "runtimeVerifiable": false,
+      "packageJson": {
+        "name": "acme-suite-workers",
+        "version": "1.0.0",
+        "dependencies": { "bullmq": "^5.7.2", "ioredis": "^5.4.1", "pino": "^8.20.0" }
+      },
+      "why": "The signing key reads from the environment first, which is why nobody notices the literal: any deployment that forgets the variable signs its control-plane callbacks with a key that is in the repository, and anyone with read access to the source can forge a provisioning callback for any tenant. The two neighbouring fallbacks are a queue prefix and a public URL, so the pattern itself is not the problem."
+    },
+    {
+      "id": "holdout-worker-region-key",
+      "family": "worker-queue",
+      "architecture": "BullMQ processor signing control-plane callbacks with an HMAC key read from the environment",
+      "language": "javascript",
+      "file": "worker-queue/processors/region-provision.js",
+      "kind": "safe",
+      "pairedWith": "holdout-worker-provision-key",
+      "runtimeVerifiable": false,
+      "packageJson": {
+        "name": "acme-suite-workers",
+        "version": "1.0.0",
+        "dependencies": { "bullmq": "^5.7.2", "ioredis": "^5.4.1", "pino": "^8.20.0" }
+      },
+      "why": "The module still declares its configuration as constants with `||` fallbacks, but the fallbacks left are a queue prefix and a public control-plane URL; the signing key comes from a helper that throws at load time when the variable is missing, so there is nothing secret in the file."
+    }
+  ]
+}

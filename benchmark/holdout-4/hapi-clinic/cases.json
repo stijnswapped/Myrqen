@@ -1,0 +1,236 @@
+{
+  "family": "hapi-clinic",
+  "cases": [
+    {
+      "id": "h4-hapi-clinic-appointment-note-read",
+      "family": "hapi-clinic",
+      "architecture": "Hapi 21 clinical records API where every route file is a plugin using Joi validation and route prerequisites, data access goes through a node-postgres pool in lib/db.js, and the session comes from an @hapi/cookie 'session' strategy exposing request.auth.credentials.",
+      "language": "javascript",
+      "file": "hapi-clinic/lib/routes/appointment-notes.js",
+      "scanAs": "lib/routes/appointment-notes.js",
+      "kind": "vulnerable",
+      "category": "missing_patient_record_scope_check",
+      "severityBand": ["high", "critical"],
+      "line": 34,
+      "lineRange": [29, 93],
+      "route": "GET /api/appointment-notes/{noteId}",
+      "runtimeVerifiable": true,
+      "why": "The loadNote prerequisite selects the appointment note by request.params.noteId alone and the handler returns it, so any authenticated session -- including a patient-portal login -- can read another patient's SOAP note, name and MRN by changing the id in the URL; nothing compares note.patient_id with the session's own patient id or with care_team_member.",
+      "packageJson": { "name": "hapi-clinic", "version": "3.4.0", "private": true, "type": "module", "dependencies": { "@hapi/boom": "^10.0.1", "@hapi/cookie": "^12.0.1", "@hapi/hapi": "^21.3.10", "joi": "^17.13.3", "pg": "^8.12.0" } },
+      "extraFiles": {
+        "lib/db.js": "// PostgreSQL access for the clinical records service.\n//\n// One pool per process: the API runs as a single Hapi server behind the\n// clinic ingress, so pooling here is enough.\nimport pg from 'pg';\n\nconst pool = new pg.Pool({\n  connectionString: process.env.CLINIC_DATABASE_URL,\n  max: Number(process.env.CLINIC_DB_POOL_MAX ?? 12),\n  idleTimeoutMillis: 30000,\n  application_name: 'clinic-records-api'\n});\n\nexport function query(text, values = []) {\n  return pool.query(text, values);\n}\n\nexport async function one(text, values = []) {\n  const { rows } = await pool.query(text, values);\n  return rows[0] ?? null;\n}\n\n// Every read of patient data is written to the access log. Compliance\n// reconciles this table against the consent register once a month.\nexport async function recordAccess({ actorId, patientId, resource, action }) {\n  await pool.query(\n    `INSERT INTO access_log (actor_id, patient_id, resource, action, occurred_at)\n     VALUES ($1, $2, $3, $4, now())`,\n    [actorId ?? null, patientId ?? null, resource, action]\n  );\n}\n\nexport { pool };\n",
+        "lib/session.js": "// Session helpers.\n//\n// The 'session' strategy is @hapi/cookie; its validate() callback reloads\n// the session row from Postgres on every request, so the credentials read\n// here are server-side state and never come off the wire.\nimport Boom from '@hapi/boom';\nimport { one } from './db.js';\n\nexport function actor(request) {\n  const credentials = request.auth.credentials ?? {};\n\n  return {\n    id: credentials.userId,\n    roles: credentials.roles ?? [],\n    // Set only for patient-portal logins; null for staff.\n    patientId: credentials.patientId ?? null,\n    clinicId: credentials.clinicId ?? null\n  };\n}\n\nexport function hasRole(request, role) {\n  return actor(request).roles.includes(role);\n}\n\nexport function assertRole(request, role) {\n  if (!hasRole(request, role)) {\n    throw Boom.forbidden(`this endpoint requires the ${role} role`);\n  }\n}\n\n// True when the clinician still has an open care-team assignment for the\n// patient. The care_team_member table is the clinic's authority on who may\n// read a chart.\nexport async function isOnCareTeam(clinicianId, patientId) {\n  const row = await one(\n    `SELECT 1\n       FROM care_team_member\n      WHERE clinician_id = $1\n        AND patient_id = $2\n        AND ended_on IS NULL`,\n    [clinicianId, patientId]\n  );\n\n  return row !== null;\n}\n"
+      }
+    },
+    {
+      "id": "h4-hapi-clinic-consult-summary-read",
+      "family": "hapi-clinic",
+      "architecture": "Hapi 21 clinical records API where every route file is a plugin using Joi validation and route prerequisites, data access goes through a node-postgres pool in lib/db.js, and the session comes from an @hapi/cookie 'session' strategy exposing request.auth.credentials.",
+      "language": "javascript",
+      "file": "hapi-clinic/lib/routes/consult-summaries.js",
+      "scanAs": "lib/routes/consult-summaries.js",
+      "kind": "safe",
+      "route": "GET /api/consult-summaries/{summaryId}",
+      "runtimeVerifiable": true,
+      "pairedWith": "h4-hapi-clinic-appointment-note-read",
+      "why": "The prerequisite's WHERE clause is the guard: alongside the id it binds the session's own patient id and an EXISTS over care_team_member for the session's clinician id, so a summary the caller has no relationship to never leaves Postgres and the handler answers 404.",
+      "packageJson": { "name": "hapi-clinic", "version": "3.4.0", "private": true, "type": "module", "dependencies": { "@hapi/boom": "^10.0.1", "@hapi/cookie": "^12.0.1", "@hapi/hapi": "^21.3.10", "joi": "^17.13.3", "pg": "^8.12.0" } },
+      "extraFiles": {
+        "lib/db.js": "// PostgreSQL access for the clinical records service.\n//\n// One pool per process: the API runs as a single Hapi server behind the\n// clinic ingress, so pooling here is enough.\nimport pg from 'pg';\n\nconst pool = new pg.Pool({\n  connectionString: process.env.CLINIC_DATABASE_URL,\n  max: Number(process.env.CLINIC_DB_POOL_MAX ?? 12),\n  idleTimeoutMillis: 30000,\n  application_name: 'clinic-records-api'\n});\n\nexport function query(text, values = []) {\n  return pool.query(text, values);\n}\n\nexport async function one(text, values = []) {\n  const { rows } = await pool.query(text, values);\n  return rows[0] ?? null;\n}\n\n// Every read of patient data is written to the access log. Compliance\n// reconciles this table against the consent register once a month.\nexport async function recordAccess({ actorId, patientId, resource, action }) {\n  await pool.query(\n    `INSERT INTO access_log (actor_id, patient_id, resource, action, occurred_at)\n     VALUES ($1, $2, $3, $4, now())`,\n    [actorId ?? null, patientId ?? null, resource, action]\n  );\n}\n\nexport { pool };\n",
+        "lib/session.js": "// Session helpers.\n//\n// The 'session' strategy is @hapi/cookie; its validate() callback reloads\n// the session row from Postgres on every request, so the credentials read\n// here are server-side state and never come off the wire.\nimport Boom from '@hapi/boom';\nimport { one } from './db.js';\n\nexport function actor(request) {\n  const credentials = request.auth.credentials ?? {};\n\n  return {\n    id: credentials.userId,\n    roles: credentials.roles ?? [],\n    // Set only for patient-portal logins; null for staff.\n    patientId: credentials.patientId ?? null,\n    clinicId: credentials.clinicId ?? null\n  };\n}\n\nexport function hasRole(request, role) {\n  return actor(request).roles.includes(role);\n}\n\nexport function assertRole(request, role) {\n  if (!hasRole(request, role)) {\n    throw Boom.forbidden(`this endpoint requires the ${role} role`);\n  }\n}\n\n// True when the clinician still has an open care-team assignment for the\n// patient. The care_team_member table is the clinic's authority on who may\n// read a chart.\nexport async function isOnCareTeam(clinicianId, patientId) {\n  const row = await one(\n    `SELECT 1\n       FROM care_team_member\n      WHERE clinician_id = $1\n        AND patient_id = $2\n        AND ended_on IS NULL`,\n    [clinicianId, patientId]\n  );\n\n  return row !== null;\n}\n"
+      }
+    },
+    {
+      "id": "h4-hapi-clinic-lab-result-filter",
+      "family": "hapi-clinic",
+      "architecture": "Hapi 21 clinical records API where every route file is a plugin using Joi validation and route prerequisites, data access goes through a node-postgres pool in lib/db.js, and the session comes from an @hapi/cookie 'session' strategy exposing request.auth.credentials.",
+      "language": "javascript",
+      "file": "hapi-clinic/lib/routes/lab-results.js",
+      "scanAs": "lib/routes/lab-results.js",
+      "kind": "vulnerable",
+      "category": "sql_injection",
+      "severityBand": ["high", "critical"],
+      "line": 58,
+      "lineRange": [45, 69],
+      "route": "GET /api/lab-results",
+      "runtimeVerifiable": true,
+      "why": "request.query.panel is spliced into the WHERE predicate as a single-quoted literal and request.query.sort is spliced into the ORDER BY clause, and the assembled string is then executed by query(sql, values); either query parameter can therefore close the literal or append clauses and rewrite the statement against the whole lab_result table.",
+      "packageJson": { "name": "hapi-clinic", "version": "3.4.0", "private": true, "type": "module", "dependencies": { "@hapi/boom": "^10.0.1", "@hapi/cookie": "^12.0.1", "@hapi/hapi": "^21.3.10", "joi": "^17.13.3", "pg": "^8.12.0" } },
+      "extraFiles": {
+        "lib/db.js": "// PostgreSQL access for the clinical records service.\n//\n// One pool per process: the API runs as a single Hapi server behind the\n// clinic ingress, so pooling here is enough.\nimport pg from 'pg';\n\nconst pool = new pg.Pool({\n  connectionString: process.env.CLINIC_DATABASE_URL,\n  max: Number(process.env.CLINIC_DB_POOL_MAX ?? 12),\n  idleTimeoutMillis: 30000,\n  application_name: 'clinic-records-api'\n});\n\nexport function query(text, values = []) {\n  return pool.query(text, values);\n}\n\nexport async function one(text, values = []) {\n  const { rows } = await pool.query(text, values);\n  return rows[0] ?? null;\n}\n\n// Every read of patient data is written to the access log. Compliance\n// reconciles this table against the consent register once a month.\nexport async function recordAccess({ actorId, patientId, resource, action }) {\n  await pool.query(\n    `INSERT INTO access_log (actor_id, patient_id, resource, action, occurred_at)\n     VALUES ($1, $2, $3, $4, now())`,\n    [actorId ?? null, patientId ?? null, resource, action]\n  );\n}\n\nexport { pool };\n",
+        "lib/session.js": "// Session helpers.\n//\n// The 'session' strategy is @hapi/cookie; its validate() callback reloads\n// the session row from Postgres on every request, so the credentials read\n// here are server-side state and never come off the wire.\nimport Boom from '@hapi/boom';\nimport { one } from './db.js';\n\nexport function actor(request) {\n  const credentials = request.auth.credentials ?? {};\n\n  return {\n    id: credentials.userId,\n    roles: credentials.roles ?? [],\n    // Set only for patient-portal logins; null for staff.\n    patientId: credentials.patientId ?? null,\n    clinicId: credentials.clinicId ?? null\n  };\n}\n\nexport function hasRole(request, role) {\n  return actor(request).roles.includes(role);\n}\n\nexport function assertRole(request, role) {\n  if (!hasRole(request, role)) {\n    throw Boom.forbidden(`this endpoint requires the ${role} role`);\n  }\n}\n\n// True when the clinician still has an open care-team assignment for the\n// patient. The care_team_member table is the clinic's authority on who may\n// read a chart.\nexport async function isOnCareTeam(clinicianId, patientId) {\n  const row = await one(\n    `SELECT 1\n       FROM care_team_member\n      WHERE clinician_id = $1\n        AND patient_id = $2\n        AND ended_on IS NULL`,\n    [clinicianId, patientId]\n  );\n\n  return row !== null;\n}\n"
+      }
+    },
+    {
+      "id": "h4-hapi-clinic-vitals-panel-filter",
+      "family": "hapi-clinic",
+      "architecture": "Hapi 21 clinical records API where every route file is a plugin using Joi validation and route prerequisites, data access goes through a node-postgres pool in lib/db.js, and the session comes from an @hapi/cookie 'session' strategy exposing request.auth.credentials.",
+      "language": "javascript",
+      "file": "hapi-clinic/lib/routes/vitals-panels.js",
+      "scanAs": "lib/routes/vitals-panels.js",
+      "kind": "safe",
+      "route": "GET /api/vitals-panels",
+      "runtimeVerifiable": true,
+      "pairedWith": "h4-hapi-clinic-lab-result-filter",
+      "why": "Same filter-and-sort listing, but the panel filter is pushed onto values and referenced as $n, and the sort key is translated through the SORT_COLUMNS allowlist (which Joi.valid also enforces), so no caller-supplied text ever becomes part of the SQL string.",
+      "packageJson": { "name": "hapi-clinic", "version": "3.4.0", "private": true, "type": "module", "dependencies": { "@hapi/boom": "^10.0.1", "@hapi/cookie": "^12.0.1", "@hapi/hapi": "^21.3.10", "joi": "^17.13.3", "pg": "^8.12.0" } },
+      "extraFiles": {
+        "lib/db.js": "// PostgreSQL access for the clinical records service.\n//\n// One pool per process: the API runs as a single Hapi server behind the\n// clinic ingress, so pooling here is enough.\nimport pg from 'pg';\n\nconst pool = new pg.Pool({\n  connectionString: process.env.CLINIC_DATABASE_URL,\n  max: Number(process.env.CLINIC_DB_POOL_MAX ?? 12),\n  idleTimeoutMillis: 30000,\n  application_name: 'clinic-records-api'\n});\n\nexport function query(text, values = []) {\n  return pool.query(text, values);\n}\n\nexport async function one(text, values = []) {\n  const { rows } = await pool.query(text, values);\n  return rows[0] ?? null;\n}\n\n// Every read of patient data is written to the access log. Compliance\n// reconciles this table against the consent register once a month.\nexport async function recordAccess({ actorId, patientId, resource, action }) {\n  await pool.query(\n    `INSERT INTO access_log (actor_id, patient_id, resource, action, occurred_at)\n     VALUES ($1, $2, $3, $4, now())`,\n    [actorId ?? null, patientId ?? null, resource, action]\n  );\n}\n\nexport { pool };\n",
+        "lib/session.js": "// Session helpers.\n//\n// The 'session' strategy is @hapi/cookie; its validate() callback reloads\n// the session row from Postgres on every request, so the credentials read\n// here are server-side state and never come off the wire.\nimport Boom from '@hapi/boom';\nimport { one } from './db.js';\n\nexport function actor(request) {\n  const credentials = request.auth.credentials ?? {};\n\n  return {\n    id: credentials.userId,\n    roles: credentials.roles ?? [],\n    // Set only for patient-portal logins; null for staff.\n    patientId: credentials.patientId ?? null,\n    clinicId: credentials.clinicId ?? null\n  };\n}\n\nexport function hasRole(request, role) {\n  return actor(request).roles.includes(role);\n}\n\nexport function assertRole(request, role) {\n  if (!hasRole(request, role)) {\n    throw Boom.forbidden(`this endpoint requires the ${role} role`);\n  }\n}\n\n// True when the clinician still has an open care-team assignment for the\n// patient. The care_team_member table is the clinic's authority on who may\n// read a chart.\nexport async function isOnCareTeam(clinicianId, patientId) {\n  const row = await one(\n    `SELECT 1\n       FROM care_team_member\n      WHERE clinician_id = $1\n        AND patient_id = $2\n        AND ended_on IS NULL`,\n    [clinicianId, patientId]\n  );\n\n  return row !== null;\n}\n"
+      }
+    },
+    {
+      "id": "h4-hapi-clinic-referral-enclosure-download",
+      "family": "hapi-clinic",
+      "architecture": "Hapi 21 clinical records API where every route file is a plugin using Joi validation and route prerequisites, data access goes through a node-postgres pool in lib/db.js, and the session comes from an @hapi/cookie 'session' strategy exposing request.auth.credentials.",
+      "language": "javascript",
+      "file": "hapi-clinic/lib/routes/referral-letters.js",
+      "scanAs": "lib/routes/referral-letters.js",
+      "kind": "vulnerable",
+      "category": "path_traversal",
+      "severityBand": ["high", "critical"],
+      "line": 60,
+      "lineRange": [43, 72],
+      "route": "GET /api/referral-letters/{reference}/attachment",
+      "runtimeVerifiable": true,
+      "why": "request.query.file is joined straight onto LETTER_ROOT with path.join and the result is opened with createReadStream and streamed to the caller; Joi only caps its length, so a value containing ../ segments escapes the letter store and returns any file the API process can read.",
+      "packageJson": { "name": "hapi-clinic", "version": "3.4.0", "private": true, "type": "module", "dependencies": { "@hapi/boom": "^10.0.1", "@hapi/cookie": "^12.0.1", "@hapi/hapi": "^21.3.10", "joi": "^17.13.3", "pg": "^8.12.0" } },
+      "extraFiles": {
+        "lib/db.js": "// PostgreSQL access for the clinical records service.\n//\n// One pool per process: the API runs as a single Hapi server behind the\n// clinic ingress, so pooling here is enough.\nimport pg from 'pg';\n\nconst pool = new pg.Pool({\n  connectionString: process.env.CLINIC_DATABASE_URL,\n  max: Number(process.env.CLINIC_DB_POOL_MAX ?? 12),\n  idleTimeoutMillis: 30000,\n  application_name: 'clinic-records-api'\n});\n\nexport function query(text, values = []) {\n  return pool.query(text, values);\n}\n\nexport async function one(text, values = []) {\n  const { rows } = await pool.query(text, values);\n  return rows[0] ?? null;\n}\n\n// Every read of patient data is written to the access log. Compliance\n// reconciles this table against the consent register once a month.\nexport async function recordAccess({ actorId, patientId, resource, action }) {\n  await pool.query(\n    `INSERT INTO access_log (actor_id, patient_id, resource, action, occurred_at)\n     VALUES ($1, $2, $3, $4, now())`,\n    [actorId ?? null, patientId ?? null, resource, action]\n  );\n}\n\nexport { pool };\n",
+        "lib/session.js": "// Session helpers.\n//\n// The 'session' strategy is @hapi/cookie; its validate() callback reloads\n// the session row from Postgres on every request, so the credentials read\n// here are server-side state and never come off the wire.\nimport Boom from '@hapi/boom';\nimport { one } from './db.js';\n\nexport function actor(request) {\n  const credentials = request.auth.credentials ?? {};\n\n  return {\n    id: credentials.userId,\n    roles: credentials.roles ?? [],\n    // Set only for patient-portal logins; null for staff.\n    patientId: credentials.patientId ?? null,\n    clinicId: credentials.clinicId ?? null\n  };\n}\n\nexport function hasRole(request, role) {\n  return actor(request).roles.includes(role);\n}\n\nexport function assertRole(request, role) {\n  if (!hasRole(request, role)) {\n    throw Boom.forbidden(`this endpoint requires the ${role} role`);\n  }\n}\n\n// True when the clinician still has an open care-team assignment for the\n// patient. The care_team_member table is the clinic's authority on who may\n// read a chart.\nexport async function isOnCareTeam(clinicianId, patientId) {\n  const row = await one(\n    `SELECT 1\n       FROM care_team_member\n      WHERE clinician_id = $1\n        AND patient_id = $2\n        AND ended_on IS NULL`,\n    [clinicianId, patientId]\n  );\n\n  return row !== null;\n}\n"
+      }
+    },
+    {
+      "id": "h4-hapi-clinic-discharge-enclosure-download",
+      "family": "hapi-clinic",
+      "architecture": "Hapi 21 clinical records API where every route file is a plugin using Joi validation and route prerequisites, data access goes through a node-postgres pool in lib/db.js, and the session comes from an @hapi/cookie 'session' strategy exposing request.auth.credentials.",
+      "language": "javascript",
+      "file": "hapi-clinic/lib/routes/discharge-letters.js",
+      "scanAs": "lib/routes/discharge-letters.js",
+      "kind": "safe",
+      "route": "GET /api/discharge-letters/{reference}/attachment",
+      "runtimeVerifiable": true,
+      "pairedWith": "h4-hapi-clinic-referral-enclosure-download",
+      "why": "Same enclosure stream, but two guards stand in front of createReadStream: Joi restricts file to the ENCLOSURE_NAME pattern (32 hex characters followed by .pdf, which admits no separators and no dot-dot segment), and the path resolved from the store root must still start with that root or the request is rejected.",
+      "packageJson": { "name": "hapi-clinic", "version": "3.4.0", "private": true, "type": "module", "dependencies": { "@hapi/boom": "^10.0.1", "@hapi/cookie": "^12.0.1", "@hapi/hapi": "^21.3.10", "joi": "^17.13.3", "pg": "^8.12.0" } },
+      "extraFiles": {
+        "lib/db.js": "// PostgreSQL access for the clinical records service.\n//\n// One pool per process: the API runs as a single Hapi server behind the\n// clinic ingress, so pooling here is enough.\nimport pg from 'pg';\n\nconst pool = new pg.Pool({\n  connectionString: process.env.CLINIC_DATABASE_URL,\n  max: Number(process.env.CLINIC_DB_POOL_MAX ?? 12),\n  idleTimeoutMillis: 30000,\n  application_name: 'clinic-records-api'\n});\n\nexport function query(text, values = []) {\n  return pool.query(text, values);\n}\n\nexport async function one(text, values = []) {\n  const { rows } = await pool.query(text, values);\n  return rows[0] ?? null;\n}\n\n// Every read of patient data is written to the access log. Compliance\n// reconciles this table against the consent register once a month.\nexport async function recordAccess({ actorId, patientId, resource, action }) {\n  await pool.query(\n    `INSERT INTO access_log (actor_id, patient_id, resource, action, occurred_at)\n     VALUES ($1, $2, $3, $4, now())`,\n    [actorId ?? null, patientId ?? null, resource, action]\n  );\n}\n\nexport { pool };\n",
+        "lib/session.js": "// Session helpers.\n//\n// The 'session' strategy is @hapi/cookie; its validate() callback reloads\n// the session row from Postgres on every request, so the credentials read\n// here are server-side state and never come off the wire.\nimport Boom from '@hapi/boom';\nimport { one } from './db.js';\n\nexport function actor(request) {\n  const credentials = request.auth.credentials ?? {};\n\n  return {\n    id: credentials.userId,\n    roles: credentials.roles ?? [],\n    // Set only for patient-portal logins; null for staff.\n    patientId: credentials.patientId ?? null,\n    clinicId: credentials.clinicId ?? null\n  };\n}\n\nexport function hasRole(request, role) {\n  return actor(request).roles.includes(role);\n}\n\nexport function assertRole(request, role) {\n  if (!hasRole(request, role)) {\n    throw Boom.forbidden(`this endpoint requires the ${role} role`);\n  }\n}\n\n// True when the clinician still has an open care-team assignment for the\n// patient. The care_team_member table is the clinic's authority on who may\n// read a chart.\nexport async function isOnCareTeam(clinicianId, patientId) {\n  const row = await one(\n    `SELECT 1\n       FROM care_team_member\n      WHERE clinician_id = $1\n        AND patient_id = $2\n        AND ended_on IS NULL`,\n    [clinicianId, patientId]\n  );\n\n  return row !== null;\n}\n"
+      }
+    },
+    {
+      "id": "h4-hapi-clinic-prescription-round-export",
+      "family": "hapi-clinic",
+      "architecture": "Hapi 21 clinical records API where every route file is a plugin using Joi validation and route prerequisites, data access goes through a node-postgres pool in lib/db.js, and the session comes from an @hapi/cookie 'session' strategy exposing request.auth.credentials.",
+      "language": "javascript",
+      "file": "hapi-clinic/lib/routes/prescription-exports.js",
+      "scanAs": "lib/routes/prescription-exports.js",
+      "kind": "vulnerable",
+      "category": "client_controlled_authorization_role",
+      "severityBand": ["high", "critical"],
+      "line": 69,
+      "lineRange": [62, 99],
+      "route": "POST /api/prescription-exports",
+      "runtimeVerifiable": true,
+      "why": "The only check on this bulk export reads claimedRole from request.payload.actingRole, falling back to the x-clinic-role header, and both are attacker-controlled; any authenticated session can send actingRole: 'pharmacist' and export active prescriptions with names, MRNs and dates of birth for up to 200 arbitrary patient ids.",
+      "packageJson": { "name": "hapi-clinic", "version": "3.4.0", "private": true, "type": "module", "dependencies": { "@hapi/boom": "^10.0.1", "@hapi/cookie": "^12.0.1", "@hapi/hapi": "^21.3.10", "joi": "^17.13.3", "pg": "^8.12.0" } },
+      "extraFiles": {
+        "lib/db.js": "// PostgreSQL access for the clinical records service.\n//\n// One pool per process: the API runs as a single Hapi server behind the\n// clinic ingress, so pooling here is enough.\nimport pg from 'pg';\n\nconst pool = new pg.Pool({\n  connectionString: process.env.CLINIC_DATABASE_URL,\n  max: Number(process.env.CLINIC_DB_POOL_MAX ?? 12),\n  idleTimeoutMillis: 30000,\n  application_name: 'clinic-records-api'\n});\n\nexport function query(text, values = []) {\n  return pool.query(text, values);\n}\n\nexport async function one(text, values = []) {\n  const { rows } = await pool.query(text, values);\n  return rows[0] ?? null;\n}\n\n// Every read of patient data is written to the access log. Compliance\n// reconciles this table against the consent register once a month.\nexport async function recordAccess({ actorId, patientId, resource, action }) {\n  await pool.query(\n    `INSERT INTO access_log (actor_id, patient_id, resource, action, occurred_at)\n     VALUES ($1, $2, $3, $4, now())`,\n    [actorId ?? null, patientId ?? null, resource, action]\n  );\n}\n\nexport { pool };\n",
+        "lib/session.js": "// Session helpers.\n//\n// The 'session' strategy is @hapi/cookie; its validate() callback reloads\n// the session row from Postgres on every request, so the credentials read\n// here are server-side state and never come off the wire.\nimport Boom from '@hapi/boom';\nimport { one } from './db.js';\n\nexport function actor(request) {\n  const credentials = request.auth.credentials ?? {};\n\n  return {\n    id: credentials.userId,\n    roles: credentials.roles ?? [],\n    // Set only for patient-portal logins; null for staff.\n    patientId: credentials.patientId ?? null,\n    clinicId: credentials.clinicId ?? null\n  };\n}\n\nexport function hasRole(request, role) {\n  return actor(request).roles.includes(role);\n}\n\nexport function assertRole(request, role) {\n  if (!hasRole(request, role)) {\n    throw Boom.forbidden(`this endpoint requires the ${role} role`);\n  }\n}\n\n// True when the clinician still has an open care-team assignment for the\n// patient. The care_team_member table is the clinic's authority on who may\n// read a chart.\nexport async function isOnCareTeam(clinicianId, patientId) {\n  const row = await one(\n    `SELECT 1\n       FROM care_team_member\n      WHERE clinician_id = $1\n        AND patient_id = $2\n        AND ended_on IS NULL`,\n    [clinicianId, patientId]\n  );\n\n  return row !== null;\n}\n"
+      }
+    },
+    {
+      "id": "h4-hapi-clinic-medication-round-export",
+      "family": "hapi-clinic",
+      "architecture": "Hapi 21 clinical records API where every route file is a plugin using Joi validation and route prerequisites, data access goes through a node-postgres pool in lib/db.js, and the session comes from an @hapi/cookie 'session' strategy exposing request.auth.credentials.",
+      "language": "javascript",
+      "file": "hapi-clinic/lib/routes/medication-lists.js",
+      "scanAs": "lib/routes/medication-lists.js",
+      "kind": "safe",
+      "route": "POST /api/medication-lists/export",
+      "runtimeVerifiable": true,
+      "pairedWith": "h4-hapi-clinic-prescription-round-export",
+      "why": "The same bulk export, but authorization comes from the session: the route declares auth: { strategy: 'session', scope: ['pharmacist', 'prescriber'] } so Hapi rejects other callers before the handler, and the handler re-checks me.roles from the credentials while treating the payload's actingRole as a display hint only.",
+      "packageJson": { "name": "hapi-clinic", "version": "3.4.0", "private": true, "type": "module", "dependencies": { "@hapi/boom": "^10.0.1", "@hapi/cookie": "^12.0.1", "@hapi/hapi": "^21.3.10", "joi": "^17.13.3", "pg": "^8.12.0" } },
+      "extraFiles": {
+        "lib/db.js": "// PostgreSQL access for the clinical records service.\n//\n// One pool per process: the API runs as a single Hapi server behind the\n// clinic ingress, so pooling here is enough.\nimport pg from 'pg';\n\nconst pool = new pg.Pool({\n  connectionString: process.env.CLINIC_DATABASE_URL,\n  max: Number(process.env.CLINIC_DB_POOL_MAX ?? 12),\n  idleTimeoutMillis: 30000,\n  application_name: 'clinic-records-api'\n});\n\nexport function query(text, values = []) {\n  return pool.query(text, values);\n}\n\nexport async function one(text, values = []) {\n  const { rows } = await pool.query(text, values);\n  return rows[0] ?? null;\n}\n\n// Every read of patient data is written to the access log. Compliance\n// reconciles this table against the consent register once a month.\nexport async function recordAccess({ actorId, patientId, resource, action }) {\n  await pool.query(\n    `INSERT INTO access_log (actor_id, patient_id, resource, action, occurred_at)\n     VALUES ($1, $2, $3, $4, now())`,\n    [actorId ?? null, patientId ?? null, resource, action]\n  );\n}\n\nexport { pool };\n",
+        "lib/session.js": "// Session helpers.\n//\n// The 'session' strategy is @hapi/cookie; its validate() callback reloads\n// the session row from Postgres on every request, so the credentials read\n// here are server-side state and never come off the wire.\nimport Boom from '@hapi/boom';\nimport { one } from './db.js';\n\nexport function actor(request) {\n  const credentials = request.auth.credentials ?? {};\n\n  return {\n    id: credentials.userId,\n    roles: credentials.roles ?? [],\n    // Set only for patient-portal logins; null for staff.\n    patientId: credentials.patientId ?? null,\n    clinicId: credentials.clinicId ?? null\n  };\n}\n\nexport function hasRole(request, role) {\n  return actor(request).roles.includes(role);\n}\n\nexport function assertRole(request, role) {\n  if (!hasRole(request, role)) {\n    throw Boom.forbidden(`this endpoint requires the ${role} role`);\n  }\n}\n\n// True when the clinician still has an open care-team assignment for the\n// patient. The care_team_member table is the clinic's authority on who may\n// read a chart.\nexport async function isOnCareTeam(clinicianId, patientId) {\n  const row = await one(\n    `SELECT 1\n       FROM care_team_member\n      WHERE clinician_id = $1\n        AND patient_id = $2\n        AND ended_on IS NULL`,\n    [clinicianId, patientId]\n  );\n\n  return row !== null;\n}\n"
+      }
+    },
+    {
+      "id": "h4-hapi-clinic-compliance-audit-feed",
+      "family": "hapi-clinic",
+      "architecture": "Hapi 21 clinical records API where every route file is a plugin using Joi validation and route prerequisites, data access goes through a node-postgres pool in lib/db.js, and the session comes from an @hapi/cookie 'session' strategy exposing request.auth.credentials.",
+      "language": "javascript",
+      "file": "hapi-clinic/lib/routes/audit-trail.js",
+      "scanAs": "lib/routes/audit-trail.js",
+      "kind": "vulnerable",
+      "category": "spoofable_header_based_access_control",
+      "severityBand": ["high", "critical"],
+      "line": 47,
+      "lineRange": [27, 63],
+      "route": "GET /api/audit-trail",
+      "runtimeVerifiable": true,
+      "why": "The route turns authentication off (auth: false) and decides access from the first entry of the x-forwarded-for header, which any client can set; an unauthenticated caller who sends X-Forwarded-For: 10.0.0.5 receives the whole access log, including actor emails, patient names and MRNs.",
+      "packageJson": { "name": "hapi-clinic", "version": "3.4.0", "private": true, "type": "module", "dependencies": { "@hapi/boom": "^10.0.1", "@hapi/cookie": "^12.0.1", "@hapi/hapi": "^21.3.10", "joi": "^17.13.3", "pg": "^8.12.0" } },
+      "extraFiles": {
+        "lib/db.js": "// PostgreSQL access for the clinical records service.\n//\n// One pool per process: the API runs as a single Hapi server behind the\n// clinic ingress, so pooling here is enough.\nimport pg from 'pg';\n\nconst pool = new pg.Pool({\n  connectionString: process.env.CLINIC_DATABASE_URL,\n  max: Number(process.env.CLINIC_DB_POOL_MAX ?? 12),\n  idleTimeoutMillis: 30000,\n  application_name: 'clinic-records-api'\n});\n\nexport function query(text, values = []) {\n  return pool.query(text, values);\n}\n\nexport async function one(text, values = []) {\n  const { rows } = await pool.query(text, values);\n  return rows[0] ?? null;\n}\n\n// Every read of patient data is written to the access log. Compliance\n// reconciles this table against the consent register once a month.\nexport async function recordAccess({ actorId, patientId, resource, action }) {\n  await pool.query(\n    `INSERT INTO access_log (actor_id, patient_id, resource, action, occurred_at)\n     VALUES ($1, $2, $3, $4, now())`,\n    [actorId ?? null, patientId ?? null, resource, action]\n  );\n}\n\nexport { pool };\n"
+      }
+    },
+    {
+      "id": "h4-hapi-clinic-compliance-log-review",
+      "family": "hapi-clinic",
+      "architecture": "Hapi 21 clinical records API where every route file is a plugin using Joi validation and route prerequisites, data access goes through a node-postgres pool in lib/db.js, and the session comes from an @hapi/cookie 'session' strategy exposing request.auth.credentials.",
+      "language": "javascript",
+      "file": "hapi-clinic/lib/routes/access-log-review.js",
+      "scanAs": "lib/routes/access-log-review.js",
+      "kind": "safe",
+      "route": "GET /api/access-log-review",
+      "runtimeVerifiable": true,
+      "pairedWith": "h4-hapi-clinic-compliance-audit-feed",
+      "why": "The same access-log query and response, but the guard is the cookie strategy's scope check -- auth: { strategy: 'session', scope: ['compliance'] } -- evaluated against the server-side session row, and no request header takes part in the decision.",
+      "packageJson": { "name": "hapi-clinic", "version": "3.4.0", "private": true, "type": "module", "dependencies": { "@hapi/boom": "^10.0.1", "@hapi/cookie": "^12.0.1", "@hapi/hapi": "^21.3.10", "joi": "^17.13.3", "pg": "^8.12.0" } },
+      "extraFiles": {
+        "lib/db.js": "// PostgreSQL access for the clinical records service.\n//\n// One pool per process: the API runs as a single Hapi server behind the\n// clinic ingress, so pooling here is enough.\nimport pg from 'pg';\n\nconst pool = new pg.Pool({\n  connectionString: process.env.CLINIC_DATABASE_URL,\n  max: Number(process.env.CLINIC_DB_POOL_MAX ?? 12),\n  idleTimeoutMillis: 30000,\n  application_name: 'clinic-records-api'\n});\n\nexport function query(text, values = []) {\n  return pool.query(text, values);\n}\n\nexport async function one(text, values = []) {\n  const { rows } = await pool.query(text, values);\n  return rows[0] ?? null;\n}\n\n// Every read of patient data is written to the access log. Compliance\n// reconciles this table against the consent register once a month.\nexport async function recordAccess({ actorId, patientId, resource, action }) {\n  await pool.query(\n    `INSERT INTO access_log (actor_id, patient_id, resource, action, occurred_at)\n     VALUES ($1, $2, $3, $4, now())`,\n    [actorId ?? null, patientId ?? null, resource, action]\n  );\n}\n\nexport { pool };\n",
+        "lib/session.js": "// Session helpers.\n//\n// The 'session' strategy is @hapi/cookie; its validate() callback reloads\n// the session row from Postgres on every request, so the credentials read\n// here are server-side state and never come off the wire.\nimport Boom from '@hapi/boom';\nimport { one } from './db.js';\n\nexport function actor(request) {\n  const credentials = request.auth.credentials ?? {};\n\n  return {\n    id: credentials.userId,\n    roles: credentials.roles ?? [],\n    // Set only for patient-portal logins; null for staff.\n    patientId: credentials.patientId ?? null,\n    clinicId: credentials.clinicId ?? null\n  };\n}\n\nexport function hasRole(request, role) {\n  return actor(request).roles.includes(role);\n}\n\nexport function assertRole(request, role) {\n  if (!hasRole(request, role)) {\n    throw Boom.forbidden(`this endpoint requires the ${role} role`);\n  }\n}\n\n// True when the clinician still has an open care-team assignment for the\n// patient. The care_team_member table is the clinic's authority on who may\n// read a chart.\nexport async function isOnCareTeam(clinicianId, patientId) {\n  const row = await one(\n    `SELECT 1\n       FROM care_team_member\n      WHERE clinician_id = $1\n        AND patient_id = $2\n        AND ended_on IS NULL`,\n    [clinicianId, patientId]\n  );\n\n  return row !== null;\n}\n"
+      }
+    },
+    {
+      "id": "h4-hapi-clinic-result-share-open",
+      "family": "hapi-clinic",
+      "architecture": "Hapi 21 clinical records API where every route file is a plugin using Joi validation and route prerequisites, data access goes through a node-postgres pool in lib/db.js, and the session comes from an @hapi/cookie 'session' strategy exposing request.auth.credentials.",
+      "language": "javascript",
+      "file": "hapi-clinic/lib/routes/result-share-links.js",
+      "scanAs": "lib/routes/result-share-links.js",
+      "kind": "vulnerable",
+      "category": "missing_share_link_expiry_check",
+      "severityBand": ["medium", "high"],
+      "line": 53,
+      "lineRange": [33, 81],
+      "route": "GET /api/shared-results/{token}",
+      "runtimeVerifiable": true,
+      "why": "The handler selects sl.expires_at with the share row but never compares it with the current time -- only revoked_at is checked -- so a share token keeps releasing the lab result, patient name and date of birth long after the link was meant to lapse, and the comment's claim that a nightly sweep removes expired rows is not a guard the request path enforces.",
+      "packageJson": { "name": "hapi-clinic", "version": "3.4.0", "private": true, "type": "module", "dependencies": { "@hapi/boom": "^10.0.1", "@hapi/cookie": "^12.0.1", "@hapi/hapi": "^21.3.10", "joi": "^17.13.3", "pg": "^8.12.0" } },
+      "extraFiles": {
+        "lib/db.js": "// PostgreSQL access for the clinical records service.\n//\n// One pool per process: the API runs as a single Hapi server behind the\n// clinic ingress, so pooling here is enough.\nimport pg from 'pg';\n\nconst pool = new pg.Pool({\n  connectionString: process.env.CLINIC_DATABASE_URL,\n  max: Number(process.env.CLINIC_DB_POOL_MAX ?? 12),\n  idleTimeoutMillis: 30000,\n  application_name: 'clinic-records-api'\n});\n\nexport function query(text, values = []) {\n  return pool.query(text, values);\n}\n\nexport async function one(text, values = []) {\n  const { rows } = await pool.query(text, values);\n  return rows[0] ?? null;\n}\n\n// Every read of patient data is written to the access log. Compliance\n// reconciles this table against the consent register once a month.\nexport async function recordAccess({ actorId, patientId, resource, action }) {\n  await pool.query(\n    `INSERT INTO access_log (actor_id, patient_id, resource, action, occurred_at)\n     VALUES ($1, $2, $3, $4, now())`,\n    [actorId ?? null, patientId ?? null, resource, action]\n  );\n}\n\nexport { pool };\n"
+      }
+    },
+    {
+      "id": "h4-hapi-clinic-imaging-share-open",
+      "family": "hapi-clinic",
+      "architecture": "Hapi 21 clinical records API where every route file is a plugin using Joi validation and route prerequisites, data access goes through a node-postgres pool in lib/db.js, and the session comes from an @hapi/cookie 'session' strategy exposing request.auth.credentials.",
+      "language": "javascript",
+      "file": "hapi-clinic/lib/routes/imaging-share-links.js",
+      "scanAs": "lib/routes/imaging-share-links.js",
+      "kind": "safe",
+      "route": "GET /api/shared-imaging/{token}",
+      "runtimeVerifiable": true,
+      "pairedWith": "h4-hapi-clinic-result-share-open",
+      "why": "The same public share-token flow, but alongside the revocation check the handler compares the link's lifetime against the clock: new Date(link.expires_at).getTime() must be finite and still in the future or the request is refused, so a lapsed (or unparseable) expiry releases nothing even when the nightly cleanup has not run.",
+      "packageJson": { "name": "hapi-clinic", "version": "3.4.0", "private": true, "type": "module", "dependencies": { "@hapi/boom": "^10.0.1", "@hapi/cookie": "^12.0.1", "@hapi/hapi": "^21.3.10", "joi": "^17.13.3", "pg": "^8.12.0" } },
+      "extraFiles": {
+        "lib/db.js": "// PostgreSQL access for the clinical records service.\n//\n// One pool per process: the API runs as a single Hapi server behind the\n// clinic ingress, so pooling here is enough.\nimport pg from 'pg';\n\nconst pool = new pg.Pool({\n  connectionString: process.env.CLINIC_DATABASE_URL,\n  max: Number(process.env.CLINIC_DB_POOL_MAX ?? 12),\n  idleTimeoutMillis: 30000,\n  application_name: 'clinic-records-api'\n});\n\nexport function query(text, values = []) {\n  return pool.query(text, values);\n}\n\nexport async function one(text, values = []) {\n  const { rows } = await pool.query(text, values);\n  return rows[0] ?? null;\n}\n\n// Every read of patient data is written to the access log. Compliance\n// reconciles this table against the consent register once a month.\nexport async function recordAccess({ actorId, patientId, resource, action }) {\n  await pool.query(\n    `INSERT INTO access_log (actor_id, patient_id, resource, action, occurred_at)\n     VALUES ($1, $2, $3, $4, now())`,\n    [actorId ?? null, patientId ?? null, resource, action]\n  );\n}\n\nexport { pool };\n"
+      }
+    }
+  ]
+}

@@ -70,7 +70,14 @@ async function walk(directory, relative = "") {
 async function inspect(full, rel) {
   const extension = path.extname(rel);
   const isCode = CODE_EXTENSIONS.has(extension);
-  const isFixture = rel.startsWith("fixtures/");
+  // Benchmark corpora are sample applications written to be wrong on purpose.
+  // They are held to the same exemption as `fixtures/`: a console.log or a fake
+  // credential in a corpus case is the case, not a defect in the product.
+  //
+  // Matched by shape rather than by name. Listing the corpora one by one meant
+  // every new held-out corpus failed the lint on the day it was written, for
+  // exactly the content that makes it worth having.
+  const isFixture = rel.startsWith("fixtures/") || /^benchmark\/(corpus|holdout[\w-]*)\//.test(rel);
   const isTest = rel.includes("/test/") || rel.endsWith(".test.mjs") || rel.startsWith("tests/");
 
   let content;

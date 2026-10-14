@@ -1,0 +1,523 @@
+{
+  "family": "mcp-tools",
+  "cases": [
+    {
+      "id": "ref-mcp-tools-ticket-read",
+      "family": "mcp-tools",
+      "architecture": "MCP server on @modelcontextprotocol/sdk 1.17 (McpServer with registerTool/registerResource/registerPrompt) exposed both over StdioServerTransport and over a StreamableHTTPServerTransport mounted on Express 4, with every read and write going through the @aws-sdk/lib-dynamodb DynamoDBDocumentClient, and the caller's identity coming from a bearer token resolved into a DynamoDB session row over HTTP and from the invoking local process over stdio.",
+      "language": "typescript",
+      "file": "mcp-tools/src/tools/ticket-lookup.ts",
+      "scanAs": "src/tools/ticket-lookup.ts",
+      "kind": "vulnerable",
+      "category": "cross_tenant_record_read_via_tool_argument",
+      "cwe": "CWE-639",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 58,
+      "lineRange": [
+        48,
+        77
+      ],
+      "runtimeVerifiable": true,
+      "why": "support_ticket_get reads whatever ticket the model names in `ticketId` with a GetCommand keyed on that reference alone and hands the row back, internal notes included. The HTTP session that carries the caller's accountId is available in `ctx` but is only used for the audit line, so any bearer session - or any reference the model picked up from attacker-written ticket text - returns another account's ticket.",
+      "packageJson": {
+        "name": "ledgerline-support-mcp",
+        "version": "2.4.1",
+        "private": true,
+        "type": "module",
+        "bin": {
+          "ledgerline-support-mcp": "dist/index.js",
+          "ledgerline-support-mcp-http": "dist/http-server.js"
+        },
+        "dependencies": {
+          "@aws-sdk/client-dynamodb": "^3.664.0",
+          "@aws-sdk/lib-dynamodb": "^3.664.0",
+          "@modelcontextprotocol/sdk": "^1.17.0",
+          "express": "^4.21.2",
+          "zod": "^3.23.8"
+        },
+        "devDependencies": {
+          "@types/express": "^4.17.21",
+          "@types/node": "^22.7.5",
+          "typescript": "^5.6.3"
+        }
+      },
+      "extraFiles": {
+        "src/config/environment.ts": "import { DynamoDBClient } from '@aws-sdk/client-dynamodb';\nimport { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';\n\n/**\n * Every knob this server has. Nothing here is secret: the process gets its AWS\n * credentials from the ambient provider chain (the engineer's own profile when\n * it runs over stdio, the task role when it runs behind the HTTP transport).\n */\nfunction fromEnv(name: string, fallback: string): string {\n  const value = process.env[name];\n  return value !== undefined && value.trim() !== '' ? value.trim() : fallback;\n}\n\nconst tablePrefix = fromEnv('LEDGERLINE_TABLE_PREFIX', 'ledgerline');\n\nexport const tables = {\n  tickets: `${tablePrefix}_support_tickets`,\n  ticketEvents: `${tablePrefix}_ticket_events`,\n  ticketAttachments: `${tablePrefix}_ticket_attachments`,\n  customers: `${tablePrefix}_customers`,\n  accounts: `${tablePrefix}_accounts`,\n  knowledgeArticles: `${tablePrefix}_kb_articles`,\n  mcpSessions: `${tablePrefix}_mcp_sessions`,\n} as const;\n\n/** Read-only mounts the support tooling is allowed to serve files from. */\nexport const storagePaths = {\n  runbookRoot: fromEnv('LEDGERLINE_RUNBOOK_ROOT', '/srv/ledgerline/runbooks'),\n  attachmentRoot: fromEnv('LEDGERLINE_ATTACHMENT_ROOT', '/srv/ledgerline/attachments'),\n} as const;\n\n/**\n * Vendor status pages an agent may poll while triaging an incident. Exact host\n * names only - we compare against `URL.hostname`, never a suffix.\n */\nexport const allowedStatusHosts: ReadonlySet<string> = new Set([\n  'status.stripe.com',\n  'status.twilio.com',\n  'status.sendgrid.com',\n  'ledgerline.statuspage.io',\n]);\n\nexport const awsRegion = fromEnv('AWS_REGION', 'eu-west-1');\nexport const httpPort = Number.parseInt(fromEnv('PORT', '8931'), 10);\nexport const serviceUserAgent = 'ledgerline-support-mcp/2.4';\n\nexport const documentClient = DynamoDBDocumentClient.from(\n  new DynamoDBClient({ region: awsRegion }),\n  { marshallOptions: { removeUndefinedValues: true } },\n);\n",
+        "src/auth/sessions.ts": "import { GetCommand } from '@aws-sdk/lib-dynamodb';\nimport { documentClient, tables } from '../config/environment.js';\n\nexport type SupportRole = 'support_agent' | 'support_lead' | 'billing_admin';\n\nexport interface CallerSession {\n  token: string;\n  accountId: string;\n  role: SupportRole;\n  displayName: string;\n  /** Unix seconds. */\n  expiresAt: number;\n}\n\n/**\n * What the tool implementations know about whoever is driving them.\n *\n * `session` is null when this process speaks MCP over stdio: it was started by\n * a human on their own workstation, it runs with that human's own AWS\n * credentials, and there is no second party to identify. Over the HTTP\n * transport there is one, and it is always non-null there.\n */\nexport interface ToolContext {\n  session: CallerSession | null;\n}\n\n/** Resolve a bearer token into the session row the auth service wrote. */\nexport async function lookupSession(token: string): Promise<CallerSession | null> {\n  const result = await documentClient.send(\n    new GetCommand({\n      TableName: tables.mcpSessions,\n      Key: { token },\n      ProjectionExpression: 'token, accountId, #role, displayName, expiresAt',\n      ExpressionAttributeNames: { '#role': 'role' },\n    }),\n  );\n\n  const session = result.Item as CallerSession | undefined;\n  if (!session) {\n    return null;\n  }\n  if (session.expiresAt <= Math.floor(Date.now() / 1000)) {\n    return null;\n  }\n  return session;\n}\n\n/**\n * Which account a tool call is allowed to touch.\n *\n * When there is a session it is authoritative - a caller supplied accountId is\n * only ever a hint, and it can never widen the scope. Over stdio there is no\n * session, so the operator has to say which account they are working on.\n */\nexport function accountScope(ctx: ToolContext, requestedAccountId?: string): string {\n  if (ctx.session) {\n    return ctx.session.accountId;\n  }\n  if (!requestedAccountId) {\n    throw new Error('accountId is required when the server is driven over stdio');\n  }\n  return requestedAccountId;\n}\n\nexport interface RoleDecision {\n  ok: boolean;\n  message?: string;\n}\n\n/**\n * Role gate for the tools that change money or entitlements. A stdio caller is\n * the operator themselves, so there is no role to check - they already have the\n * credentials this process runs with.\n */\nexport function requireRole(ctx: ToolContext, ...allowed: SupportRole[]): RoleDecision {\n  if (!ctx.session) {\n    return { ok: true };\n  }\n  if (allowed.includes(ctx.session.role)) {\n    return { ok: true };\n  }\n  return {\n    ok: false,\n    message: `This action is limited to ${allowed.join(' or ')}; this session is ${ctx.session.role}.`,\n  };\n}\n"
+      }
+    },
+    {
+      "id": "ref-mcp-tools-ticket-history",
+      "family": "mcp-tools",
+      "architecture": "MCP server on @modelcontextprotocol/sdk 1.17 (McpServer with registerTool/registerResource/registerPrompt) exposed both over StdioServerTransport and over a StreamableHTTPServerTransport mounted on Express 4, with every read and write going through the @aws-sdk/lib-dynamodb DynamoDBDocumentClient, and the caller's identity coming from a bearer token resolved into a DynamoDB session row over HTTP and from the invoking local process over stdio.",
+      "language": "typescript",
+      "file": "mcp-tools/src/tools/ticket-timeline.ts",
+      "scanAs": "src/tools/ticket-timeline.ts",
+      "kind": "safe",
+      "runtimeVerifiable": true,
+      "pairedWith": "ref-mcp-tools-ticket-read",
+      "why": "Same GetCommand against the same tickets table, but the ticket is only rendered when `ticket.accountId === scope`, where `scope` comes from `accountScope(ctx, accountId)` - the session wins and the tool argument is only consulted when there is no session, i.e. over stdio - and the timeline Query carries that same scope in its KeyConditionExpression.",
+      "packageJson": {
+        "name": "ledgerline-support-mcp",
+        "version": "2.4.1",
+        "private": true,
+        "type": "module",
+        "bin": {
+          "ledgerline-support-mcp": "dist/index.js",
+          "ledgerline-support-mcp-http": "dist/http-server.js"
+        },
+        "dependencies": {
+          "@aws-sdk/client-dynamodb": "^3.664.0",
+          "@aws-sdk/lib-dynamodb": "^3.664.0",
+          "@modelcontextprotocol/sdk": "^1.17.0",
+          "express": "^4.21.2",
+          "zod": "^3.23.8"
+        },
+        "devDependencies": {
+          "@types/express": "^4.17.21",
+          "@types/node": "^22.7.5",
+          "typescript": "^5.6.3"
+        }
+      },
+      "extraFiles": {
+        "src/config/environment.ts": "import { DynamoDBClient } from '@aws-sdk/client-dynamodb';\nimport { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';\n\n/**\n * Every knob this server has. Nothing here is secret: the process gets its AWS\n * credentials from the ambient provider chain (the engineer's own profile when\n * it runs over stdio, the task role when it runs behind the HTTP transport).\n */\nfunction fromEnv(name: string, fallback: string): string {\n  const value = process.env[name];\n  return value !== undefined && value.trim() !== '' ? value.trim() : fallback;\n}\n\nconst tablePrefix = fromEnv('LEDGERLINE_TABLE_PREFIX', 'ledgerline');\n\nexport const tables = {\n  tickets: `${tablePrefix}_support_tickets`,\n  ticketEvents: `${tablePrefix}_ticket_events`,\n  ticketAttachments: `${tablePrefix}_ticket_attachments`,\n  customers: `${tablePrefix}_customers`,\n  accounts: `${tablePrefix}_accounts`,\n  knowledgeArticles: `${tablePrefix}_kb_articles`,\n  mcpSessions: `${tablePrefix}_mcp_sessions`,\n} as const;\n\n/** Read-only mounts the support tooling is allowed to serve files from. */\nexport const storagePaths = {\n  runbookRoot: fromEnv('LEDGERLINE_RUNBOOK_ROOT', '/srv/ledgerline/runbooks'),\n  attachmentRoot: fromEnv('LEDGERLINE_ATTACHMENT_ROOT', '/srv/ledgerline/attachments'),\n} as const;\n\n/**\n * Vendor status pages an agent may poll while triaging an incident. Exact host\n * names only - we compare against `URL.hostname`, never a suffix.\n */\nexport const allowedStatusHosts: ReadonlySet<string> = new Set([\n  'status.stripe.com',\n  'status.twilio.com',\n  'status.sendgrid.com',\n  'ledgerline.statuspage.io',\n]);\n\nexport const awsRegion = fromEnv('AWS_REGION', 'eu-west-1');\nexport const httpPort = Number.parseInt(fromEnv('PORT', '8931'), 10);\nexport const serviceUserAgent = 'ledgerline-support-mcp/2.4';\n\nexport const documentClient = DynamoDBDocumentClient.from(\n  new DynamoDBClient({ region: awsRegion }),\n  { marshallOptions: { removeUndefinedValues: true } },\n);\n",
+        "src/auth/sessions.ts": "import { GetCommand } from '@aws-sdk/lib-dynamodb';\nimport { documentClient, tables } from '../config/environment.js';\n\nexport type SupportRole = 'support_agent' | 'support_lead' | 'billing_admin';\n\nexport interface CallerSession {\n  token: string;\n  accountId: string;\n  role: SupportRole;\n  displayName: string;\n  /** Unix seconds. */\n  expiresAt: number;\n}\n\n/**\n * What the tool implementations know about whoever is driving them.\n *\n * `session` is null when this process speaks MCP over stdio: it was started by\n * a human on their own workstation, it runs with that human's own AWS\n * credentials, and there is no second party to identify. Over the HTTP\n * transport there is one, and it is always non-null there.\n */\nexport interface ToolContext {\n  session: CallerSession | null;\n}\n\n/** Resolve a bearer token into the session row the auth service wrote. */\nexport async function lookupSession(token: string): Promise<CallerSession | null> {\n  const result = await documentClient.send(\n    new GetCommand({\n      TableName: tables.mcpSessions,\n      Key: { token },\n      ProjectionExpression: 'token, accountId, #role, displayName, expiresAt',\n      ExpressionAttributeNames: { '#role': 'role' },\n    }),\n  );\n\n  const session = result.Item as CallerSession | undefined;\n  if (!session) {\n    return null;\n  }\n  if (session.expiresAt <= Math.floor(Date.now() / 1000)) {\n    return null;\n  }\n  return session;\n}\n\n/**\n * Which account a tool call is allowed to touch.\n *\n * When there is a session it is authoritative - a caller supplied accountId is\n * only ever a hint, and it can never widen the scope. Over stdio there is no\n * session, so the operator has to say which account they are working on.\n */\nexport function accountScope(ctx: ToolContext, requestedAccountId?: string): string {\n  if (ctx.session) {\n    return ctx.session.accountId;\n  }\n  if (!requestedAccountId) {\n    throw new Error('accountId is required when the server is driven over stdio');\n  }\n  return requestedAccountId;\n}\n\nexport interface RoleDecision {\n  ok: boolean;\n  message?: string;\n}\n\n/**\n * Role gate for the tools that change money or entitlements. A stdio caller is\n * the operator themselves, so there is no role to check - they already have the\n * credentials this process runs with.\n */\nexport function requireRole(ctx: ToolContext, ...allowed: SupportRole[]): RoleDecision {\n  if (!ctx.session) {\n    return { ok: true };\n  }\n  if (allowed.includes(ctx.session.role)) {\n    return { ok: true };\n  }\n  return {\n    ok: false,\n    message: `This action is limited to ${allowed.join(' or ')}; this session is ${ctx.session.role}.`,\n  };\n}\n"
+      }
+    },
+    {
+      "id": "ref-mcp-tools-ticket-search",
+      "family": "mcp-tools",
+      "architecture": "MCP server on @modelcontextprotocol/sdk 1.17 (McpServer with registerTool/registerResource/registerPrompt) exposed both over StdioServerTransport and over a StreamableHTTPServerTransport mounted on Express 4, with every read and write going through the @aws-sdk/lib-dynamodb DynamoDBDocumentClient, and the caller's identity coming from a bearer token resolved into a DynamoDB session row over HTTP and from the invoking local process over stdio.",
+      "language": "typescript",
+      "file": "mcp-tools/src/tools/ticket-search.ts",
+      "scanAs": "src/tools/ticket-search.ts",
+      "kind": "vulnerable",
+      "category": "dynamodb_filter_expression_injection_via_tool_argument",
+      "cwe": "CWE-943",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 57,
+      "lineRange": [
+        46,
+        64
+      ],
+      "runtimeVerifiable": true,
+      "why": "The `field` argument is interpolated into the ScanCommand's FilterExpression. A model-chosen value such as `attribute_not_exists(zzz) OR ticketId` expands to `attribute_not_exists(zzz) OR ticketId = :value AND accountId = :accountId`, and because AND binds tighter than OR the account clause stops constraining anything, so the full-table Scan returns every tenant's tickets. Binding the value as a parameter does nothing for the injected attribute name.",
+      "packageJson": {
+        "name": "ledgerline-support-mcp",
+        "version": "2.4.1",
+        "private": true,
+        "type": "module",
+        "bin": {
+          "ledgerline-support-mcp": "dist/index.js",
+          "ledgerline-support-mcp-http": "dist/http-server.js"
+        },
+        "dependencies": {
+          "@aws-sdk/client-dynamodb": "^3.664.0",
+          "@aws-sdk/lib-dynamodb": "^3.664.0",
+          "@modelcontextprotocol/sdk": "^1.17.0",
+          "express": "^4.21.2",
+          "zod": "^3.23.8"
+        },
+        "devDependencies": {
+          "@types/express": "^4.17.21",
+          "@types/node": "^22.7.5",
+          "typescript": "^5.6.3"
+        }
+      },
+      "extraFiles": {
+        "src/config/environment.ts": "import { DynamoDBClient } from '@aws-sdk/client-dynamodb';\nimport { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';\n\n/**\n * Every knob this server has. Nothing here is secret: the process gets its AWS\n * credentials from the ambient provider chain (the engineer's own profile when\n * it runs over stdio, the task role when it runs behind the HTTP transport).\n */\nfunction fromEnv(name: string, fallback: string): string {\n  const value = process.env[name];\n  return value !== undefined && value.trim() !== '' ? value.trim() : fallback;\n}\n\nconst tablePrefix = fromEnv('LEDGERLINE_TABLE_PREFIX', 'ledgerline');\n\nexport const tables = {\n  tickets: `${tablePrefix}_support_tickets`,\n  ticketEvents: `${tablePrefix}_ticket_events`,\n  ticketAttachments: `${tablePrefix}_ticket_attachments`,\n  customers: `${tablePrefix}_customers`,\n  accounts: `${tablePrefix}_accounts`,\n  knowledgeArticles: `${tablePrefix}_kb_articles`,\n  mcpSessions: `${tablePrefix}_mcp_sessions`,\n} as const;\n\n/** Read-only mounts the support tooling is allowed to serve files from. */\nexport const storagePaths = {\n  runbookRoot: fromEnv('LEDGERLINE_RUNBOOK_ROOT', '/srv/ledgerline/runbooks'),\n  attachmentRoot: fromEnv('LEDGERLINE_ATTACHMENT_ROOT', '/srv/ledgerline/attachments'),\n} as const;\n\n/**\n * Vendor status pages an agent may poll while triaging an incident. Exact host\n * names only - we compare against `URL.hostname`, never a suffix.\n */\nexport const allowedStatusHosts: ReadonlySet<string> = new Set([\n  'status.stripe.com',\n  'status.twilio.com',\n  'status.sendgrid.com',\n  'ledgerline.statuspage.io',\n]);\n\nexport const awsRegion = fromEnv('AWS_REGION', 'eu-west-1');\nexport const httpPort = Number.parseInt(fromEnv('PORT', '8931'), 10);\nexport const serviceUserAgent = 'ledgerline-support-mcp/2.4';\n\nexport const documentClient = DynamoDBDocumentClient.from(\n  new DynamoDBClient({ region: awsRegion }),\n  { marshallOptions: { removeUndefinedValues: true } },\n);\n",
+        "src/auth/sessions.ts": "import { GetCommand } from '@aws-sdk/lib-dynamodb';\nimport { documentClient, tables } from '../config/environment.js';\n\nexport type SupportRole = 'support_agent' | 'support_lead' | 'billing_admin';\n\nexport interface CallerSession {\n  token: string;\n  accountId: string;\n  role: SupportRole;\n  displayName: string;\n  /** Unix seconds. */\n  expiresAt: number;\n}\n\n/**\n * What the tool implementations know about whoever is driving them.\n *\n * `session` is null when this process speaks MCP over stdio: it was started by\n * a human on their own workstation, it runs with that human's own AWS\n * credentials, and there is no second party to identify. Over the HTTP\n * transport there is one, and it is always non-null there.\n */\nexport interface ToolContext {\n  session: CallerSession | null;\n}\n\n/** Resolve a bearer token into the session row the auth service wrote. */\nexport async function lookupSession(token: string): Promise<CallerSession | null> {\n  const result = await documentClient.send(\n    new GetCommand({\n      TableName: tables.mcpSessions,\n      Key: { token },\n      ProjectionExpression: 'token, accountId, #role, displayName, expiresAt',\n      ExpressionAttributeNames: { '#role': 'role' },\n    }),\n  );\n\n  const session = result.Item as CallerSession | undefined;\n  if (!session) {\n    return null;\n  }\n  if (session.expiresAt <= Math.floor(Date.now() / 1000)) {\n    return null;\n  }\n  return session;\n}\n\n/**\n * Which account a tool call is allowed to touch.\n *\n * When there is a session it is authoritative - a caller supplied accountId is\n * only ever a hint, and it can never widen the scope. Over stdio there is no\n * session, so the operator has to say which account they are working on.\n */\nexport function accountScope(ctx: ToolContext, requestedAccountId?: string): string {\n  if (ctx.session) {\n    return ctx.session.accountId;\n  }\n  if (!requestedAccountId) {\n    throw new Error('accountId is required when the server is driven over stdio');\n  }\n  return requestedAccountId;\n}\n\nexport interface RoleDecision {\n  ok: boolean;\n  message?: string;\n}\n\n/**\n * Role gate for the tools that change money or entitlements. A stdio caller is\n * the operator themselves, so there is no role to check - they already have the\n * credentials this process runs with.\n */\nexport function requireRole(ctx: ToolContext, ...allowed: SupportRole[]): RoleDecision {\n  if (!ctx.session) {\n    return { ok: true };\n  }\n  if (allowed.includes(ctx.session.role)) {\n    return { ok: true };\n  }\n  return {\n    ok: false,\n    message: `This action is limited to ${allowed.join(' or ')}; this session is ${ctx.session.role}.`,\n  };\n}\n"
+      }
+    },
+    {
+      "id": "ref-mcp-tools-customer-directory",
+      "family": "mcp-tools",
+      "architecture": "MCP server on @modelcontextprotocol/sdk 1.17 (McpServer with registerTool/registerResource/registerPrompt) exposed both over StdioServerTransport and over a StreamableHTTPServerTransport mounted on Express 4, with every read and write going through the @aws-sdk/lib-dynamodb DynamoDBDocumentClient, and the caller's identity coming from a bearer token resolved into a DynamoDB session row over HTTP and from the invoking local process over stdio.",
+      "language": "typescript",
+      "file": "mcp-tools/src/tools/customer-directory.ts",
+      "scanAs": "src/tools/customer-directory.ts",
+      "kind": "safe",
+      "runtimeVerifiable": true,
+      "pairedWith": "ref-mcp-tools-ticket-search",
+      "why": "The caller still chooses which attribute to match on, but `field` is a zod enum mapped through FILTERABLE_ATTRIBUTES and passed as an ExpressionAttributeNames placeholder, so the FilterExpression is a constant string and the `accountId = :accountId` clause cannot be detached or widened.",
+      "packageJson": {
+        "name": "ledgerline-support-mcp",
+        "version": "2.4.1",
+        "private": true,
+        "type": "module",
+        "bin": {
+          "ledgerline-support-mcp": "dist/index.js",
+          "ledgerline-support-mcp-http": "dist/http-server.js"
+        },
+        "dependencies": {
+          "@aws-sdk/client-dynamodb": "^3.664.0",
+          "@aws-sdk/lib-dynamodb": "^3.664.0",
+          "@modelcontextprotocol/sdk": "^1.17.0",
+          "express": "^4.21.2",
+          "zod": "^3.23.8"
+        },
+        "devDependencies": {
+          "@types/express": "^4.17.21",
+          "@types/node": "^22.7.5",
+          "typescript": "^5.6.3"
+        }
+      },
+      "extraFiles": {
+        "src/config/environment.ts": "import { DynamoDBClient } from '@aws-sdk/client-dynamodb';\nimport { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';\n\n/**\n * Every knob this server has. Nothing here is secret: the process gets its AWS\n * credentials from the ambient provider chain (the engineer's own profile when\n * it runs over stdio, the task role when it runs behind the HTTP transport).\n */\nfunction fromEnv(name: string, fallback: string): string {\n  const value = process.env[name];\n  return value !== undefined && value.trim() !== '' ? value.trim() : fallback;\n}\n\nconst tablePrefix = fromEnv('LEDGERLINE_TABLE_PREFIX', 'ledgerline');\n\nexport const tables = {\n  tickets: `${tablePrefix}_support_tickets`,\n  ticketEvents: `${tablePrefix}_ticket_events`,\n  ticketAttachments: `${tablePrefix}_ticket_attachments`,\n  customers: `${tablePrefix}_customers`,\n  accounts: `${tablePrefix}_accounts`,\n  knowledgeArticles: `${tablePrefix}_kb_articles`,\n  mcpSessions: `${tablePrefix}_mcp_sessions`,\n} as const;\n\n/** Read-only mounts the support tooling is allowed to serve files from. */\nexport const storagePaths = {\n  runbookRoot: fromEnv('LEDGERLINE_RUNBOOK_ROOT', '/srv/ledgerline/runbooks'),\n  attachmentRoot: fromEnv('LEDGERLINE_ATTACHMENT_ROOT', '/srv/ledgerline/attachments'),\n} as const;\n\n/**\n * Vendor status pages an agent may poll while triaging an incident. Exact host\n * names only - we compare against `URL.hostname`, never a suffix.\n */\nexport const allowedStatusHosts: ReadonlySet<string> = new Set([\n  'status.stripe.com',\n  'status.twilio.com',\n  'status.sendgrid.com',\n  'ledgerline.statuspage.io',\n]);\n\nexport const awsRegion = fromEnv('AWS_REGION', 'eu-west-1');\nexport const httpPort = Number.parseInt(fromEnv('PORT', '8931'), 10);\nexport const serviceUserAgent = 'ledgerline-support-mcp/2.4';\n\nexport const documentClient = DynamoDBDocumentClient.from(\n  new DynamoDBClient({ region: awsRegion }),\n  { marshallOptions: { removeUndefinedValues: true } },\n);\n",
+        "src/auth/sessions.ts": "import { GetCommand } from '@aws-sdk/lib-dynamodb';\nimport { documentClient, tables } from '../config/environment.js';\n\nexport type SupportRole = 'support_agent' | 'support_lead' | 'billing_admin';\n\nexport interface CallerSession {\n  token: string;\n  accountId: string;\n  role: SupportRole;\n  displayName: string;\n  /** Unix seconds. */\n  expiresAt: number;\n}\n\n/**\n * What the tool implementations know about whoever is driving them.\n *\n * `session` is null when this process speaks MCP over stdio: it was started by\n * a human on their own workstation, it runs with that human's own AWS\n * credentials, and there is no second party to identify. Over the HTTP\n * transport there is one, and it is always non-null there.\n */\nexport interface ToolContext {\n  session: CallerSession | null;\n}\n\n/** Resolve a bearer token into the session row the auth service wrote. */\nexport async function lookupSession(token: string): Promise<CallerSession | null> {\n  const result = await documentClient.send(\n    new GetCommand({\n      TableName: tables.mcpSessions,\n      Key: { token },\n      ProjectionExpression: 'token, accountId, #role, displayName, expiresAt',\n      ExpressionAttributeNames: { '#role': 'role' },\n    }),\n  );\n\n  const session = result.Item as CallerSession | undefined;\n  if (!session) {\n    return null;\n  }\n  if (session.expiresAt <= Math.floor(Date.now() / 1000)) {\n    return null;\n  }\n  return session;\n}\n\n/**\n * Which account a tool call is allowed to touch.\n *\n * When there is a session it is authoritative - a caller supplied accountId is\n * only ever a hint, and it can never widen the scope. Over stdio there is no\n * session, so the operator has to say which account they are working on.\n */\nexport function accountScope(ctx: ToolContext, requestedAccountId?: string): string {\n  if (ctx.session) {\n    return ctx.session.accountId;\n  }\n  if (!requestedAccountId) {\n    throw new Error('accountId is required when the server is driven over stdio');\n  }\n  return requestedAccountId;\n}\n\nexport interface RoleDecision {\n  ok: boolean;\n  message?: string;\n}\n\n/**\n * Role gate for the tools that change money or entitlements. A stdio caller is\n * the operator themselves, so there is no role to check - they already have the\n * credentials this process runs with.\n */\nexport function requireRole(ctx: ToolContext, ...allowed: SupportRole[]): RoleDecision {\n  if (!ctx.session) {\n    return { ok: true };\n  }\n  if (allowed.includes(ctx.session.role)) {\n    return { ok: true };\n  }\n  return {\n    ok: false,\n    message: `This action is limited to ${allowed.join(' or ')}; this session is ${ctx.session.role}.`,\n  };\n}\n"
+      }
+    },
+    {
+      "id": "ref-mcp-tools-account-credit",
+      "family": "mcp-tools",
+      "architecture": "MCP server on @modelcontextprotocol/sdk 1.17 (McpServer with registerTool/registerResource/registerPrompt) exposed both over StdioServerTransport and over a StreamableHTTPServerTransport mounted on Express 4, with every read and write going through the @aws-sdk/lib-dynamodb DynamoDBDocumentClient, and the caller's identity coming from a bearer token resolved into a DynamoDB session row over HTTP and from the invoking local process over stdio.",
+      "language": "typescript",
+      "file": "mcp-tools/src/tools/account-credits.ts",
+      "scanAs": "src/tools/account-credits.ts",
+      "kind": "vulnerable",
+      "category": "missing_role_check_on_balance_mutating_tool",
+      "cwe": "CWE-862",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 46,
+      "lineRange": [
+        43,
+        62
+      ],
+      "runtimeVerifiable": true,
+      "why": "account_credit_apply moves money - an UpdateCommand that increments creditBalanceMinor by up to 5000.00 per call - and never looks at `ctx.session.role`; `requireRole` is imported nowhere in this module. The comment relies on the HTTP transport handing out a role-filtered tool list, but tools/call is not gated by tools/list, so a `support_agent` session (or any session at all) can credit the account it is bound to.",
+      "packageJson": {
+        "name": "ledgerline-support-mcp",
+        "version": "2.4.1",
+        "private": true,
+        "type": "module",
+        "bin": {
+          "ledgerline-support-mcp": "dist/index.js",
+          "ledgerline-support-mcp-http": "dist/http-server.js"
+        },
+        "dependencies": {
+          "@aws-sdk/client-dynamodb": "^3.664.0",
+          "@aws-sdk/lib-dynamodb": "^3.664.0",
+          "@modelcontextprotocol/sdk": "^1.17.0",
+          "express": "^4.21.2",
+          "zod": "^3.23.8"
+        },
+        "devDependencies": {
+          "@types/express": "^4.17.21",
+          "@types/node": "^22.7.5",
+          "typescript": "^5.6.3"
+        }
+      },
+      "extraFiles": {
+        "src/config/environment.ts": "import { DynamoDBClient } from '@aws-sdk/client-dynamodb';\nimport { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';\n\n/**\n * Every knob this server has. Nothing here is secret: the process gets its AWS\n * credentials from the ambient provider chain (the engineer's own profile when\n * it runs over stdio, the task role when it runs behind the HTTP transport).\n */\nfunction fromEnv(name: string, fallback: string): string {\n  const value = process.env[name];\n  return value !== undefined && value.trim() !== '' ? value.trim() : fallback;\n}\n\nconst tablePrefix = fromEnv('LEDGERLINE_TABLE_PREFIX', 'ledgerline');\n\nexport const tables = {\n  tickets: `${tablePrefix}_support_tickets`,\n  ticketEvents: `${tablePrefix}_ticket_events`,\n  ticketAttachments: `${tablePrefix}_ticket_attachments`,\n  customers: `${tablePrefix}_customers`,\n  accounts: `${tablePrefix}_accounts`,\n  knowledgeArticles: `${tablePrefix}_kb_articles`,\n  mcpSessions: `${tablePrefix}_mcp_sessions`,\n} as const;\n\n/** Read-only mounts the support tooling is allowed to serve files from. */\nexport const storagePaths = {\n  runbookRoot: fromEnv('LEDGERLINE_RUNBOOK_ROOT', '/srv/ledgerline/runbooks'),\n  attachmentRoot: fromEnv('LEDGERLINE_ATTACHMENT_ROOT', '/srv/ledgerline/attachments'),\n} as const;\n\n/**\n * Vendor status pages an agent may poll while triaging an incident. Exact host\n * names only - we compare against `URL.hostname`, never a suffix.\n */\nexport const allowedStatusHosts: ReadonlySet<string> = new Set([\n  'status.stripe.com',\n  'status.twilio.com',\n  'status.sendgrid.com',\n  'ledgerline.statuspage.io',\n]);\n\nexport const awsRegion = fromEnv('AWS_REGION', 'eu-west-1');\nexport const httpPort = Number.parseInt(fromEnv('PORT', '8931'), 10);\nexport const serviceUserAgent = 'ledgerline-support-mcp/2.4';\n\nexport const documentClient = DynamoDBDocumentClient.from(\n  new DynamoDBClient({ region: awsRegion }),\n  { marshallOptions: { removeUndefinedValues: true } },\n);\n",
+        "src/auth/sessions.ts": "import { GetCommand } from '@aws-sdk/lib-dynamodb';\nimport { documentClient, tables } from '../config/environment.js';\n\nexport type SupportRole = 'support_agent' | 'support_lead' | 'billing_admin';\n\nexport interface CallerSession {\n  token: string;\n  accountId: string;\n  role: SupportRole;\n  displayName: string;\n  /** Unix seconds. */\n  expiresAt: number;\n}\n\n/**\n * What the tool implementations know about whoever is driving them.\n *\n * `session` is null when this process speaks MCP over stdio: it was started by\n * a human on their own workstation, it runs with that human's own AWS\n * credentials, and there is no second party to identify. Over the HTTP\n * transport there is one, and it is always non-null there.\n */\nexport interface ToolContext {\n  session: CallerSession | null;\n}\n\n/** Resolve a bearer token into the session row the auth service wrote. */\nexport async function lookupSession(token: string): Promise<CallerSession | null> {\n  const result = await documentClient.send(\n    new GetCommand({\n      TableName: tables.mcpSessions,\n      Key: { token },\n      ProjectionExpression: 'token, accountId, #role, displayName, expiresAt',\n      ExpressionAttributeNames: { '#role': 'role' },\n    }),\n  );\n\n  const session = result.Item as CallerSession | undefined;\n  if (!session) {\n    return null;\n  }\n  if (session.expiresAt <= Math.floor(Date.now() / 1000)) {\n    return null;\n  }\n  return session;\n}\n\n/**\n * Which account a tool call is allowed to touch.\n *\n * When there is a session it is authoritative - a caller supplied accountId is\n * only ever a hint, and it can never widen the scope. Over stdio there is no\n * session, so the operator has to say which account they are working on.\n */\nexport function accountScope(ctx: ToolContext, requestedAccountId?: string): string {\n  if (ctx.session) {\n    return ctx.session.accountId;\n  }\n  if (!requestedAccountId) {\n    throw new Error('accountId is required when the server is driven over stdio');\n  }\n  return requestedAccountId;\n}\n\nexport interface RoleDecision {\n  ok: boolean;\n  message?: string;\n}\n\n/**\n * Role gate for the tools that change money or entitlements. A stdio caller is\n * the operator themselves, so there is no role to check - they already have the\n * credentials this process runs with.\n */\nexport function requireRole(ctx: ToolContext, ...allowed: SupportRole[]): RoleDecision {\n  if (!ctx.session) {\n    return { ok: true };\n  }\n  if (allowed.includes(ctx.session.role)) {\n    return { ok: true };\n  }\n  return {\n    ok: false,\n    message: `This action is limited to ${allowed.join(' or ')}; this session is ${ctx.session.role}.`,\n  };\n}\n"
+      }
+    },
+    {
+      "id": "ref-mcp-tools-plan-change",
+      "family": "mcp-tools",
+      "architecture": "MCP server on @modelcontextprotocol/sdk 1.17 (McpServer with registerTool/registerResource/registerPrompt) exposed both over StdioServerTransport and over a StreamableHTTPServerTransport mounted on Express 4, with every read and write going through the @aws-sdk/lib-dynamodb DynamoDBDocumentClient, and the caller's identity coming from a bearer token resolved into a DynamoDB session row over HTTP and from the invoking local process over stdio.",
+      "language": "typescript",
+      "file": "mcp-tools/src/tools/subscription-changes.ts",
+      "scanAs": "src/tools/subscription-changes.ts",
+      "kind": "safe",
+      "runtimeVerifiable": true,
+      "pairedWith": "ref-mcp-tools-account-credit",
+      "why": "The same shape - an UpdateCommand on the accounts table driven straight from tool arguments - but `requireRole(ctx, 'billing_admin')` runs before anything is written and the handler returns `isError: true` for every other session role. The permissive branch inside requireRole only fires when there is no session, which is only the stdio transport, where the process already runs with the operator's own credentials.",
+      "packageJson": {
+        "name": "ledgerline-support-mcp",
+        "version": "2.4.1",
+        "private": true,
+        "type": "module",
+        "bin": {
+          "ledgerline-support-mcp": "dist/index.js",
+          "ledgerline-support-mcp-http": "dist/http-server.js"
+        },
+        "dependencies": {
+          "@aws-sdk/client-dynamodb": "^3.664.0",
+          "@aws-sdk/lib-dynamodb": "^3.664.0",
+          "@modelcontextprotocol/sdk": "^1.17.0",
+          "express": "^4.21.2",
+          "zod": "^3.23.8"
+        },
+        "devDependencies": {
+          "@types/express": "^4.17.21",
+          "@types/node": "^22.7.5",
+          "typescript": "^5.6.3"
+        }
+      },
+      "extraFiles": {
+        "src/config/environment.ts": "import { DynamoDBClient } from '@aws-sdk/client-dynamodb';\nimport { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';\n\n/**\n * Every knob this server has. Nothing here is secret: the process gets its AWS\n * credentials from the ambient provider chain (the engineer's own profile when\n * it runs over stdio, the task role when it runs behind the HTTP transport).\n */\nfunction fromEnv(name: string, fallback: string): string {\n  const value = process.env[name];\n  return value !== undefined && value.trim() !== '' ? value.trim() : fallback;\n}\n\nconst tablePrefix = fromEnv('LEDGERLINE_TABLE_PREFIX', 'ledgerline');\n\nexport const tables = {\n  tickets: `${tablePrefix}_support_tickets`,\n  ticketEvents: `${tablePrefix}_ticket_events`,\n  ticketAttachments: `${tablePrefix}_ticket_attachments`,\n  customers: `${tablePrefix}_customers`,\n  accounts: `${tablePrefix}_accounts`,\n  knowledgeArticles: `${tablePrefix}_kb_articles`,\n  mcpSessions: `${tablePrefix}_mcp_sessions`,\n} as const;\n\n/** Read-only mounts the support tooling is allowed to serve files from. */\nexport const storagePaths = {\n  runbookRoot: fromEnv('LEDGERLINE_RUNBOOK_ROOT', '/srv/ledgerline/runbooks'),\n  attachmentRoot: fromEnv('LEDGERLINE_ATTACHMENT_ROOT', '/srv/ledgerline/attachments'),\n} as const;\n\n/**\n * Vendor status pages an agent may poll while triaging an incident. Exact host\n * names only - we compare against `URL.hostname`, never a suffix.\n */\nexport const allowedStatusHosts: ReadonlySet<string> = new Set([\n  'status.stripe.com',\n  'status.twilio.com',\n  'status.sendgrid.com',\n  'ledgerline.statuspage.io',\n]);\n\nexport const awsRegion = fromEnv('AWS_REGION', 'eu-west-1');\nexport const httpPort = Number.parseInt(fromEnv('PORT', '8931'), 10);\nexport const serviceUserAgent = 'ledgerline-support-mcp/2.4';\n\nexport const documentClient = DynamoDBDocumentClient.from(\n  new DynamoDBClient({ region: awsRegion }),\n  { marshallOptions: { removeUndefinedValues: true } },\n);\n",
+        "src/auth/sessions.ts": "import { GetCommand } from '@aws-sdk/lib-dynamodb';\nimport { documentClient, tables } from '../config/environment.js';\n\nexport type SupportRole = 'support_agent' | 'support_lead' | 'billing_admin';\n\nexport interface CallerSession {\n  token: string;\n  accountId: string;\n  role: SupportRole;\n  displayName: string;\n  /** Unix seconds. */\n  expiresAt: number;\n}\n\n/**\n * What the tool implementations know about whoever is driving them.\n *\n * `session` is null when this process speaks MCP over stdio: it was started by\n * a human on their own workstation, it runs with that human's own AWS\n * credentials, and there is no second party to identify. Over the HTTP\n * transport there is one, and it is always non-null there.\n */\nexport interface ToolContext {\n  session: CallerSession | null;\n}\n\n/** Resolve a bearer token into the session row the auth service wrote. */\nexport async function lookupSession(token: string): Promise<CallerSession | null> {\n  const result = await documentClient.send(\n    new GetCommand({\n      TableName: tables.mcpSessions,\n      Key: { token },\n      ProjectionExpression: 'token, accountId, #role, displayName, expiresAt',\n      ExpressionAttributeNames: { '#role': 'role' },\n    }),\n  );\n\n  const session = result.Item as CallerSession | undefined;\n  if (!session) {\n    return null;\n  }\n  if (session.expiresAt <= Math.floor(Date.now() / 1000)) {\n    return null;\n  }\n  return session;\n}\n\n/**\n * Which account a tool call is allowed to touch.\n *\n * When there is a session it is authoritative - a caller supplied accountId is\n * only ever a hint, and it can never widen the scope. Over stdio there is no\n * session, so the operator has to say which account they are working on.\n */\nexport function accountScope(ctx: ToolContext, requestedAccountId?: string): string {\n  if (ctx.session) {\n    return ctx.session.accountId;\n  }\n  if (!requestedAccountId) {\n    throw new Error('accountId is required when the server is driven over stdio');\n  }\n  return requestedAccountId;\n}\n\nexport interface RoleDecision {\n  ok: boolean;\n  message?: string;\n}\n\n/**\n * Role gate for the tools that change money or entitlements. A stdio caller is\n * the operator themselves, so there is no role to check - they already have the\n * credentials this process runs with.\n */\nexport function requireRole(ctx: ToolContext, ...allowed: SupportRole[]): RoleDecision {\n  if (!ctx.session) {\n    return { ok: true };\n  }\n  if (allowed.includes(ctx.session.role)) {\n    return { ok: true };\n  }\n  return {\n    ok: false,\n    message: `This action is limited to ${allowed.join(' or ')}; this session is ${ctx.session.role}.`,\n  };\n}\n"
+      }
+    },
+    {
+      "id": "ref-mcp-tools-article-import",
+      "family": "mcp-tools",
+      "architecture": "MCP server on @modelcontextprotocol/sdk 1.17 (McpServer with registerTool/registerResource/registerPrompt) exposed both over StdioServerTransport and over a StreamableHTTPServerTransport mounted on Express 4, with every read and write going through the @aws-sdk/lib-dynamodb DynamoDBDocumentClient, and the caller's identity coming from a bearer token resolved into a DynamoDB session row over HTTP and from the invoking local process over stdio.",
+      "language": "typescript",
+      "file": "mcp-tools/src/tools/knowledge-import.ts",
+      "scanAs": "src/tools/knowledge-import.ts",
+      "kind": "vulnerable",
+      "category": "unrestricted_outbound_fetch_of_tool_supplied_url",
+      "cwe": "CWE-918",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 57,
+      "lineRange": [
+        49,
+        72
+      ],
+      "runtimeVerifiable": true,
+      "why": "`sourceUrl` is chosen by the model from text it was shown - a ticket body an attacker can write - and is handed to fetch with no scheme, host or address check, and the response body is both stored and returned as tool content. http://169.254.169.254/latest/meta-data/iam/security-credentials/ or any internal admin endpoint is fetched and read back by the caller. `z.string().url()` constrains the shape of the argument, not its destination.",
+      "packageJson": {
+        "name": "ledgerline-support-mcp",
+        "version": "2.4.1",
+        "private": true,
+        "type": "module",
+        "bin": {
+          "ledgerline-support-mcp": "dist/index.js",
+          "ledgerline-support-mcp-http": "dist/http-server.js"
+        },
+        "dependencies": {
+          "@aws-sdk/client-dynamodb": "^3.664.0",
+          "@aws-sdk/lib-dynamodb": "^3.664.0",
+          "@modelcontextprotocol/sdk": "^1.17.0",
+          "express": "^4.21.2",
+          "zod": "^3.23.8"
+        },
+        "devDependencies": {
+          "@types/express": "^4.17.21",
+          "@types/node": "^22.7.5",
+          "typescript": "^5.6.3"
+        }
+      },
+      "extraFiles": {
+        "src/config/environment.ts": "import { DynamoDBClient } from '@aws-sdk/client-dynamodb';\nimport { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';\n\n/**\n * Every knob this server has. Nothing here is secret: the process gets its AWS\n * credentials from the ambient provider chain (the engineer's own profile when\n * it runs over stdio, the task role when it runs behind the HTTP transport).\n */\nfunction fromEnv(name: string, fallback: string): string {\n  const value = process.env[name];\n  return value !== undefined && value.trim() !== '' ? value.trim() : fallback;\n}\n\nconst tablePrefix = fromEnv('LEDGERLINE_TABLE_PREFIX', 'ledgerline');\n\nexport const tables = {\n  tickets: `${tablePrefix}_support_tickets`,\n  ticketEvents: `${tablePrefix}_ticket_events`,\n  ticketAttachments: `${tablePrefix}_ticket_attachments`,\n  customers: `${tablePrefix}_customers`,\n  accounts: `${tablePrefix}_accounts`,\n  knowledgeArticles: `${tablePrefix}_kb_articles`,\n  mcpSessions: `${tablePrefix}_mcp_sessions`,\n} as const;\n\n/** Read-only mounts the support tooling is allowed to serve files from. */\nexport const storagePaths = {\n  runbookRoot: fromEnv('LEDGERLINE_RUNBOOK_ROOT', '/srv/ledgerline/runbooks'),\n  attachmentRoot: fromEnv('LEDGERLINE_ATTACHMENT_ROOT', '/srv/ledgerline/attachments'),\n} as const;\n\n/**\n * Vendor status pages an agent may poll while triaging an incident. Exact host\n * names only - we compare against `URL.hostname`, never a suffix.\n */\nexport const allowedStatusHosts: ReadonlySet<string> = new Set([\n  'status.stripe.com',\n  'status.twilio.com',\n  'status.sendgrid.com',\n  'ledgerline.statuspage.io',\n]);\n\nexport const awsRegion = fromEnv('AWS_REGION', 'eu-west-1');\nexport const httpPort = Number.parseInt(fromEnv('PORT', '8931'), 10);\nexport const serviceUserAgent = 'ledgerline-support-mcp/2.4';\n\nexport const documentClient = DynamoDBDocumentClient.from(\n  new DynamoDBClient({ region: awsRegion }),\n  { marshallOptions: { removeUndefinedValues: true } },\n);\n",
+        "src/auth/sessions.ts": "import { GetCommand } from '@aws-sdk/lib-dynamodb';\nimport { documentClient, tables } from '../config/environment.js';\n\nexport type SupportRole = 'support_agent' | 'support_lead' | 'billing_admin';\n\nexport interface CallerSession {\n  token: string;\n  accountId: string;\n  role: SupportRole;\n  displayName: string;\n  /** Unix seconds. */\n  expiresAt: number;\n}\n\n/**\n * What the tool implementations know about whoever is driving them.\n *\n * `session` is null when this process speaks MCP over stdio: it was started by\n * a human on their own workstation, it runs with that human's own AWS\n * credentials, and there is no second party to identify. Over the HTTP\n * transport there is one, and it is always non-null there.\n */\nexport interface ToolContext {\n  session: CallerSession | null;\n}\n\n/** Resolve a bearer token into the session row the auth service wrote. */\nexport async function lookupSession(token: string): Promise<CallerSession | null> {\n  const result = await documentClient.send(\n    new GetCommand({\n      TableName: tables.mcpSessions,\n      Key: { token },\n      ProjectionExpression: 'token, accountId, #role, displayName, expiresAt',\n      ExpressionAttributeNames: { '#role': 'role' },\n    }),\n  );\n\n  const session = result.Item as CallerSession | undefined;\n  if (!session) {\n    return null;\n  }\n  if (session.expiresAt <= Math.floor(Date.now() / 1000)) {\n    return null;\n  }\n  return session;\n}\n\n/**\n * Which account a tool call is allowed to touch.\n *\n * When there is a session it is authoritative - a caller supplied accountId is\n * only ever a hint, and it can never widen the scope. Over stdio there is no\n * session, so the operator has to say which account they are working on.\n */\nexport function accountScope(ctx: ToolContext, requestedAccountId?: string): string {\n  if (ctx.session) {\n    return ctx.session.accountId;\n  }\n  if (!requestedAccountId) {\n    throw new Error('accountId is required when the server is driven over stdio');\n  }\n  return requestedAccountId;\n}\n\nexport interface RoleDecision {\n  ok: boolean;\n  message?: string;\n}\n\n/**\n * Role gate for the tools that change money or entitlements. A stdio caller is\n * the operator themselves, so there is no role to check - they already have the\n * credentials this process runs with.\n */\nexport function requireRole(ctx: ToolContext, ...allowed: SupportRole[]): RoleDecision {\n  if (!ctx.session) {\n    return { ok: true };\n  }\n  if (allowed.includes(ctx.session.role)) {\n    return { ok: true };\n  }\n  return {\n    ok: false,\n    message: `This action is limited to ${allowed.join(' or ')}; this session is ${ctx.session.role}.`,\n  };\n}\n"
+      }
+    },
+    {
+      "id": "ref-mcp-tools-vendor-status",
+      "family": "mcp-tools",
+      "architecture": "MCP server on @modelcontextprotocol/sdk 1.17 (McpServer with registerTool/registerResource/registerPrompt) exposed both over StdioServerTransport and over a StreamableHTTPServerTransport mounted on Express 4, with every read and write going through the @aws-sdk/lib-dynamodb DynamoDBDocumentClient, and the caller's identity coming from a bearer token resolved into a DynamoDB session row over HTTP and from the invoking local process over stdio.",
+      "language": "typescript",
+      "file": "mcp-tools/src/tools/vendor-status.ts",
+      "scanAs": "src/tools/vendor-status.ts",
+      "kind": "safe",
+      "runtimeVerifiable": true,
+      "pairedWith": "ref-mcp-tools-article-import",
+      "why": "Also fetches a caller-supplied URL and returns the body, but only after parsing it with `new URL()`, requiring `https:`, and requiring exact-hostname membership in the configured `allowedStatusHosts` set - and the request runs with `redirect: 'error'`, so an allowed vendor host cannot bounce it onto an internal address.",
+      "packageJson": {
+        "name": "ledgerline-support-mcp",
+        "version": "2.4.1",
+        "private": true,
+        "type": "module",
+        "bin": {
+          "ledgerline-support-mcp": "dist/index.js",
+          "ledgerline-support-mcp-http": "dist/http-server.js"
+        },
+        "dependencies": {
+          "@aws-sdk/client-dynamodb": "^3.664.0",
+          "@aws-sdk/lib-dynamodb": "^3.664.0",
+          "@modelcontextprotocol/sdk": "^1.17.0",
+          "express": "^4.21.2",
+          "zod": "^3.23.8"
+        },
+        "devDependencies": {
+          "@types/express": "^4.17.21",
+          "@types/node": "^22.7.5",
+          "typescript": "^5.6.3"
+        }
+      },
+      "extraFiles": {
+        "src/config/environment.ts": "import { DynamoDBClient } from '@aws-sdk/client-dynamodb';\nimport { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';\n\n/**\n * Every knob this server has. Nothing here is secret: the process gets its AWS\n * credentials from the ambient provider chain (the engineer's own profile when\n * it runs over stdio, the task role when it runs behind the HTTP transport).\n */\nfunction fromEnv(name: string, fallback: string): string {\n  const value = process.env[name];\n  return value !== undefined && value.trim() !== '' ? value.trim() : fallback;\n}\n\nconst tablePrefix = fromEnv('LEDGERLINE_TABLE_PREFIX', 'ledgerline');\n\nexport const tables = {\n  tickets: `${tablePrefix}_support_tickets`,\n  ticketEvents: `${tablePrefix}_ticket_events`,\n  ticketAttachments: `${tablePrefix}_ticket_attachments`,\n  customers: `${tablePrefix}_customers`,\n  accounts: `${tablePrefix}_accounts`,\n  knowledgeArticles: `${tablePrefix}_kb_articles`,\n  mcpSessions: `${tablePrefix}_mcp_sessions`,\n} as const;\n\n/** Read-only mounts the support tooling is allowed to serve files from. */\nexport const storagePaths = {\n  runbookRoot: fromEnv('LEDGERLINE_RUNBOOK_ROOT', '/srv/ledgerline/runbooks'),\n  attachmentRoot: fromEnv('LEDGERLINE_ATTACHMENT_ROOT', '/srv/ledgerline/attachments'),\n} as const;\n\n/**\n * Vendor status pages an agent may poll while triaging an incident. Exact host\n * names only - we compare against `URL.hostname`, never a suffix.\n */\nexport const allowedStatusHosts: ReadonlySet<string> = new Set([\n  'status.stripe.com',\n  'status.twilio.com',\n  'status.sendgrid.com',\n  'ledgerline.statuspage.io',\n]);\n\nexport const awsRegion = fromEnv('AWS_REGION', 'eu-west-1');\nexport const httpPort = Number.parseInt(fromEnv('PORT', '8931'), 10);\nexport const serviceUserAgent = 'ledgerline-support-mcp/2.4';\n\nexport const documentClient = DynamoDBDocumentClient.from(\n  new DynamoDBClient({ region: awsRegion }),\n  { marshallOptions: { removeUndefinedValues: true } },\n);\n",
+        "src/auth/sessions.ts": "import { GetCommand } from '@aws-sdk/lib-dynamodb';\nimport { documentClient, tables } from '../config/environment.js';\n\nexport type SupportRole = 'support_agent' | 'support_lead' | 'billing_admin';\n\nexport interface CallerSession {\n  token: string;\n  accountId: string;\n  role: SupportRole;\n  displayName: string;\n  /** Unix seconds. */\n  expiresAt: number;\n}\n\n/**\n * What the tool implementations know about whoever is driving them.\n *\n * `session` is null when this process speaks MCP over stdio: it was started by\n * a human on their own workstation, it runs with that human's own AWS\n * credentials, and there is no second party to identify. Over the HTTP\n * transport there is one, and it is always non-null there.\n */\nexport interface ToolContext {\n  session: CallerSession | null;\n}\n\n/** Resolve a bearer token into the session row the auth service wrote. */\nexport async function lookupSession(token: string): Promise<CallerSession | null> {\n  const result = await documentClient.send(\n    new GetCommand({\n      TableName: tables.mcpSessions,\n      Key: { token },\n      ProjectionExpression: 'token, accountId, #role, displayName, expiresAt',\n      ExpressionAttributeNames: { '#role': 'role' },\n    }),\n  );\n\n  const session = result.Item as CallerSession | undefined;\n  if (!session) {\n    return null;\n  }\n  if (session.expiresAt <= Math.floor(Date.now() / 1000)) {\n    return null;\n  }\n  return session;\n}\n\n/**\n * Which account a tool call is allowed to touch.\n *\n * When there is a session it is authoritative - a caller supplied accountId is\n * only ever a hint, and it can never widen the scope. Over stdio there is no\n * session, so the operator has to say which account they are working on.\n */\nexport function accountScope(ctx: ToolContext, requestedAccountId?: string): string {\n  if (ctx.session) {\n    return ctx.session.accountId;\n  }\n  if (!requestedAccountId) {\n    throw new Error('accountId is required when the server is driven over stdio');\n  }\n  return requestedAccountId;\n}\n\nexport interface RoleDecision {\n  ok: boolean;\n  message?: string;\n}\n\n/**\n * Role gate for the tools that change money or entitlements. A stdio caller is\n * the operator themselves, so there is no role to check - they already have the\n * credentials this process runs with.\n */\nexport function requireRole(ctx: ToolContext, ...allowed: SupportRole[]): RoleDecision {\n  if (!ctx.session) {\n    return { ok: true };\n  }\n  if (allowed.includes(ctx.session.role)) {\n    return { ok: true };\n  }\n  return {\n    ok: false,\n    message: `This action is limited to ${allowed.join(' or ')}; this session is ${ctx.session.role}.`,\n  };\n}\n"
+      }
+    },
+    {
+      "id": "ref-mcp-tools-runbook-resource",
+      "family": "mcp-tools",
+      "architecture": "MCP server on @modelcontextprotocol/sdk 1.17 (McpServer with registerTool/registerResource/registerPrompt) exposed both over StdioServerTransport and over a StreamableHTTPServerTransport mounted on Express 4, with every read and write going through the @aws-sdk/lib-dynamodb DynamoDBDocumentClient, and the caller's identity coming from a bearer token resolved into a DynamoDB session row over HTTP and from the invoking local process over stdio.",
+      "language": "typescript",
+      "file": "mcp-tools/src/resources/runbook-library.ts",
+      "scanAs": "src/resources/runbook-library.ts",
+      "kind": "vulnerable",
+      "category": "resource_template_variable_path_traversal",
+      "cwe": "CWE-22",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 37,
+      "lineRange": [
+        31,
+        44
+      ],
+      "runtimeVerifiable": true,
+      "why": "The `{path}` variable of `runbook://runbooks/{path}` is percent-decoded when the SDK matches the URI and is then joined onto storagePaths.runbookRoot with no normalisation and no containment check, so a client-constructed URI such as runbook://runbooks/..%2f..%2f..%2fetc%2fpasswd makes readFile return any file the process can read as resource contents. The comment's claim that a template variable cannot cross a path segment does not survive percent-encoding.",
+      "packageJson": {
+        "name": "ledgerline-support-mcp",
+        "version": "2.4.1",
+        "private": true,
+        "type": "module",
+        "bin": {
+          "ledgerline-support-mcp": "dist/index.js",
+          "ledgerline-support-mcp-http": "dist/http-server.js"
+        },
+        "dependencies": {
+          "@aws-sdk/client-dynamodb": "^3.664.0",
+          "@aws-sdk/lib-dynamodb": "^3.664.0",
+          "@modelcontextprotocol/sdk": "^1.17.0",
+          "express": "^4.21.2",
+          "zod": "^3.23.8"
+        },
+        "devDependencies": {
+          "@types/express": "^4.17.21",
+          "@types/node": "^22.7.5",
+          "typescript": "^5.6.3"
+        }
+      },
+      "extraFiles": {
+        "src/config/environment.ts": "import { DynamoDBClient } from '@aws-sdk/client-dynamodb';\nimport { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';\n\n/**\n * Every knob this server has. Nothing here is secret: the process gets its AWS\n * credentials from the ambient provider chain (the engineer's own profile when\n * it runs over stdio, the task role when it runs behind the HTTP transport).\n */\nfunction fromEnv(name: string, fallback: string): string {\n  const value = process.env[name];\n  return value !== undefined && value.trim() !== '' ? value.trim() : fallback;\n}\n\nconst tablePrefix = fromEnv('LEDGERLINE_TABLE_PREFIX', 'ledgerline');\n\nexport const tables = {\n  tickets: `${tablePrefix}_support_tickets`,\n  ticketEvents: `${tablePrefix}_ticket_events`,\n  ticketAttachments: `${tablePrefix}_ticket_attachments`,\n  customers: `${tablePrefix}_customers`,\n  accounts: `${tablePrefix}_accounts`,\n  knowledgeArticles: `${tablePrefix}_kb_articles`,\n  mcpSessions: `${tablePrefix}_mcp_sessions`,\n} as const;\n\n/** Read-only mounts the support tooling is allowed to serve files from. */\nexport const storagePaths = {\n  runbookRoot: fromEnv('LEDGERLINE_RUNBOOK_ROOT', '/srv/ledgerline/runbooks'),\n  attachmentRoot: fromEnv('LEDGERLINE_ATTACHMENT_ROOT', '/srv/ledgerline/attachments'),\n} as const;\n\n/**\n * Vendor status pages an agent may poll while triaging an incident. Exact host\n * names only - we compare against `URL.hostname`, never a suffix.\n */\nexport const allowedStatusHosts: ReadonlySet<string> = new Set([\n  'status.stripe.com',\n  'status.twilio.com',\n  'status.sendgrid.com',\n  'ledgerline.statuspage.io',\n]);\n\nexport const awsRegion = fromEnv('AWS_REGION', 'eu-west-1');\nexport const httpPort = Number.parseInt(fromEnv('PORT', '8931'), 10);\nexport const serviceUserAgent = 'ledgerline-support-mcp/2.4';\n\nexport const documentClient = DynamoDBDocumentClient.from(\n  new DynamoDBClient({ region: awsRegion }),\n  { marshallOptions: { removeUndefinedValues: true } },\n);\n",
+        "src/auth/sessions.ts": "import { GetCommand } from '@aws-sdk/lib-dynamodb';\nimport { documentClient, tables } from '../config/environment.js';\n\nexport type SupportRole = 'support_agent' | 'support_lead' | 'billing_admin';\n\nexport interface CallerSession {\n  token: string;\n  accountId: string;\n  role: SupportRole;\n  displayName: string;\n  /** Unix seconds. */\n  expiresAt: number;\n}\n\n/**\n * What the tool implementations know about whoever is driving them.\n *\n * `session` is null when this process speaks MCP over stdio: it was started by\n * a human on their own workstation, it runs with that human's own AWS\n * credentials, and there is no second party to identify. Over the HTTP\n * transport there is one, and it is always non-null there.\n */\nexport interface ToolContext {\n  session: CallerSession | null;\n}\n\n/** Resolve a bearer token into the session row the auth service wrote. */\nexport async function lookupSession(token: string): Promise<CallerSession | null> {\n  const result = await documentClient.send(\n    new GetCommand({\n      TableName: tables.mcpSessions,\n      Key: { token },\n      ProjectionExpression: 'token, accountId, #role, displayName, expiresAt',\n      ExpressionAttributeNames: { '#role': 'role' },\n    }),\n  );\n\n  const session = result.Item as CallerSession | undefined;\n  if (!session) {\n    return null;\n  }\n  if (session.expiresAt <= Math.floor(Date.now() / 1000)) {\n    return null;\n  }\n  return session;\n}\n\n/**\n * Which account a tool call is allowed to touch.\n *\n * When there is a session it is authoritative - a caller supplied accountId is\n * only ever a hint, and it can never widen the scope. Over stdio there is no\n * session, so the operator has to say which account they are working on.\n */\nexport function accountScope(ctx: ToolContext, requestedAccountId?: string): string {\n  if (ctx.session) {\n    return ctx.session.accountId;\n  }\n  if (!requestedAccountId) {\n    throw new Error('accountId is required when the server is driven over stdio');\n  }\n  return requestedAccountId;\n}\n\nexport interface RoleDecision {\n  ok: boolean;\n  message?: string;\n}\n\n/**\n * Role gate for the tools that change money or entitlements. A stdio caller is\n * the operator themselves, so there is no role to check - they already have the\n * credentials this process runs with.\n */\nexport function requireRole(ctx: ToolContext, ...allowed: SupportRole[]): RoleDecision {\n  if (!ctx.session) {\n    return { ok: true };\n  }\n  if (allowed.includes(ctx.session.role)) {\n    return { ok: true };\n  }\n  return {\n    ok: false,\n    message: `This action is limited to ${allowed.join(' or ')}; this session is ${ctx.session.role}.`,\n  };\n}\n"
+      }
+    },
+    {
+      "id": "ref-mcp-tools-attachment-resource",
+      "family": "mcp-tools",
+      "architecture": "MCP server on @modelcontextprotocol/sdk 1.17 (McpServer with registerTool/registerResource/registerPrompt) exposed both over StdioServerTransport and over a StreamableHTTPServerTransport mounted on Express 4, with every read and write going through the @aws-sdk/lib-dynamodb DynamoDBDocumentClient, and the caller's identity coming from a bearer token resolved into a DynamoDB session row over HTTP and from the invoking local process over stdio.",
+      "language": "typescript",
+      "file": "mcp-tools/src/resources/ticket-attachments.ts",
+      "scanAs": "src/resources/ticket-attachments.ts",
+      "kind": "safe",
+      "runtimeVerifiable": true,
+      "pairedWith": "ref-mcp-tools-runbook-resource",
+      "why": "Two template variables reach a readFile here as well, but neither one names a file: the attachment is found by Query on the attachments table, the caller's filename is reduced with `basename()` before it is matched against the recorded originalFilename, the path actually read is the server-written `storageKey`, and the resolved path is still required to sit under the attachment root.",
+      "packageJson": {
+        "name": "ledgerline-support-mcp",
+        "version": "2.4.1",
+        "private": true,
+        "type": "module",
+        "bin": {
+          "ledgerline-support-mcp": "dist/index.js",
+          "ledgerline-support-mcp-http": "dist/http-server.js"
+        },
+        "dependencies": {
+          "@aws-sdk/client-dynamodb": "^3.664.0",
+          "@aws-sdk/lib-dynamodb": "^3.664.0",
+          "@modelcontextprotocol/sdk": "^1.17.0",
+          "express": "^4.21.2",
+          "zod": "^3.23.8"
+        },
+        "devDependencies": {
+          "@types/express": "^4.17.21",
+          "@types/node": "^22.7.5",
+          "typescript": "^5.6.3"
+        }
+      },
+      "extraFiles": {
+        "src/config/environment.ts": "import { DynamoDBClient } from '@aws-sdk/client-dynamodb';\nimport { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';\n\n/**\n * Every knob this server has. Nothing here is secret: the process gets its AWS\n * credentials from the ambient provider chain (the engineer's own profile when\n * it runs over stdio, the task role when it runs behind the HTTP transport).\n */\nfunction fromEnv(name: string, fallback: string): string {\n  const value = process.env[name];\n  return value !== undefined && value.trim() !== '' ? value.trim() : fallback;\n}\n\nconst tablePrefix = fromEnv('LEDGERLINE_TABLE_PREFIX', 'ledgerline');\n\nexport const tables = {\n  tickets: `${tablePrefix}_support_tickets`,\n  ticketEvents: `${tablePrefix}_ticket_events`,\n  ticketAttachments: `${tablePrefix}_ticket_attachments`,\n  customers: `${tablePrefix}_customers`,\n  accounts: `${tablePrefix}_accounts`,\n  knowledgeArticles: `${tablePrefix}_kb_articles`,\n  mcpSessions: `${tablePrefix}_mcp_sessions`,\n} as const;\n\n/** Read-only mounts the support tooling is allowed to serve files from. */\nexport const storagePaths = {\n  runbookRoot: fromEnv('LEDGERLINE_RUNBOOK_ROOT', '/srv/ledgerline/runbooks'),\n  attachmentRoot: fromEnv('LEDGERLINE_ATTACHMENT_ROOT', '/srv/ledgerline/attachments'),\n} as const;\n\n/**\n * Vendor status pages an agent may poll while triaging an incident. Exact host\n * names only - we compare against `URL.hostname`, never a suffix.\n */\nexport const allowedStatusHosts: ReadonlySet<string> = new Set([\n  'status.stripe.com',\n  'status.twilio.com',\n  'status.sendgrid.com',\n  'ledgerline.statuspage.io',\n]);\n\nexport const awsRegion = fromEnv('AWS_REGION', 'eu-west-1');\nexport const httpPort = Number.parseInt(fromEnv('PORT', '8931'), 10);\nexport const serviceUserAgent = 'ledgerline-support-mcp/2.4';\n\nexport const documentClient = DynamoDBDocumentClient.from(\n  new DynamoDBClient({ region: awsRegion }),\n  { marshallOptions: { removeUndefinedValues: true } },\n);\n",
+        "src/auth/sessions.ts": "import { GetCommand } from '@aws-sdk/lib-dynamodb';\nimport { documentClient, tables } from '../config/environment.js';\n\nexport type SupportRole = 'support_agent' | 'support_lead' | 'billing_admin';\n\nexport interface CallerSession {\n  token: string;\n  accountId: string;\n  role: SupportRole;\n  displayName: string;\n  /** Unix seconds. */\n  expiresAt: number;\n}\n\n/**\n * What the tool implementations know about whoever is driving them.\n *\n * `session` is null when this process speaks MCP over stdio: it was started by\n * a human on their own workstation, it runs with that human's own AWS\n * credentials, and there is no second party to identify. Over the HTTP\n * transport there is one, and it is always non-null there.\n */\nexport interface ToolContext {\n  session: CallerSession | null;\n}\n\n/** Resolve a bearer token into the session row the auth service wrote. */\nexport async function lookupSession(token: string): Promise<CallerSession | null> {\n  const result = await documentClient.send(\n    new GetCommand({\n      TableName: tables.mcpSessions,\n      Key: { token },\n      ProjectionExpression: 'token, accountId, #role, displayName, expiresAt',\n      ExpressionAttributeNames: { '#role': 'role' },\n    }),\n  );\n\n  const session = result.Item as CallerSession | undefined;\n  if (!session) {\n    return null;\n  }\n  if (session.expiresAt <= Math.floor(Date.now() / 1000)) {\n    return null;\n  }\n  return session;\n}\n\n/**\n * Which account a tool call is allowed to touch.\n *\n * When there is a session it is authoritative - a caller supplied accountId is\n * only ever a hint, and it can never widen the scope. Over stdio there is no\n * session, so the operator has to say which account they are working on.\n */\nexport function accountScope(ctx: ToolContext, requestedAccountId?: string): string {\n  if (ctx.session) {\n    return ctx.session.accountId;\n  }\n  if (!requestedAccountId) {\n    throw new Error('accountId is required when the server is driven over stdio');\n  }\n  return requestedAccountId;\n}\n\nexport interface RoleDecision {\n  ok: boolean;\n  message?: string;\n}\n\n/**\n * Role gate for the tools that change money or entitlements. A stdio caller is\n * the operator themselves, so there is no role to check - they already have the\n * credentials this process runs with.\n */\nexport function requireRole(ctx: ToolContext, ...allowed: SupportRole[]): RoleDecision {\n  if (!ctx.session) {\n    return { ok: true };\n  }\n  if (allowed.includes(ctx.session.role)) {\n    return { ok: true };\n  }\n  return {\n    ok: false,\n    message: `This action is limited to ${allowed.join(' or ')}; this session is ${ctx.session.role}.`,\n  };\n}\n"
+      }
+    },
+    {
+      "id": "ref-mcp-tools-http-entry",
+      "family": "mcp-tools",
+      "architecture": "MCP server on @modelcontextprotocol/sdk 1.17 (McpServer with registerTool/registerResource/registerPrompt) exposed both over StdioServerTransport and over a StreamableHTTPServerTransport mounted on Express 4, with every read and write going through the @aws-sdk/lib-dynamodb DynamoDBDocumentClient, and the caller's identity coming from a bearer token resolved into a DynamoDB session row over HTTP and from the invoking local process over stdio.",
+      "language": "typescript",
+      "file": "mcp-tools/src/http-server.ts",
+      "scanAs": "src/http-server.ts",
+      "kind": "vulnerable",
+      "category": "unauthenticated_http_transport_treated_as_local_operator",
+      "cwe": "CWE-287",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 52,
+      "lineRange": [
+        45,
+        67
+      ],
+      "runtimeVerifiable": true,
+      "why": "On the initialize request the bearer token is looked up, but an absent, unknown or expired token simply leaves `session` null and the server is built with it. A null session is the stdio contract for 'the caller is the operator who started this process': requireRole returns ok for every role and accountScope accepts a caller-supplied accountId, so an unauthenticated HTTP client gets cross-account reads plus the credit and plan-change tools. Nothing here ever answers 401.",
+      "packageJson": {
+        "name": "ledgerline-support-mcp",
+        "version": "2.4.1",
+        "private": true,
+        "type": "module",
+        "bin": {
+          "ledgerline-support-mcp": "dist/index.js",
+          "ledgerline-support-mcp-http": "dist/http-server.js"
+        },
+        "dependencies": {
+          "@aws-sdk/client-dynamodb": "^3.664.0",
+          "@aws-sdk/lib-dynamodb": "^3.664.0",
+          "@modelcontextprotocol/sdk": "^1.17.0",
+          "express": "^4.21.2",
+          "zod": "^3.23.8"
+        },
+        "devDependencies": {
+          "@types/express": "^4.17.21",
+          "@types/node": "^22.7.5",
+          "typescript": "^5.6.3"
+        }
+      },
+      "extraFiles": {
+        "src/config/environment.ts": "import { DynamoDBClient } from '@aws-sdk/client-dynamodb';\nimport { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';\n\n/**\n * Every knob this server has. Nothing here is secret: the process gets its AWS\n * credentials from the ambient provider chain (the engineer's own profile when\n * it runs over stdio, the task role when it runs behind the HTTP transport).\n */\nfunction fromEnv(name: string, fallback: string): string {\n  const value = process.env[name];\n  return value !== undefined && value.trim() !== '' ? value.trim() : fallback;\n}\n\nconst tablePrefix = fromEnv('LEDGERLINE_TABLE_PREFIX', 'ledgerline');\n\nexport const tables = {\n  tickets: `${tablePrefix}_support_tickets`,\n  ticketEvents: `${tablePrefix}_ticket_events`,\n  ticketAttachments: `${tablePrefix}_ticket_attachments`,\n  customers: `${tablePrefix}_customers`,\n  accounts: `${tablePrefix}_accounts`,\n  knowledgeArticles: `${tablePrefix}_kb_articles`,\n  mcpSessions: `${tablePrefix}_mcp_sessions`,\n} as const;\n\n/** Read-only mounts the support tooling is allowed to serve files from. */\nexport const storagePaths = {\n  runbookRoot: fromEnv('LEDGERLINE_RUNBOOK_ROOT', '/srv/ledgerline/runbooks'),\n  attachmentRoot: fromEnv('LEDGERLINE_ATTACHMENT_ROOT', '/srv/ledgerline/attachments'),\n} as const;\n\n/**\n * Vendor status pages an agent may poll while triaging an incident. Exact host\n * names only - we compare against `URL.hostname`, never a suffix.\n */\nexport const allowedStatusHosts: ReadonlySet<string> = new Set([\n  'status.stripe.com',\n  'status.twilio.com',\n  'status.sendgrid.com',\n  'ledgerline.statuspage.io',\n]);\n\nexport const awsRegion = fromEnv('AWS_REGION', 'eu-west-1');\nexport const httpPort = Number.parseInt(fromEnv('PORT', '8931'), 10);\nexport const serviceUserAgent = 'ledgerline-support-mcp/2.4';\n\nexport const documentClient = DynamoDBDocumentClient.from(\n  new DynamoDBClient({ region: awsRegion }),\n  { marshallOptions: { removeUndefinedValues: true } },\n);\n",
+        "src/auth/sessions.ts": "import { GetCommand } from '@aws-sdk/lib-dynamodb';\nimport { documentClient, tables } from '../config/environment.js';\n\nexport type SupportRole = 'support_agent' | 'support_lead' | 'billing_admin';\n\nexport interface CallerSession {\n  token: string;\n  accountId: string;\n  role: SupportRole;\n  displayName: string;\n  /** Unix seconds. */\n  expiresAt: number;\n}\n\n/**\n * What the tool implementations know about whoever is driving them.\n *\n * `session` is null when this process speaks MCP over stdio: it was started by\n * a human on their own workstation, it runs with that human's own AWS\n * credentials, and there is no second party to identify. Over the HTTP\n * transport there is one, and it is always non-null there.\n */\nexport interface ToolContext {\n  session: CallerSession | null;\n}\n\n/** Resolve a bearer token into the session row the auth service wrote. */\nexport async function lookupSession(token: string): Promise<CallerSession | null> {\n  const result = await documentClient.send(\n    new GetCommand({\n      TableName: tables.mcpSessions,\n      Key: { token },\n      ProjectionExpression: 'token, accountId, #role, displayName, expiresAt',\n      ExpressionAttributeNames: { '#role': 'role' },\n    }),\n  );\n\n  const session = result.Item as CallerSession | undefined;\n  if (!session) {\n    return null;\n  }\n  if (session.expiresAt <= Math.floor(Date.now() / 1000)) {\n    return null;\n  }\n  return session;\n}\n\n/**\n * Which account a tool call is allowed to touch.\n *\n * When there is a session it is authoritative - a caller supplied accountId is\n * only ever a hint, and it can never widen the scope. Over stdio there is no\n * session, so the operator has to say which account they are working on.\n */\nexport function accountScope(ctx: ToolContext, requestedAccountId?: string): string {\n  if (ctx.session) {\n    return ctx.session.accountId;\n  }\n  if (!requestedAccountId) {\n    throw new Error('accountId is required when the server is driven over stdio');\n  }\n  return requestedAccountId;\n}\n\nexport interface RoleDecision {\n  ok: boolean;\n  message?: string;\n}\n\n/**\n * Role gate for the tools that change money or entitlements. A stdio caller is\n * the operator themselves, so there is no role to check - they already have the\n * credentials this process runs with.\n */\nexport function requireRole(ctx: ToolContext, ...allowed: SupportRole[]): RoleDecision {\n  if (!ctx.session) {\n    return { ok: true };\n  }\n  if (allowed.includes(ctx.session.role)) {\n    return { ok: true };\n  }\n  return {\n    ok: false,\n    message: `This action is limited to ${allowed.join(' or ')}; this session is ${ctx.session.role}.`,\n  };\n}\n",
+        "src/index.ts": "#!/usr/bin/env node\nimport { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';\nimport { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';\nimport { z } from 'zod';\nimport type { ToolContext } from './auth/sessions.js';\nimport { registerRunbookLibrary } from './resources/runbook-library.js';\nimport { registerTicketAttachments } from './resources/ticket-attachments.js';\nimport { registerAccountCreditTools } from './tools/account-credits.js';\nimport { registerCustomerDirectoryTool } from './tools/customer-directory.js';\nimport { registerKnowledgeImportTool } from './tools/knowledge-import.js';\nimport { registerSubscriptionChangeTools } from './tools/subscription-changes.js';\nimport { registerTicketLookupTool } from './tools/ticket-lookup.js';\nimport { registerTicketSearchTool } from './tools/ticket-search.js';\nimport { registerTicketTimelineTool } from './tools/ticket-timeline.js';\nimport { registerVendorStatusTool } from './tools/vendor-status.js';\n\nexport const serverInfo = { name: 'ledgerline-support', version: '2.4.1' };\n\n/**\n * Build a server instance for one caller. Both entry points use this, so the\n * tools and resources behave identically over stdio and over HTTP; the only\n * difference between the two is what is in the context.\n */\nexport function createSupportServer(ctx: ToolContext): McpServer {\n  const server = new McpServer(serverInfo, {\n    instructions:\n      'Ledgerline support desk. Read tickets before answering, cite a runbook when you ' +\n      'recommend an action, and never promise a credit you have not applied.',\n  });\n\n  registerTicketLookupTool(server, ctx);\n  registerTicketTimelineTool(server, ctx);\n  registerTicketSearchTool(server, ctx);\n  registerCustomerDirectoryTool(server, ctx);\n  registerAccountCreditTools(server, ctx);\n  registerSubscriptionChangeTools(server, ctx);\n  registerKnowledgeImportTool(server, ctx);\n  registerVendorStatusTool(server, ctx);\n  registerRunbookLibrary(server, ctx);\n  registerTicketAttachments(server, ctx);\n\n  server.registerPrompt(\n    'triage_ticket',\n    {\n      title: 'Triage a ticket',\n      description: 'Walk a ticket through our triage checklist and draft the first reply.',\n      argsSchema: {\n        ticketId: z.string().regex(/^TCK-\\d{4,8}$/),\n        tone: z.enum(['neutral', 'apologetic']).optional(),\n      },\n    },\n    ({ ticketId, tone }) => ({\n      messages: [\n        {\n          role: 'user',\n          content: {\n            type: 'text',\n            text:\n              `Triage ${ticketId}. Read the ticket and its history first, then say which ` +\n              `queue it belongs in, what the customer is actually asking for, and draft a ` +\n              `${tone ?? 'neutral'} reply. Quote a runbook if one applies.`,\n          },\n        },\n      ],\n    }),\n  );\n\n  return server;\n}\n\n/**\n * stdio entry point: an engineer's MCP client spawns this binary, so the caller\n * is the person who started the process. There is no second party on the other\n * end of the pipe to authenticate, and the process can only reach what that\n * engineer's own AWS credentials can reach, so the context has no session.\n */\nasync function main(): Promise<void> {\n  const server = createSupportServer({ session: null });\n  await server.connect(new StdioServerTransport());\n  process.stderr.write(`${serverInfo.name} ${serverInfo.version} ready on stdio\\n`);\n}\n\nmain().catch((error: unknown) => {\n  process.stderr.write(`fatal: ${(error as Error).message}\\n`);\n  process.exit(1);\n});\n"
+      },
+      "route": "POST /mcp"
+    },
+    {
+      "id": "ref-mcp-tools-stdio-entry",
+      "family": "mcp-tools",
+      "architecture": "MCP server on @modelcontextprotocol/sdk 1.17 (McpServer with registerTool/registerResource/registerPrompt) exposed both over StdioServerTransport and over a StreamableHTTPServerTransport mounted on Express 4, with every read and write going through the @aws-sdk/lib-dynamodb DynamoDBDocumentClient, and the caller's identity coming from a bearer token resolved into a DynamoDB session row over HTTP and from the invoking local process over stdio.",
+      "language": "typescript",
+      "file": "mcp-tools/src/index.ts",
+      "scanAs": "src/index.ts",
+      "kind": "safe",
+      "runtimeVerifiable": true,
+      "pairedWith": "ref-mcp-tools-http-entry",
+      "why": "The identical `createSupportServer({ session: null })` construction, with no token handling anywhere in the file, which is correct on this transport: the process is spawned by the operator's own MCP client over a pipe, there is no remote party that could be authenticated, and it can only reach what that operator's own AWS credentials already reach.",
+      "packageJson": {
+        "name": "ledgerline-support-mcp",
+        "version": "2.4.1",
+        "private": true,
+        "type": "module",
+        "bin": {
+          "ledgerline-support-mcp": "dist/index.js",
+          "ledgerline-support-mcp-http": "dist/http-server.js"
+        },
+        "dependencies": {
+          "@aws-sdk/client-dynamodb": "^3.664.0",
+          "@aws-sdk/lib-dynamodb": "^3.664.0",
+          "@modelcontextprotocol/sdk": "^1.17.0",
+          "express": "^4.21.2",
+          "zod": "^3.23.8"
+        },
+        "devDependencies": {
+          "@types/express": "^4.17.21",
+          "@types/node": "^22.7.5",
+          "typescript": "^5.6.3"
+        }
+      },
+      "extraFiles": {
+        "src/config/environment.ts": "import { DynamoDBClient } from '@aws-sdk/client-dynamodb';\nimport { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';\n\n/**\n * Every knob this server has. Nothing here is secret: the process gets its AWS\n * credentials from the ambient provider chain (the engineer's own profile when\n * it runs over stdio, the task role when it runs behind the HTTP transport).\n */\nfunction fromEnv(name: string, fallback: string): string {\n  const value = process.env[name];\n  return value !== undefined && value.trim() !== '' ? value.trim() : fallback;\n}\n\nconst tablePrefix = fromEnv('LEDGERLINE_TABLE_PREFIX', 'ledgerline');\n\nexport const tables = {\n  tickets: `${tablePrefix}_support_tickets`,\n  ticketEvents: `${tablePrefix}_ticket_events`,\n  ticketAttachments: `${tablePrefix}_ticket_attachments`,\n  customers: `${tablePrefix}_customers`,\n  accounts: `${tablePrefix}_accounts`,\n  knowledgeArticles: `${tablePrefix}_kb_articles`,\n  mcpSessions: `${tablePrefix}_mcp_sessions`,\n} as const;\n\n/** Read-only mounts the support tooling is allowed to serve files from. */\nexport const storagePaths = {\n  runbookRoot: fromEnv('LEDGERLINE_RUNBOOK_ROOT', '/srv/ledgerline/runbooks'),\n  attachmentRoot: fromEnv('LEDGERLINE_ATTACHMENT_ROOT', '/srv/ledgerline/attachments'),\n} as const;\n\n/**\n * Vendor status pages an agent may poll while triaging an incident. Exact host\n * names only - we compare against `URL.hostname`, never a suffix.\n */\nexport const allowedStatusHosts: ReadonlySet<string> = new Set([\n  'status.stripe.com',\n  'status.twilio.com',\n  'status.sendgrid.com',\n  'ledgerline.statuspage.io',\n]);\n\nexport const awsRegion = fromEnv('AWS_REGION', 'eu-west-1');\nexport const httpPort = Number.parseInt(fromEnv('PORT', '8931'), 10);\nexport const serviceUserAgent = 'ledgerline-support-mcp/2.4';\n\nexport const documentClient = DynamoDBDocumentClient.from(\n  new DynamoDBClient({ region: awsRegion }),\n  { marshallOptions: { removeUndefinedValues: true } },\n);\n",
+        "src/auth/sessions.ts": "import { GetCommand } from '@aws-sdk/lib-dynamodb';\nimport { documentClient, tables } from '../config/environment.js';\n\nexport type SupportRole = 'support_agent' | 'support_lead' | 'billing_admin';\n\nexport interface CallerSession {\n  token: string;\n  accountId: string;\n  role: SupportRole;\n  displayName: string;\n  /** Unix seconds. */\n  expiresAt: number;\n}\n\n/**\n * What the tool implementations know about whoever is driving them.\n *\n * `session` is null when this process speaks MCP over stdio: it was started by\n * a human on their own workstation, it runs with that human's own AWS\n * credentials, and there is no second party to identify. Over the HTTP\n * transport there is one, and it is always non-null there.\n */\nexport interface ToolContext {\n  session: CallerSession | null;\n}\n\n/** Resolve a bearer token into the session row the auth service wrote. */\nexport async function lookupSession(token: string): Promise<CallerSession | null> {\n  const result = await documentClient.send(\n    new GetCommand({\n      TableName: tables.mcpSessions,\n      Key: { token },\n      ProjectionExpression: 'token, accountId, #role, displayName, expiresAt',\n      ExpressionAttributeNames: { '#role': 'role' },\n    }),\n  );\n\n  const session = result.Item as CallerSession | undefined;\n  if (!session) {\n    return null;\n  }\n  if (session.expiresAt <= Math.floor(Date.now() / 1000)) {\n    return null;\n  }\n  return session;\n}\n\n/**\n * Which account a tool call is allowed to touch.\n *\n * When there is a session it is authoritative - a caller supplied accountId is\n * only ever a hint, and it can never widen the scope. Over stdio there is no\n * session, so the operator has to say which account they are working on.\n */\nexport function accountScope(ctx: ToolContext, requestedAccountId?: string): string {\n  if (ctx.session) {\n    return ctx.session.accountId;\n  }\n  if (!requestedAccountId) {\n    throw new Error('accountId is required when the server is driven over stdio');\n  }\n  return requestedAccountId;\n}\n\nexport interface RoleDecision {\n  ok: boolean;\n  message?: string;\n}\n\n/**\n * Role gate for the tools that change money or entitlements. A stdio caller is\n * the operator themselves, so there is no role to check - they already have the\n * credentials this process runs with.\n */\nexport function requireRole(ctx: ToolContext, ...allowed: SupportRole[]): RoleDecision {\n  if (!ctx.session) {\n    return { ok: true };\n  }\n  if (allowed.includes(ctx.session.role)) {\n    return { ok: true };\n  }\n  return {\n    ok: false,\n    message: `This action is limited to ${allowed.join(' or ')}; this session is ${ctx.session.role}.`,\n  };\n}\n"
+      }
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "name": "myrqen-workspace-backend",
+  "version": "0.6.3",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "convex": "^1.17.4"
+  }
+}

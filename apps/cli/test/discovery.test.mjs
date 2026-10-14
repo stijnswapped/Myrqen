@@ -8,10 +8,11 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 const ROOT = path.resolve(import.meta.dirname, "..", "..", "..");
 const { discoverProject, findRepoRoot } = await import(
-  path.join(ROOT, "apps", "cli", "dist-tsc", "discovery", "project.js")
+  pathToFileURL(path.join(ROOT, "apps", "cli", "dist-tsc", "discovery", "project.js")).href
 );
 
 const FIXTURE = path.join(ROOT, "fixtures", "vuln-shop");
@@ -52,14 +53,19 @@ test("instruction-like passages in project content are recorded as untrusted", a
   assert.ok(discovered.injectionObservations.every((observation) => observation.excerpt.length <= 160));
 });
 
-test("an unresponsive isolated runtime never stalls discovery", async () => {
+// The hung runtime is a POSIX shell script named `docker`. On Windows, spawn()
+// without a shell resolves only `docker.exe`, so no shim of ours can stand in
+// for it and the runner's real Docker would be measured instead.
+const SHELL_SHIM = process.platform === "win32" ? "the docker stand-in is a POSIX shell script" : false;
+
+test("an unresponsive isolated runtime never stalls discovery", { skip: SHELL_SHIM }, async () => {
   const shim = await fs.mkdtemp(path.join(os.tmpdir(), "myrqen-docker-shim-"));
   const dockerPath = path.join(shim, "docker");
   await fs.writeFile(dockerPath, "#!/bin/sh\nsleep 60\n", { mode: 0o755 });
 
   const originalPath = process.env.PATH;
   const originalAssume = process.env.MYRQEN_ASSUME_NO_ISOLATION;
-  process.env.PATH = `${shim}:${originalPath}`;
+  process.env.PATH = `${shim}${path.delimiter}${originalPath}`;
   delete process.env.MYRQEN_ASSUME_NO_ISOLATION;
 
   try {
@@ -78,6 +84,13 @@ test("an unresponsive isolated runtime never stalls discovery", async () => {
 test("the repository root is found from a nested directory", async () => {
   const nested = path.join(FIXTURE, "src");
   assert.equal(await findRepoRoot(nested), FIXTURE);
+});
+
+test("a Python app with only requirements.txt is its own root, not the directory above it", async () => {
+  // A Flask or FastAPI project commonly has no pyproject.toml. Without this marker the
+  // CLI walked up to whatever enclosing directory had one, and scanned and wrote there.
+  const fixture = path.join(ROOT, "fixtures", "vuln-flask");
+  assert.equal(await findRepoRoot(path.join(fixture, "app")), fixture);
 });
 
 test("an origin proposed only by injected content is not offered as a candidate", async () => {

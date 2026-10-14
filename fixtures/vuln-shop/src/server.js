@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { orders, products, query, sessions, users } from "./db.js";
+import { applyPromotion, invoiceByReference, invoicesForUser } from "./invoices.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(HERE, "..", "data");
@@ -167,6 +168,54 @@ const server = http.createServer(async (request, response) => {
       const order = { id: 200 + orders.length, userId: user.id, item: product.name, total, address: "n/a", card: "0000" };
       orders.push(order);
       return json(response, 200, { order, total });
+    }
+
+    /*
+     * Three defects the static pass cannot see, and which exist so the whole-product
+     * measurement can lose a case. Each is invisible for a different reason.
+     */
+
+    // Cross-module: authenticated, then delegated. The ownership predicate belongs in
+    // `invoices.js`, one module boundary away, which is past what an intra-procedural
+    // taint model can follow. Only exercising it as two different customers shows it.
+    if (request.method === "GET" && /^\/api\/invoices\/[a-z0-9-]+$/.test(url.pathname)) {
+      const user = currentUser(request);
+      if (!user) return json(response, 401, { error: "sign in first" });
+      const reference = url.pathname.split("/").pop();
+      const invoice = invoiceByReference(reference);
+      if (!invoice) return json(response, 404, { error: "not found" });
+      return json(response, 200, invoice);
+    }
+
+    // The correctly scoped listing beside it, so the defect above is a slip.
+    if (route === "GET /api/invoices") {
+      const user = currentUser(request);
+      if (!user) return json(response, 401, { error: "sign in first" });
+      return json(response, 200, invoicesForUser(user.id));
+    }
+
+    // Account enumeration: the response distinguishes "no such account" from
+    // "account exists". Every line here reads correctly; the defect is the pair of
+    // outcomes, which no rule models and only a differential probe reveals.
+    if (route === "POST /api/password-reset") {
+      const body = await readBody(request);
+      const account = users.find((candidate) => candidate.email === body.email);
+      if (!account) return json(response, 404, { error: "no account with that address" });
+      return json(response, 200, { sent: true, hint: `a link was sent to ${account.email}` });
+    }
+
+    // Replayable promotion: redemption is never recorded, so the same code applies
+    // again on every request. Correct line by line; visible only by doing it twice.
+    if (route === "POST /api/promotions/redeem") {
+      const user = currentUser(request);
+      if (!user) return json(response, 401, { error: "sign in first" });
+      const body = await readBody(request);
+      const order = orders.find((candidate) => candidate.id === Number(body.orderId) && candidate.userId === user.id);
+      if (!order) return json(response, 404, { error: "not found" });
+      const outcome = applyPromotion(String(body.code ?? ""), order.total);
+      if (!outcome.applied) return json(response, 422, { error: "unknown code" });
+      order.total = outcome.total;
+      return json(response, 200, { orderId: order.id, total: order.total });
     }
 
     // Debug endpoint exposing internal configuration, including a secret.

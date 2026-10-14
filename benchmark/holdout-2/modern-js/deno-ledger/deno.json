@@ -1,0 +1,12 @@
+{
+  "name": "@acme/ledger-api",
+  "version": "3.2.0",
+  "tasks": {
+    "dev": "deno run --allow-net --allow-env --watch main.ts",
+    "start": "deno run --allow-net --allow-env main.ts"
+  },
+  "imports": {
+    "postgres/": "https://deno.land/x/postgres@v0.19.3/"
+  },
+  "compilerOptions": { "strict": true }
+}

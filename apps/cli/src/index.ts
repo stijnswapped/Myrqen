@@ -3,7 +3,8 @@ import { BRAND, CLI_VERSION } from "@myrqen/brand";
 import type { EffortRequested, ScanPhase, TokenSource } from "@myrqen/contracts";
 import { EFFORT_REQUESTED_VALUES, SCAN_PHASES } from "@myrqen/contracts";
 import { findRepoRoot } from "./discovery/project.js";
-import { fail, json, write } from "./ui/output.js";
+import { blank, fail, json, write } from "./ui/output.js";
+import { isInteractive } from "./ui/prompt.js";
 import { requireSession, saveSession } from "./session/state.js";
 import { createCloudShell, startSession } from "./session/start.js";
 import { finishSession } from "./session/finish.js";
@@ -13,6 +14,7 @@ import {
   checkAction,
   checkRedirect,
   checkTargetInScope,
+  printFixAllPrompt,
   printFixPrompt,
   recordAgentMetadata,
   recordFix,
@@ -23,13 +25,25 @@ import {
   refuteFinding,
   updatePhase
 } from "./agent/protocol.js";
-import { installCommand, linkCommand } from "./commands/link.js";
+import { accountLinkCommand } from "./commands/link.js";
+import { integrationStatus, linkIntegrations, unlinkIntegrations } from "./commands/integrations.js";
 import { doctorCommand } from "./commands/doctor.js";
 import { reportsCommand, syncCommand } from "./commands/reports.js";
+import { baselineCommand } from "./commands/baseline.js";
 import { workspaceCommand } from "./commands/workspace.js";
 import { updateCommand } from "./commands/update.js";
-import { logoutCommand, setUrlCommand, statusCommand } from "./commands/account.js";
+import {
+  logoutCommand,
+  setTelemetryCommand,
+  setUrlCommand,
+  statusCommand as accountStatusCommand
+} from "./commands/account.js";
 import { skillSourceDirectory } from "./install/skill.js";
+import { configUsage, projectConfigCommand } from "./commands/config.js";
+import { diffCommand, reportCommand } from "./commands/report.js";
+import { watchCommand } from "./commands/watch.js";
+import { EXIT_NEEDS_EVIDENCE, EXIT_RETEST_FAILED, fixCommand, retestCommand } from "./commands/fix.js";
+import type { RunConfigFlags } from "./session/run-config.js";
 import { runStaticPass } from "./scan/static-pass.js";
 
 async function readStdin(): Promise<string> {
@@ -57,45 +71,72 @@ function globalOptions(): { asJson: boolean; sessionId?: string } {
   return { asJson: Boolean(options.json), ...(options.session ? { sessionId: options.session } : {}) };
 }
 
+interface RunFlagOptions {
+  startCommand?: string;
+  appUrl?: string;
+  appEnv?: string[];
+}
+
+/** The app-under-test flags shared by every way of starting a session. */
+function withRunFlags(command: Command): Command {
+  return command
+    .option("--start-command <command>", "how to start the app under test; saved to the project config")
+    .option("--app-url <port-or-url>", "loopback port or URL the app answers on; saved to the project config")
+    .option("--app-env <names>", "environment variable NAMES the app needs (comma-separated, repeatable); never values", collect, []);
+}
+
+function runFlags(options: RunFlagOptions): { runConfig?: RunConfigFlags } {
+  const flags: RunConfigFlags = {
+    ...(options.startCommand ? { startCommand: options.startCommand } : {}),
+    ...(options.appUrl ? { appUrl: options.appUrl } : {}),
+    ...(options.appEnv && options.appEnv.length > 0 ? { env: options.appEnv } : {})
+  };
+  return Object.keys(flags).length > 0 ? { runConfig: flags } : {};
+}
+
 /* ---------- effort shortcuts ---------- */
 
 for (const effort of EFFORT_REQUESTED_VALUES) {
-  program
-    .command(effort)
-    .description(`Start a ${effort} assessment in the current project`)
-    .option("--sync <mode>", "yes, no, or ask (default ask)")
-    .option("--workspace <id>", "bind this repository to an explicit workspace")
-    .option("--agent <name>", "host agent name")
-    .option("--agent-version <version>", "host agent version")
-    .option("--model <model>", "host model identifier when the agent can report it")
-    .action(async (options: { sync?: string; workspace?: string; agent?: string; agentVersion?: string; model?: string }) => {
+  withRunFlags(
+    program
+      .command(effort)
+      .description(`Start a ${effort} assessment in the current project`)
+      .option("--sync <mode>", "yes, no, or ask (default ask)")
+      .option("--workspace <id>", "bind this repository to an explicit workspace")
+      .option("--agent <name>", "host agent name")
+      .option("--agent-version <version>", "host agent version")
+      .option("--model <model>", "host model identifier when the agent can report it")
+  ).action(
+    async (options: { sync?: string; workspace?: string; agent?: string; agentVersion?: string; model?: string } & RunFlagOptions) => {
       const { asJson } = globalOptions();
       await startSession({
         effort: effort as EffortRequested,
         asJson,
+        ...runFlags(options),
         ...(options.sync ? { sync: options.sync as "yes" | "no" | "ask" } : {}),
         ...(options.workspace ? { workspaceId: options.workspace } : {}),
         ...(options.agent ? { agentName: options.agent } : {}),
         ...(options.agentVersion ? { agentVersion: options.agentVersion } : {}),
         ...(options.model ? { agentModel: options.model } : {})
       });
-    });
+    }
+  );
 }
 
 /* ---------- session lifecycle ---------- */
 
 const session = program.command("session").description("Manage the local assessment session");
 
-session
+withRunFlags(session
   .command("start")
-  .description("Start a session and print the context the host agent must work inside")
+  .description("Start a session and print the context the host agent must work inside"))
   .addOption(new Option("--effort <effort>", "low, high, xhigh, ultra, or auto").default("auto"))
   .option("--sync <mode>", "yes, no, or ask (default ask)")
   .option("--workspace <id>", "bind this repository to an explicit workspace")
   .option("--agent <name>", "host agent name")
   .option("--agent-version <version>", "host agent version")
   .option("--model <model>", "host model identifier when the agent can report it")
-  .action(async (options: { effort: string; sync?: string; workspace?: string; agent?: string; agentVersion?: string; model?: string }) => {
+  .action(async (options: { effort: string; sync?: string; workspace?: string; agent?: string; agentVersion?: string; model?: string } & RunFlagOptions) => {
     const { asJson } = globalOptions();
     if (!EFFORT_REQUESTED_VALUES.includes(options.effort as EffortRequested)) {
       throw new Error(`Unknown effort "${options.effort}". Use one of: ${EFFORT_REQUESTED_VALUES.join(", ")}.`);
@@ -103,6 +144,7 @@ session
     await startSession({
       effort: options.effort as EffortRequested,
       asJson,
+      ...runFlags(options),
       ...(options.sync ? { sync: options.sync as "yes" | "no" | "ask" } : {}),
       ...(options.workspace ? { workspaceId: options.workspace } : {}),
       ...(options.agent ? { agentName: options.agent } : {}),
@@ -341,6 +383,73 @@ finding
   });
 
 
+/*
+ * The command the methodology already told the agent to use.
+ *
+ * `references/METHODOLOGY.md` opens its source-review phase with "start by reading
+ * its candidates rather than the file tree. Each one names a route, a line, and the
+ * data flow it believes in." Nothing returned them. `SessionContext.staticPass`
+ * carried `candidatesRecorded` — a count — and `session static-pass` *re-runs* the
+ * pass and resubmits everything, which inflates the duplicate counter and still
+ * prints numbers. An agent following the skill literally settled nothing, because it
+ * could not see what there was to settle.
+ *
+ * Ordered worst-first: unsettled before settled, then by severity. What an agent
+ * needs first is the candidate nobody has exercised.
+ */
+finding
+  .command("list")
+  .description("List the candidates and findings in the current session, unsettled first")
+  .option("--all", "include findings already verified or refuted")
+  .action(async (options: { all?: boolean }) => {
+    const { asJson, sessionId } = globalOptions();
+    const state = await currentSession(sessionId);
+
+    const RANK: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
+    const settled = (finding: (typeof state.findings)[number]): boolean =>
+      finding.verification === "verified" || finding.status === "false_positive";
+
+    const rows = [...state.findings]
+      .filter((finding) => options.all === true || !settled(finding))
+      .sort(
+        (left, right) =>
+          Number(settled(left)) - Number(settled(right)) ||
+          (RANK[left.severity] ?? 9) - (RANK[right.severity] ?? 9) ||
+          left.id.localeCompare(right.id)
+      );
+
+    if (asJson) {
+      json({
+        localReportId: state.localReportId,
+        total: state.findings.length,
+        listed: rows.length,
+        findings: rows
+      });
+      return;
+    }
+
+    if (rows.length === 0) {
+      write(
+        state.findings.length === 0
+          ? "No candidates in this session. If the static pass ran and found nothing, say so in the report rather than treating it as a clean bill of health."
+          : "Every finding in this session is settled. Use --all to see them."
+      );
+      return;
+    }
+
+    write(`${rows.length} of ${state.findings.length} finding(s), unsettled first:`);
+    for (const finding of rows) {
+      const where = finding.affected.route ?? finding.affected.component ?? finding.affected.origin ?? "no route resolved";
+      write("");
+      write(`${finding.id}  ${finding.severity.toUpperCase()}  ${finding.verification}${settled(finding) ? `  [${finding.status}]` : ""}`);
+      write(`  ${finding.category} · ${where}`);
+      write(`  ${finding.title}`);
+      if (finding.reproduction) write(`  how to exercise it: ${finding.reproduction}`);
+    }
+    write("");
+    write("Settle each one with `myrqen finding verify <id> --description \"<what you observed>\"` or `myrqen finding refute <id> --reason \"<why>\"`.");
+  });
+
 finding
   .command("submit")
   .description("Submit a structured finding (JSON on stdin)")
@@ -409,14 +518,45 @@ program
 
 /* ---------- fix workflow ---------- */
 
-const fix = program.command("fix").description("Remediation workflow");
+const fix = program
+  .command("fix")
+  .description("Fix one finding on its own branch (fix <findingId>), or print prompts and record outcomes");
 
 fix
-  .command("prompt <findingId>")
-  .description("Print a remediation prompt for a coding agent")
+  .command("start <findingId>", { isDefault: true })
+  .description("Refuse a dirty tree, branch myrqen/fix-<id> from HEAD, then apply a mechanical fix or write the agent's plan")
   .action(async (findingId: string) => {
+    const { asJson, sessionId } = globalOptions();
+    const state = await currentSession(sessionId);
+    await fixCommand(state, findingId, { asJson });
+  });
+
+fix
+  .command("prompt [findingId]")
+  .description("Print a remediation prompt for a coding agent, or --all for the whole report")
+  .option("--all", "one prompt covering every open finding, ordered by file")
+  .action(async (findingId: string | undefined, options: { all?: boolean }) => {
     const { sessionId } = globalOptions();
     const state = await currentSession(sessionId);
+
+    // `--all` is the shape people reach for: fix what you found. Each finding is still
+    // marked `fix_suggested` individually, so the report distinguishes "a prompt was
+    // produced for this" from "somebody fixed this" exactly as the single-finding path
+    // does.
+    if (options.all) {
+      printFixAllPrompt(state);
+      const open = state.findings.filter(
+        (finding) => !["fixed_verified", "false_positive", "accepted_risk"].includes(finding.status ?? "open")
+      );
+      for (const finding of open) {
+        await recordFix(state, finding.id, "suggested", { asJson: false }).catch(() => undefined);
+      }
+      return;
+    }
+
+    if (!findingId) {
+      throw new Error("Give a finding id, or --all for every open finding.");
+    }
     printFixPrompt(state, findingId);
     await recordFix(state, findingId, "suggested", { asJson: false }).catch(() => undefined);
   });
@@ -452,46 +592,210 @@ fix
     });
   });
 
+program
+  .command("retest <findingId>")
+  .description("Re-run only this finding's check; on a pass, commit on its fix branch and mark it fixed and verified")
+  .option("--evidence <text>", "what the original request returned when repeated after the fix (runtime-verified findings)")
+  .option("--still-reproduces", "the repeated request still showed the issue")
+  .option("--no-commit", "record the result but do not commit")
+  .action(async (findingId: string, options: { evidence?: string; stillReproduces?: boolean; commit?: boolean }) => {
+    const { asJson, sessionId } = globalOptions();
+    const state = await currentSession(sessionId);
+    const outcome = await retestCommand(state, findingId, {
+      asJson,
+      ...(options.evidence ? { evidence: options.evidence } : {}),
+      ...(options.stillReproduces ? { stillReproduces: true } : {}),
+      ...(options.commit === false ? { commit: false } : {})
+    });
+    if (outcome.outcome === "fail") process.exitCode = EXIT_RETEST_FAILED;
+    if (outcome.outcome === "needs_runtime_evidence") process.exitCode = EXIT_NEEDS_EVIDENCE;
+  });
+
 /* ---------- account, project, and platform ---------- */
+
+/**
+ * Setup.
+ *
+ * `link` is the one command a new user has to remember, so it does the whole
+ * job: detect the coding agents on this machine, let the user choose where
+ * Myrqen should integrate, show exactly which files change, write them, and then
+ * offer to connect an account for cloud reports. Account linking is offered
+ * last and is entirely optional — scanning works without it, and a setup command
+ * that demands a login before it does anything useful is a setup command people
+ * abandon.
+ */
+function setupOptions(options: {
+  agent?: string[];
+  all?: boolean;
+  scope?: string;
+  dryRun?: boolean;
+  yes?: boolean;
+  verbose?: boolean;
+  probe?: boolean;
+}) {
+  if (options.scope && !["project", "global", "both"].includes(options.scope)) {
+    throw new Error(`--scope must be project, global, or both.`);
+  }
+  return {
+    asJson: globalOptions().asJson,
+    ...(options.agent && options.agent.length > 0 ? { agents: options.agent } : {}),
+    ...(options.all ? { all: true } : {}),
+    ...(options.scope ? { scope: options.scope as "project" | "global" | "both" } : {}),
+    ...(options.dryRun ? { dryRun: true } : {}),
+    ...(options.yes ? { yes: true } : {}),
+    ...(options.verbose ? { verbose: true } : {}),
+    // Commander turns `--no-probe` into `probe: false`. Anything else means the
+    // user did not ask, and the default is decided from the environment.
+    ...(options.probe === false ? { noProbe: true } : {})
+  };
+}
+
+function collect(value: string, previous: string[]): string[] {
+  return [...previous, value];
+}
 
 program
   .command("link")
-  .description("Install the agent skill and securely link this device to an account")
+  .description("Detect your coding agents, configure them, and optionally connect an account")
+  .option("--agent <id>", "install for one agent; repeatable", collect, [])
+  .option("--all", "install for every detected agent without asking")
+  .option("--scope <scope>", "project, global, or both")
+  .option("--dry-run", "show the plan and write nothing")
+  .option("-y, --yes", "accept the plan without a confirmation prompt")
+  .option("--verbose", "print every file in the plan instead of collapsing bundles")
+  .option("--no-probe", "detect from files alone; never execute an agent's own CLI")
+  .option("--account", "also connect an account for cloud reports")
+  .option("--no-account", "skip the account step entirely")
+  .option("--url <url>", "app base URL for the account step")
+  .option("--device-name <name>", "name for this device in the account")
+  .option("--no-open", "do not open a browser automatically")
+  .action(
+    async (options: {
+      agent?: string[];
+      all?: boolean;
+      scope?: string;
+      dryRun?: boolean;
+      yes?: boolean;
+      verbose?: boolean;
+      probe?: boolean;
+      account?: boolean;
+      url?: string;
+      deviceName?: string;
+      open?: boolean;
+    }) => {
+      const { asJson } = globalOptions();
+      await linkIntegrations(setupOptions(options));
+      // The account step is a question, so it is only asked where a question can
+      // be answered. Reaching it in a scripted run made `link --all --yes`
+      // install everything correctly and then exit non-zero, because the prompt
+      // saw end-of-input and read it as a refusal.
+      if (asJson || options.dryRun || options.account === false) return;
+      if (options.account !== true && (!isInteractive() || options.yes)) return;
+      await accountLinkCommand({
+        offer: options.account !== true,
+        ...(options.url ? { apiBaseUrl: options.url } : {}),
+        ...(options.deviceName ? { deviceName: options.deviceName } : {}),
+        ...(options.open === false ? { open: false } : {})
+      });
+    }
+  );
+
+program
+  .command("login")
+  .description("Connect this device to an account, without touching agent integrations")
   .option("--url <url>", "app base URL")
   .option("--device-name <name>")
   .option("--no-open", "do not open a browser automatically")
-  .option("--skip-skill-install", "link only, without installing the agent skill")
-  .action(async (options: { url?: string; deviceName?: string; open?: boolean; skipSkillInstall?: boolean }) => {
-    await linkCommand({
+  .action(async (options: { url?: string; deviceName?: string; open?: boolean }) =>
+    accountLinkCommand({
       ...(options.url ? { apiBaseUrl: options.url } : {}),
       ...(options.deviceName ? { deviceName: options.deviceName } : {}),
-      ...(options.open === false ? { open: false } : {}),
-      ...(options.skipSkillInstall ? { skipSkillInstall: true } : {})
-    });
-  });
-
-program.command("login").description("Alias for link").action(async () => linkCommand());
+      ...(options.open === false ? { open: false } : {})
+    })
+  );
 
 program
   .command("install")
-  .description("Install or update the portable agent skill for detected agents")
-  .action(async () => installCommand());
+  .description("Alias for link, without the account step")
+  .option("--agent <id>", "install for one agent; repeatable", collect, [])
+  .option("--all", "install for every detected agent without asking")
+  .option("--scope <scope>", "project, global, or both")
+  .option("--dry-run", "show the plan and write nothing")
+  .option("-y, --yes", "accept the plan without a confirmation prompt")
+  .option("--no-probe", "detect from files alone; never execute an agent's own CLI")
+  .action(
+    async (options: {
+      agent?: string[];
+      all?: boolean;
+      scope?: string;
+      dryRun?: boolean;
+      yes?: boolean;
+      probe?: boolean;
+    }) => {
+      await linkIntegrations(setupOptions(options));
+    }
+  );
+
+program
+  .command("unlink")
+  .description(`Remove ${BRAND.displayName} integrations, leaving your own instructions untouched`)
+  .option("--agent <id>", "remove one agent's integration; repeatable", collect, [])
+  .option("--all", `remove every ${BRAND.displayName} integration found`)
+  .option("--scope <scope>", "limit the removal to project or global")
+  .option("--dry-run", "show what would be removed and remove nothing")
+  .option("-y, --yes", "remove without a confirmation prompt")
+  .action(async (options: { agent?: string[]; all?: boolean; scope?: string; dryRun?: boolean; yes?: boolean }) => {
+    if (options.scope && options.scope !== "project" && options.scope !== "global") {
+      throw new Error("--scope must be project or global.");
+    }
+    await unlinkIntegrations({
+      asJson: globalOptions().asJson,
+      ...(options.agent && options.agent.length > 0 ? { agents: options.agent } : {}),
+      ...(options.all ? { all: true } : {}),
+      ...(options.scope ? { scope: options.scope as "project" | "global" } : {}),
+      ...(options.dryRun ? { dryRun: true } : {}),
+      ...(options.yes ? { yes: true } : {})
+    });
+  });
 
 program
   .command("status")
-  .description("Show account, device, and quota state")
-  .action(async () => statusCommand({ asJson: globalOptions().asJson }));
+  .description("Show which agents are linked here, plus account and quota state")
+  .option("--account", "show only the account, device, and quota state")
+  .option("--agents", "show only the agent integrations")
+  .option("--no-probe", "detect from files alone; never execute an agent's own CLI")
+  .action(async (options: { account?: boolean; agents?: boolean; probe?: boolean }) => {
+    const { asJson } = globalOptions();
+    const both = !options.account && !options.agents;
+    const noProbe = options.probe === false ? { noProbe: true } : {};
+    // One command, one JSON document. Two `json()` calls concatenate two
+    // objects on stdout and `JSON.parse` fails on the result.
+    if (asJson && both) {
+      const integrations = await integrationStatus({ collect: true, ...noProbe });
+      const account = await accountStatusCommand({ collect: true });
+      json({ ...(integrations ?? {}), account });
+      return;
+    }
+    if (both || options.agents) await integrationStatus({ asJson, ...noProbe });
+    if (both || options.account) {
+      if (both && !asJson) blank();
+      await accountStatusCommand({ asJson });
+    }
+  });
 
 program.command("logout").description("Remove the local device credential").action(async () => logoutCommand());
 
 program
   .command("config")
-  .description("Local configuration")
-  .argument("<subcommand>", "set-url")
-  .argument("[value]")
-  .action(async (subcommand: string, value?: string) => {
-    if (subcommand !== "set-url" || !value) throw new Error('Usage: config set-url <url>');
-    await setUrlCommand(value);
+  .description("Show or change this project's run settings (start command, app URL, env names) and local settings")
+  .argument("[subcommand]", "show | detect | set <key> <value> | trust | reset | set-url <url> | telemetry <on|off>")
+  .argument("[values...]")
+  .action(async (subcommand: string | undefined, values: string[]) => {
+    const value = values[0];
+    if (subcommand === "set-url" && value) return setUrlCommand(value);
+    if (subcommand === "telemetry" && value) return setTelemetryCommand(value);
+    if (await projectConfigCommand(subcommand, values, { asJson: globalOptions().asJson })) return;
+    throw new Error(configUsage());
   });
 
 program
@@ -513,6 +817,47 @@ program
   .action(async () => reportsCommand({ asJson: globalOptions().asJson }));
 
 program
+  .command("baseline")
+  .description("Record a finished report's findings in .myrqen/baseline.json, a file meant to be committed")
+  .option("--from <localReportId>", "take the baseline from this local report instead of the newest one")
+  .action(async (options: { from?: string }) =>
+    baselineCommand({ asJson: globalOptions().asJson, ...(options.from ? { from: options.from } : {}) })
+  );
+
+program
+  .command("report [run]")
+  .description("Open the latest local HTML report, print one format's path, or list recent runs")
+  .option("--format <format>", "html, md, json, or sarif: print that file's path instead of opening")
+  .option("--list", "list recent runs with their counts")
+  .option("--last <n>", "list the last n runs")
+  .option("--no-open", "print the path instead of opening a browser")
+  .action(async (run: string | undefined, options: { format?: string; list?: boolean; last?: string; open?: boolean }) => {
+    await reportCommand(run, {
+      asJson: globalOptions().asJson,
+      ...(options.format ? { format: options.format } : {}),
+      ...(options.list ? { list: true } : {}),
+      ...(options.last !== undefined ? { last: Number(options.last) } : {}),
+      ...(options.open === false ? { open: false } : {})
+    });
+  });
+
+program
+  .command("diff [base] [head]")
+  .description("Compare two runs by stable fingerprint: new, fixed, regressed, still open (default: the last two)")
+  .action(async (base: string | undefined, head: string | undefined) => {
+    await diffCommand(base, head, { asJson: globalOptions().asJson });
+  });
+
+program
+  .command("watch")
+  .description("Follow the current session live from another terminal while your agent runs it")
+  .option("--once", "print the current progress once and exit")
+  .action(async (options: { once?: boolean }) => {
+    const { asJson, sessionId } = globalOptions();
+    await watchCommand({ ...(asJson ? { asJson } : {}), ...(options.once ? { once: true } : {}), ...(sessionId ? { sessionId } : {}) });
+  });
+
+program
   .command("sync <localReportId>")
   .description("Sync an existing local report after rechecking login, device, and quota")
   .action(async (localReportId: string) => syncCommand(localReportId, { asJson: globalOptions().asJson }));
@@ -520,8 +865,12 @@ program
 program
   .command("doctor")
   .description("Report what this machine and agent setup can assess")
-  .action(async () => {
-    await doctorCommand({ asJson: globalOptions().asJson });
+  .option("--no-probe", "detect from files alone; never execute an agent's own CLI")
+  .action(async (options: { probe?: boolean }) => {
+    await doctorCommand({
+      asJson: globalOptions().asJson,
+      ...(options.probe === false ? { noProbe: true } : {})
+    });
   });
 
 program
@@ -549,7 +898,25 @@ program
     write(await skillSourceDirectory());
   });
 
+/**
+ * `myrqen` with no arguments.
+ *
+ * A usage wall is the wrong answer to somebody who has just run `npx myrqen`
+ * for the first time and does not yet know what the tool is. Setup is, and
+ * `--help` is one word away for anybody who wants the list.
+ */
+if (process.argv.length <= 2) {
+  process.argv.push("link");
+}
+
 program.parseAsync(process.argv).catch((error: unknown) => {
-  fail(error instanceof Error ? error.message : String(error));
+  const message = error instanceof Error ? error.message : String(error);
+  // A machine consumer parses stdout. Prose on stderr and an empty stdout gives
+  // it "Unexpected end of JSON input" instead of the reason it needed.
+  if (program.opts<{ json?: boolean }>().json) json({ error: { code: "COMMAND_FAILED", message } });
+  else fail(message);
+  if (process.env.MYRQEN_DEBUG === "1" && error instanceof Error && error.stack) {
+    process.stderr.write(`${error.stack}\n`);
+  }
   process.exitCode = 1;
 });

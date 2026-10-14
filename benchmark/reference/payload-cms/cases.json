@@ -1,0 +1,580 @@
+{
+  "family": "payload-cms",
+  "cases": [
+    {
+      "id": "ref-payload-cms-purchase-order-approval-trail",
+      "family": "payload-cms",
+      "architecture": "Payload CMS 3 application in TypeScript: collection configs with their own `endpoints` arrays plus root endpoints, all assembled in src/payload.config.ts; Payload's Local API over MongoDB (@payloadcms/db-mongodb) is the only data layer; the caller's identity is `req.user`, populated by the `users` auth collection and carrying a role and a tenant relationship.",
+      "language": "typescript",
+      "file": "payload-cms/src/collections/PurchaseOrders.ts",
+      "scanAs": "src/collections/PurchaseOrders.ts",
+      "kind": "vulnerable",
+      "category": "cross_tenant_object_read_via_unscoped_id_lookup",
+      "cwe": "CWE-639",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 185,
+      "lineRange": [
+        172,
+        203
+      ],
+      "runtimeVerifiable": true,
+      "why": "The `:id` route parameter is handed to `payload.findByID` with `overrideAccess: true`, which switches off the very `access.read` filter the comment above it relies on, so any authenticated caller — a buyer in another organisation, or an external supplier user — can read any purchase order's reference, status, supplier and approval trail by guessing or replaying an id.",
+      "packageJson": {
+        "name": "orderbook-portal",
+        "version": "1.4.2",
+        "private": true,
+        "type": "module",
+        "scripts": {
+          "dev": "next dev",
+          "build": "next build",
+          "generate:types": "payload generate:types"
+        },
+        "dependencies": {
+          "@payloadcms/db-mongodb": "3.33.0",
+          "@payloadcms/next": "3.33.0",
+          "@payloadcms/richtext-lexical": "3.33.0",
+          "@payloadcms/ui": "3.33.0",
+          "graphql": "^16.9.0",
+          "next": "15.2.4",
+          "payload": "3.33.0",
+          "react": "19.0.0",
+          "react-dom": "19.0.0"
+        },
+        "devDependencies": {
+          "@types/node": "^22.13.0",
+          "@types/react": "19.0.0",
+          "typescript": "5.7.3"
+        }
+      },
+      "extraFiles": {
+        "src/lib/tenant-scope.ts": "import type { Access, PayloadRequest, Where } from 'payload'\n\n/**\n * Every organisation on Orderbook is a Payload `tenant` document. Users belong\n * to exactly one tenant, except for platform staff who sit outside the tenant\n * tree and reconcile across all of them from the admin panel.\n */\nexport type Role = 'platform-admin' | 'tenant-admin' | 'buyer' | 'supplier-user'\n\n/**\n * Shape of the document Payload puts on `req.user` for the `users` auth\n * collection. Mirrors the fields declared in `collections/Users.ts` — keep the\n * two in step when a field is added there.\n */\nexport interface AppUser {\n  id: string\n  email: string\n  role: Role\n  /** Relationship to `tenants`; a string id unless the caller asked for depth. */\n  tenant?: string | { id: string } | null\n  /** Set only on `supplier-user` accounts, matches `supplierCode` on orders. */\n  supplierCode?: string | null\n}\n\n/** Error with an HTTP status attached, so endpoint handlers can throw and go. */\nexport class RequestError extends Error {\n  readonly status: number\n\n  constructor(status: number, message: string) {\n    super(message)\n    this.name = 'RequestError'\n    this.status = status\n  }\n}\n\n/**\n * Single place where handler failures become responses. Anything that is not a\n * deliberate `RequestError` is logged server side and answered generically so\n * we never hand a stack trace or a driver message to the caller.\n */\nexport const errorResponse = (error: unknown): Response => {\n  if (error instanceof RequestError) {\n    return Response.json({ message: error.message }, { status: error.status })\n  }\n\n  const status = (error as { status?: unknown } | null)?.status\n  if (status === 404) {\n    return Response.json({ message: 'Not found.' }, { status: 404 })\n  }\n\n  console.error('[orderbook] request failed', error)\n  return Response.json({ message: 'Something went wrong handling that request.' }, { status: 500 })\n}\n\nexport const currentUser = (req: PayloadRequest): AppUser | null =>\n  (req.user as AppUser | undefined) ?? null\n\nexport const isPlatformAdmin = (user: AppUser | null): boolean => user?.role === 'platform-admin'\n\n/** Read the caller's tenant id whether or not the relation came back populated. */\nexport const tenantOf = (user: AppUser | null): string | null => {\n  const tenant = user?.tenant\n  if (!tenant) return null\n  return typeof tenant === 'string' ? tenant : tenant.id\n}\n\n/**\n * Guard for endpoints that only make sense inside one organisation. Platform\n * staff are deliberately rejected here: they have no tenant of their own and\n * are expected to use the admin panel rather than the portal endpoints.\n */\nexport const requireTenant = (req: PayloadRequest): { user: AppUser; tenantId: string } => {\n  const user = currentUser(req)\n  if (!user) {\n    throw new RequestError(401, 'Authentication required.')\n  }\n\n  const tenantId = tenantOf(user)\n  if (!tenantId) {\n    throw new RequestError(403, 'Your account is not attached to an organisation.')\n  }\n\n  return { user, tenantId }\n}\n\n/**\n * Collection-level read rule for tenant-owned documents. Returning a `Where`\n * from an access function makes Payload append it to every find, so list and\n * by-id reads are both narrowed to the caller's own tenant.\n */\nexport const tenantReadAccess: Access = ({ req }) => {\n  const user = currentUser(req)\n  if (!user) {\n    return false\n  }\n\n  // Platform staff run cross-tenant reconciliation and billing runs.\n  if (isPlatformAdmin(user)) {\n    return true\n  }\n\n  const tenantId = tenantOf(user)\n  if (!tenantId) {\n    return false\n  }\n\n  return { tenant: { equals: tenantId } } satisfies Where\n}\n\n/**\n * Same idea for writes, with a role gate in front: only the listed roles may\n * mutate, and then only documents belonging to their own tenant.\n */\nexport const tenantWriteAccess =\n  (...roles: Role[]): Access =>\n  ({ req }) => {\n    const user = currentUser(req)\n    if (!user) {\n      return false\n    }\n\n    if (isPlatformAdmin(user)) {\n      return true\n    }\n\n    if (!roles.includes(user.role)) {\n      return false\n    }\n\n    const tenantId = tenantOf(user)\n    if (!tenantId) {\n      return false\n    }\n\n    return { tenant: { equals: tenantId } } satisfies Where\n  }\n\nexport const platformAdminOnly: Access = ({ req }) => isPlatformAdmin(currentUser(req))\n\n/**\n * Ownership clause for the portal endpoints. Supplier users see the orders and\n * invoices addressed to their supplier code; everyone else sees their tenant's.\n * Throws rather than degrading to an empty clause, because an empty clause on\n * an `overrideAccess` query matches every document in the collection.\n */\nexport const ownershipClause = (user: AppUser): Where => {\n  if (user.role === 'supplier-user') {\n    if (!user.supplierCode) {\n      throw new RequestError(403, 'Your supplier account has no supplier code assigned.')\n    }\n    return { supplierCode: { equals: user.supplierCode } }\n  }\n\n  const tenantId = tenantOf(user)\n  if (!tenantId) {\n    throw new RequestError(403, 'Your account is not attached to an organisation.')\n  }\n\n  return { tenant: { equals: tenantId } }\n}\n\n/** Combine the tenant pin with any number of extra clauses. */\nexport const scopedToTenant = (tenantId: string, ...clauses: Where[]): Where => ({\n  and: [{ tenant: { equals: tenantId } }, ...clauses],\n})\n"
+      }
+    },
+    {
+      "id": "ref-payload-cms-invoice-payment-timeline",
+      "family": "payload-cms",
+      "architecture": "Payload CMS 3 application in TypeScript: collection configs with their own `endpoints` arrays plus root endpoints, all assembled in src/payload.config.ts; Payload's Local API over MongoDB (@payloadcms/db-mongodb) is the only data layer; the caller's identity is `req.user`, populated by the `users` auth collection and carrying a role and a tenant relationship.",
+      "language": "typescript",
+      "file": "payload-cms/src/collections/Invoices.ts",
+      "scanAs": "src/collections/Invoices.ts",
+      "kind": "safe",
+      "pairedWith": "ref-payload-cms-purchase-order-approval-trail",
+      "runtimeVerifiable": true,
+      "why": "Same untrusted `:id` and the same `overrideAccess: true` read, but the id is only one clause of a `where` whose other clause is `ownershipClause(user)`, pinning the query to the caller's `tenant` (or `supplierCode` for supplier users), so another organisation's invoice id matches nothing and the handler answers 404. `ownershipClause` throws rather than returning an empty clause when ownership cannot be established.",
+      "packageJson": {
+        "name": "orderbook-portal",
+        "version": "1.4.2",
+        "private": true,
+        "type": "module",
+        "scripts": {
+          "dev": "next dev",
+          "build": "next build",
+          "generate:types": "payload generate:types"
+        },
+        "dependencies": {
+          "@payloadcms/db-mongodb": "3.33.0",
+          "@payloadcms/next": "3.33.0",
+          "@payloadcms/richtext-lexical": "3.33.0",
+          "@payloadcms/ui": "3.33.0",
+          "graphql": "^16.9.0",
+          "next": "15.2.4",
+          "payload": "3.33.0",
+          "react": "19.0.0",
+          "react-dom": "19.0.0"
+        },
+        "devDependencies": {
+          "@types/node": "^22.13.0",
+          "@types/react": "19.0.0",
+          "typescript": "5.7.3"
+        }
+      },
+      "extraFiles": {
+        "src/lib/tenant-scope.ts": "import type { Access, PayloadRequest, Where } from 'payload'\n\n/**\n * Every organisation on Orderbook is a Payload `tenant` document. Users belong\n * to exactly one tenant, except for platform staff who sit outside the tenant\n * tree and reconcile across all of them from the admin panel.\n */\nexport type Role = 'platform-admin' | 'tenant-admin' | 'buyer' | 'supplier-user'\n\n/**\n * Shape of the document Payload puts on `req.user` for the `users` auth\n * collection. Mirrors the fields declared in `collections/Users.ts` — keep the\n * two in step when a field is added there.\n */\nexport interface AppUser {\n  id: string\n  email: string\n  role: Role\n  /** Relationship to `tenants`; a string id unless the caller asked for depth. */\n  tenant?: string | { id: string } | null\n  /** Set only on `supplier-user` accounts, matches `supplierCode` on orders. */\n  supplierCode?: string | null\n}\n\n/** Error with an HTTP status attached, so endpoint handlers can throw and go. */\nexport class RequestError extends Error {\n  readonly status: number\n\n  constructor(status: number, message: string) {\n    super(message)\n    this.name = 'RequestError'\n    this.status = status\n  }\n}\n\n/**\n * Single place where handler failures become responses. Anything that is not a\n * deliberate `RequestError` is logged server side and answered generically so\n * we never hand a stack trace or a driver message to the caller.\n */\nexport const errorResponse = (error: unknown): Response => {\n  if (error instanceof RequestError) {\n    return Response.json({ message: error.message }, { status: error.status })\n  }\n\n  const status = (error as { status?: unknown } | null)?.status\n  if (status === 404) {\n    return Response.json({ message: 'Not found.' }, { status: 404 })\n  }\n\n  console.error('[orderbook] request failed', error)\n  return Response.json({ message: 'Something went wrong handling that request.' }, { status: 500 })\n}\n\nexport const currentUser = (req: PayloadRequest): AppUser | null =>\n  (req.user as AppUser | undefined) ?? null\n\nexport const isPlatformAdmin = (user: AppUser | null): boolean => user?.role === 'platform-admin'\n\n/** Read the caller's tenant id whether or not the relation came back populated. */\nexport const tenantOf = (user: AppUser | null): string | null => {\n  const tenant = user?.tenant\n  if (!tenant) return null\n  return typeof tenant === 'string' ? tenant : tenant.id\n}\n\n/**\n * Guard for endpoints that only make sense inside one organisation. Platform\n * staff are deliberately rejected here: they have no tenant of their own and\n * are expected to use the admin panel rather than the portal endpoints.\n */\nexport const requireTenant = (req: PayloadRequest): { user: AppUser; tenantId: string } => {\n  const user = currentUser(req)\n  if (!user) {\n    throw new RequestError(401, 'Authentication required.')\n  }\n\n  const tenantId = tenantOf(user)\n  if (!tenantId) {\n    throw new RequestError(403, 'Your account is not attached to an organisation.')\n  }\n\n  return { user, tenantId }\n}\n\n/**\n * Collection-level read rule for tenant-owned documents. Returning a `Where`\n * from an access function makes Payload append it to every find, so list and\n * by-id reads are both narrowed to the caller's own tenant.\n */\nexport const tenantReadAccess: Access = ({ req }) => {\n  const user = currentUser(req)\n  if (!user) {\n    return false\n  }\n\n  // Platform staff run cross-tenant reconciliation and billing runs.\n  if (isPlatformAdmin(user)) {\n    return true\n  }\n\n  const tenantId = tenantOf(user)\n  if (!tenantId) {\n    return false\n  }\n\n  return { tenant: { equals: tenantId } } satisfies Where\n}\n\n/**\n * Same idea for writes, with a role gate in front: only the listed roles may\n * mutate, and then only documents belonging to their own tenant.\n */\nexport const tenantWriteAccess =\n  (...roles: Role[]): Access =>\n  ({ req }) => {\n    const user = currentUser(req)\n    if (!user) {\n      return false\n    }\n\n    if (isPlatformAdmin(user)) {\n      return true\n    }\n\n    if (!roles.includes(user.role)) {\n      return false\n    }\n\n    const tenantId = tenantOf(user)\n    if (!tenantId) {\n      return false\n    }\n\n    return { tenant: { equals: tenantId } } satisfies Where\n  }\n\nexport const platformAdminOnly: Access = ({ req }) => isPlatformAdmin(currentUser(req))\n\n/**\n * Ownership clause for the portal endpoints. Supplier users see the orders and\n * invoices addressed to their supplier code; everyone else sees their tenant's.\n * Throws rather than degrading to an empty clause, because an empty clause on\n * an `overrideAccess` query matches every document in the collection.\n */\nexport const ownershipClause = (user: AppUser): Where => {\n  if (user.role === 'supplier-user') {\n    if (!user.supplierCode) {\n      throw new RequestError(403, 'Your supplier account has no supplier code assigned.')\n    }\n    return { supplierCode: { equals: user.supplierCode } }\n  }\n\n  const tenantId = tenantOf(user)\n  if (!tenantId) {\n    throw new RequestError(403, 'Your account is not attached to an organisation.')\n  }\n\n  return { tenant: { equals: tenantId } }\n}\n\n/** Combine the tenant pin with any number of extra clauses. */\nexport const scopedToTenant = (tenantId: string, ...clauses: Where[]): Where => ({\n  and: [{ tenant: { equals: tenantId } }, ...clauses],\n})\n"
+      }
+    },
+    {
+      "id": "ref-payload-cms-payout-account-collection-read",
+      "family": "payload-cms",
+      "architecture": "Payload CMS 3 application in TypeScript: collection configs with their own `endpoints` arrays plus root endpoints, all assembled in src/payload.config.ts; Payload's Local API over MongoDB (@payloadcms/db-mongodb) is the only data layer; the caller's identity is `req.user`, populated by the `users` auth collection and carrying a role and a tenant relationship.",
+      "language": "typescript",
+      "file": "payload-cms/src/collections/PayoutAccounts.ts",
+      "scanAs": "src/collections/PayoutAccounts.ts",
+      "kind": "vulnerable",
+      "category": "unauthenticated_read_access_on_sensitive_collection",
+      "cwe": "CWE-862",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 25,
+      "lineRange": [
+        20,
+        29
+      ],
+      "runtimeVerifiable": true,
+      "why": "`access.read` on the payout-accounts collection returns `true` unconditionally, so the collection's own REST and GraphQL surface hands the IBAN, BIC, mandate reference and SEPA creditor id of every organisation to any caller, including an unauthenticated one. The comment assumes the admin panel's login is the gate, but the collection API is reachable without it.",
+      "packageJson": {
+        "name": "orderbook-portal",
+        "version": "1.4.2",
+        "private": true,
+        "type": "module",
+        "scripts": {
+          "dev": "next dev",
+          "build": "next build",
+          "generate:types": "payload generate:types"
+        },
+        "dependencies": {
+          "@payloadcms/db-mongodb": "3.33.0",
+          "@payloadcms/next": "3.33.0",
+          "@payloadcms/richtext-lexical": "3.33.0",
+          "@payloadcms/ui": "3.33.0",
+          "graphql": "^16.9.0",
+          "next": "15.2.4",
+          "payload": "3.33.0",
+          "react": "19.0.0",
+          "react-dom": "19.0.0"
+        },
+        "devDependencies": {
+          "@types/node": "^22.13.0",
+          "@types/react": "19.0.0",
+          "typescript": "5.7.3"
+        }
+      },
+      "extraFiles": {
+        "src/lib/tenant-scope.ts": "import type { Access, PayloadRequest, Where } from 'payload'\n\n/**\n * Every organisation on Orderbook is a Payload `tenant` document. Users belong\n * to exactly one tenant, except for platform staff who sit outside the tenant\n * tree and reconcile across all of them from the admin panel.\n */\nexport type Role = 'platform-admin' | 'tenant-admin' | 'buyer' | 'supplier-user'\n\n/**\n * Shape of the document Payload puts on `req.user` for the `users` auth\n * collection. Mirrors the fields declared in `collections/Users.ts` — keep the\n * two in step when a field is added there.\n */\nexport interface AppUser {\n  id: string\n  email: string\n  role: Role\n  /** Relationship to `tenants`; a string id unless the caller asked for depth. */\n  tenant?: string | { id: string } | null\n  /** Set only on `supplier-user` accounts, matches `supplierCode` on orders. */\n  supplierCode?: string | null\n}\n\n/** Error with an HTTP status attached, so endpoint handlers can throw and go. */\nexport class RequestError extends Error {\n  readonly status: number\n\n  constructor(status: number, message: string) {\n    super(message)\n    this.name = 'RequestError'\n    this.status = status\n  }\n}\n\n/**\n * Single place where handler failures become responses. Anything that is not a\n * deliberate `RequestError` is logged server side and answered generically so\n * we never hand a stack trace or a driver message to the caller.\n */\nexport const errorResponse = (error: unknown): Response => {\n  if (error instanceof RequestError) {\n    return Response.json({ message: error.message }, { status: error.status })\n  }\n\n  const status = (error as { status?: unknown } | null)?.status\n  if (status === 404) {\n    return Response.json({ message: 'Not found.' }, { status: 404 })\n  }\n\n  console.error('[orderbook] request failed', error)\n  return Response.json({ message: 'Something went wrong handling that request.' }, { status: 500 })\n}\n\nexport const currentUser = (req: PayloadRequest): AppUser | null =>\n  (req.user as AppUser | undefined) ?? null\n\nexport const isPlatformAdmin = (user: AppUser | null): boolean => user?.role === 'platform-admin'\n\n/** Read the caller's tenant id whether or not the relation came back populated. */\nexport const tenantOf = (user: AppUser | null): string | null => {\n  const tenant = user?.tenant\n  if (!tenant) return null\n  return typeof tenant === 'string' ? tenant : tenant.id\n}\n\n/**\n * Guard for endpoints that only make sense inside one organisation. Platform\n * staff are deliberately rejected here: they have no tenant of their own and\n * are expected to use the admin panel rather than the portal endpoints.\n */\nexport const requireTenant = (req: PayloadRequest): { user: AppUser; tenantId: string } => {\n  const user = currentUser(req)\n  if (!user) {\n    throw new RequestError(401, 'Authentication required.')\n  }\n\n  const tenantId = tenantOf(user)\n  if (!tenantId) {\n    throw new RequestError(403, 'Your account is not attached to an organisation.')\n  }\n\n  return { user, tenantId }\n}\n\n/**\n * Collection-level read rule for tenant-owned documents. Returning a `Where`\n * from an access function makes Payload append it to every find, so list and\n * by-id reads are both narrowed to the caller's own tenant.\n */\nexport const tenantReadAccess: Access = ({ req }) => {\n  const user = currentUser(req)\n  if (!user) {\n    return false\n  }\n\n  // Platform staff run cross-tenant reconciliation and billing runs.\n  if (isPlatformAdmin(user)) {\n    return true\n  }\n\n  const tenantId = tenantOf(user)\n  if (!tenantId) {\n    return false\n  }\n\n  return { tenant: { equals: tenantId } } satisfies Where\n}\n\n/**\n * Same idea for writes, with a role gate in front: only the listed roles may\n * mutate, and then only documents belonging to their own tenant.\n */\nexport const tenantWriteAccess =\n  (...roles: Role[]): Access =>\n  ({ req }) => {\n    const user = currentUser(req)\n    if (!user) {\n      return false\n    }\n\n    if (isPlatformAdmin(user)) {\n      return true\n    }\n\n    if (!roles.includes(user.role)) {\n      return false\n    }\n\n    const tenantId = tenantOf(user)\n    if (!tenantId) {\n      return false\n    }\n\n    return { tenant: { equals: tenantId } } satisfies Where\n  }\n\nexport const platformAdminOnly: Access = ({ req }) => isPlatformAdmin(currentUser(req))\n\n/**\n * Ownership clause for the portal endpoints. Supplier users see the orders and\n * invoices addressed to their supplier code; everyone else sees their tenant's.\n * Throws rather than degrading to an empty clause, because an empty clause on\n * an `overrideAccess` query matches every document in the collection.\n */\nexport const ownershipClause = (user: AppUser): Where => {\n  if (user.role === 'supplier-user') {\n    if (!user.supplierCode) {\n      throw new RequestError(403, 'Your supplier account has no supplier code assigned.')\n    }\n    return { supplierCode: { equals: user.supplierCode } }\n  }\n\n  const tenantId = tenantOf(user)\n  if (!tenantId) {\n    throw new RequestError(403, 'Your account is not attached to an organisation.')\n  }\n\n  return { tenant: { equals: tenantId } }\n}\n\n/** Combine the tenant pin with any number of extra clauses. */\nexport const scopedToTenant = (tenantId: string, ...clauses: Where[]): Where => ({\n  and: [{ tenant: { equals: tenantId } }, ...clauses],\n})\n"
+      }
+    },
+    {
+      "id": "ref-payload-cms-tenant-scope-access-helpers",
+      "family": "payload-cms",
+      "architecture": "Payload CMS 3 application in TypeScript: collection configs with their own `endpoints` arrays plus root endpoints, all assembled in src/payload.config.ts; Payload's Local API over MongoDB (@payloadcms/db-mongodb) is the only data layer; the caller's identity is `req.user`, populated by the `users` auth collection and carrying a role and a tenant relationship.",
+      "language": "typescript",
+      "file": "payload-cms/src/lib/tenant-scope.ts",
+      "scanAs": "src/lib/tenant-scope.ts",
+      "kind": "safe",
+      "pairedWith": "ref-payload-cms-payout-account-collection-read",
+      "runtimeVerifiable": true,
+      "why": "The shared access helpers deny anonymous callers outright and otherwise return a `Where` that pins every read and write to the caller's own tenant; the only `return true` in them is reached solely on the `platform-admin` role, so the truthy return is a role decision rather than an open collection.",
+      "packageJson": {
+        "name": "orderbook-portal",
+        "version": "1.4.2",
+        "private": true,
+        "type": "module",
+        "scripts": {
+          "dev": "next dev",
+          "build": "next build",
+          "generate:types": "payload generate:types"
+        },
+        "dependencies": {
+          "@payloadcms/db-mongodb": "3.33.0",
+          "@payloadcms/next": "3.33.0",
+          "@payloadcms/richtext-lexical": "3.33.0",
+          "@payloadcms/ui": "3.33.0",
+          "graphql": "^16.9.0",
+          "next": "15.2.4",
+          "payload": "3.33.0",
+          "react": "19.0.0",
+          "react-dom": "19.0.0"
+        },
+        "devDependencies": {
+          "@types/node": "^22.13.0",
+          "@types/react": "19.0.0",
+          "typescript": "5.7.3"
+        }
+      }
+    },
+    {
+      "id": "ref-payload-cms-account-profile-patch",
+      "family": "payload-cms",
+      "architecture": "Payload CMS 3 application in TypeScript: collection configs with their own `endpoints` arrays plus root endpoints, all assembled in src/payload.config.ts; Payload's Local API over MongoDB (@payloadcms/db-mongodb) is the only data layer; the caller's identity is `req.user`, populated by the `users` auth collection and carrying a role and a tenant relationship.",
+      "language": "typescript",
+      "file": "payload-cms/src/collections/Users.ts",
+      "scanAs": "src/collections/Users.ts",
+      "kind": "vulnerable",
+      "category": "privilege_escalation_via_unfiltered_profile_update",
+      "cwe": "CWE-915",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 196,
+      "lineRange": [
+        171,
+        201
+      ],
+      "runtimeVerifiable": true,
+      "why": "The PATCH /me/profile handler spreads the entire request body into `payload.update` with `overrideAccess: true`, and `overrideAccess` skips field-level access control as well as collection access, so a caller can include `role: 'platform-admin'`, another `tenant` id or a `supplierCode` in the body and rewrite their own privileges — the field-level `access.update` guards the comment relies on never run.",
+      "packageJson": {
+        "name": "orderbook-portal",
+        "version": "1.4.2",
+        "private": true,
+        "type": "module",
+        "scripts": {
+          "dev": "next dev",
+          "build": "next build",
+          "generate:types": "payload generate:types"
+        },
+        "dependencies": {
+          "@payloadcms/db-mongodb": "3.33.0",
+          "@payloadcms/next": "3.33.0",
+          "@payloadcms/richtext-lexical": "3.33.0",
+          "@payloadcms/ui": "3.33.0",
+          "graphql": "^16.9.0",
+          "next": "15.2.4",
+          "payload": "3.33.0",
+          "react": "19.0.0",
+          "react-dom": "19.0.0"
+        },
+        "devDependencies": {
+          "@types/node": "^22.13.0",
+          "@types/react": "19.0.0",
+          "typescript": "5.7.3"
+        }
+      },
+      "extraFiles": {
+        "src/lib/tenant-scope.ts": "import type { Access, PayloadRequest, Where } from 'payload'\n\n/**\n * Every organisation on Orderbook is a Payload `tenant` document. Users belong\n * to exactly one tenant, except for platform staff who sit outside the tenant\n * tree and reconcile across all of them from the admin panel.\n */\nexport type Role = 'platform-admin' | 'tenant-admin' | 'buyer' | 'supplier-user'\n\n/**\n * Shape of the document Payload puts on `req.user` for the `users` auth\n * collection. Mirrors the fields declared in `collections/Users.ts` — keep the\n * two in step when a field is added there.\n */\nexport interface AppUser {\n  id: string\n  email: string\n  role: Role\n  /** Relationship to `tenants`; a string id unless the caller asked for depth. */\n  tenant?: string | { id: string } | null\n  /** Set only on `supplier-user` accounts, matches `supplierCode` on orders. */\n  supplierCode?: string | null\n}\n\n/** Error with an HTTP status attached, so endpoint handlers can throw and go. */\nexport class RequestError extends Error {\n  readonly status: number\n\n  constructor(status: number, message: string) {\n    super(message)\n    this.name = 'RequestError'\n    this.status = status\n  }\n}\n\n/**\n * Single place where handler failures become responses. Anything that is not a\n * deliberate `RequestError` is logged server side and answered generically so\n * we never hand a stack trace or a driver message to the caller.\n */\nexport const errorResponse = (error: unknown): Response => {\n  if (error instanceof RequestError) {\n    return Response.json({ message: error.message }, { status: error.status })\n  }\n\n  const status = (error as { status?: unknown } | null)?.status\n  if (status === 404) {\n    return Response.json({ message: 'Not found.' }, { status: 404 })\n  }\n\n  console.error('[orderbook] request failed', error)\n  return Response.json({ message: 'Something went wrong handling that request.' }, { status: 500 })\n}\n\nexport const currentUser = (req: PayloadRequest): AppUser | null =>\n  (req.user as AppUser | undefined) ?? null\n\nexport const isPlatformAdmin = (user: AppUser | null): boolean => user?.role === 'platform-admin'\n\n/** Read the caller's tenant id whether or not the relation came back populated. */\nexport const tenantOf = (user: AppUser | null): string | null => {\n  const tenant = user?.tenant\n  if (!tenant) return null\n  return typeof tenant === 'string' ? tenant : tenant.id\n}\n\n/**\n * Guard for endpoints that only make sense inside one organisation. Platform\n * staff are deliberately rejected here: they have no tenant of their own and\n * are expected to use the admin panel rather than the portal endpoints.\n */\nexport const requireTenant = (req: PayloadRequest): { user: AppUser; tenantId: string } => {\n  const user = currentUser(req)\n  if (!user) {\n    throw new RequestError(401, 'Authentication required.')\n  }\n\n  const tenantId = tenantOf(user)\n  if (!tenantId) {\n    throw new RequestError(403, 'Your account is not attached to an organisation.')\n  }\n\n  return { user, tenantId }\n}\n\n/**\n * Collection-level read rule for tenant-owned documents. Returning a `Where`\n * from an access function makes Payload append it to every find, so list and\n * by-id reads are both narrowed to the caller's own tenant.\n */\nexport const tenantReadAccess: Access = ({ req }) => {\n  const user = currentUser(req)\n  if (!user) {\n    return false\n  }\n\n  // Platform staff run cross-tenant reconciliation and billing runs.\n  if (isPlatformAdmin(user)) {\n    return true\n  }\n\n  const tenantId = tenantOf(user)\n  if (!tenantId) {\n    return false\n  }\n\n  return { tenant: { equals: tenantId } } satisfies Where\n}\n\n/**\n * Same idea for writes, with a role gate in front: only the listed roles may\n * mutate, and then only documents belonging to their own tenant.\n */\nexport const tenantWriteAccess =\n  (...roles: Role[]): Access =>\n  ({ req }) => {\n    const user = currentUser(req)\n    if (!user) {\n      return false\n    }\n\n    if (isPlatformAdmin(user)) {\n      return true\n    }\n\n    if (!roles.includes(user.role)) {\n      return false\n    }\n\n    const tenantId = tenantOf(user)\n    if (!tenantId) {\n      return false\n    }\n\n    return { tenant: { equals: tenantId } } satisfies Where\n  }\n\nexport const platformAdminOnly: Access = ({ req }) => isPlatformAdmin(currentUser(req))\n\n/**\n * Ownership clause for the portal endpoints. Supplier users see the orders and\n * invoices addressed to their supplier code; everyone else sees their tenant's.\n * Throws rather than degrading to an empty clause, because an empty clause on\n * an `overrideAccess` query matches every document in the collection.\n */\nexport const ownershipClause = (user: AppUser): Where => {\n  if (user.role === 'supplier-user') {\n    if (!user.supplierCode) {\n      throw new RequestError(403, 'Your supplier account has no supplier code assigned.')\n    }\n    return { supplierCode: { equals: user.supplierCode } }\n  }\n\n  const tenantId = tenantOf(user)\n  if (!tenantId) {\n    throw new RequestError(403, 'Your account is not attached to an organisation.')\n  }\n\n  return { tenant: { equals: tenantId } }\n}\n\n/** Combine the tenant pin with any number of extra clauses. */\nexport const scopedToTenant = (tenantId: string, ...clauses: Where[]): Where => ({\n  and: [{ tenant: { equals: tenantId } }, ...clauses],\n})\n"
+      }
+    },
+    {
+      "id": "ref-payload-cms-tenant-billing-profile-patch",
+      "family": "payload-cms",
+      "architecture": "Payload CMS 3 application in TypeScript: collection configs with their own `endpoints` arrays plus root endpoints, all assembled in src/payload.config.ts; Payload's Local API over MongoDB (@payloadcms/db-mongodb) is the only data layer; the caller's identity is `req.user`, populated by the `users` auth collection and carrying a role and a tenant relationship.",
+      "language": "typescript",
+      "file": "payload-cms/src/collections/Tenants.ts",
+      "scanAs": "src/collections/Tenants.ts",
+      "kind": "safe",
+      "pairedWith": "ref-payload-cms-account-profile-patch",
+      "runtimeVerifiable": true,
+      "why": "The same `payload.update` with `overrideAccess: true` on a body-derived object, but the data is assembled by copying only the four names in `EDITABLE_BILLING_FIELDS` and validating each one, so `apiCredentials`, `payoutAccount`, `slug` and `suspendedAt` in the body are never read; the target id is also compared against the caller's own tenant before the write.",
+      "packageJson": {
+        "name": "orderbook-portal",
+        "version": "1.4.2",
+        "private": true,
+        "type": "module",
+        "scripts": {
+          "dev": "next dev",
+          "build": "next build",
+          "generate:types": "payload generate:types"
+        },
+        "dependencies": {
+          "@payloadcms/db-mongodb": "3.33.0",
+          "@payloadcms/next": "3.33.0",
+          "@payloadcms/richtext-lexical": "3.33.0",
+          "@payloadcms/ui": "3.33.0",
+          "graphql": "^16.9.0",
+          "next": "15.2.4",
+          "payload": "3.33.0",
+          "react": "19.0.0",
+          "react-dom": "19.0.0"
+        },
+        "devDependencies": {
+          "@types/node": "^22.13.0",
+          "@types/react": "19.0.0",
+          "typescript": "5.7.3"
+        }
+      },
+      "extraFiles": {
+        "src/lib/tenant-scope.ts": "import type { Access, PayloadRequest, Where } from 'payload'\n\n/**\n * Every organisation on Orderbook is a Payload `tenant` document. Users belong\n * to exactly one tenant, except for platform staff who sit outside the tenant\n * tree and reconcile across all of them from the admin panel.\n */\nexport type Role = 'platform-admin' | 'tenant-admin' | 'buyer' | 'supplier-user'\n\n/**\n * Shape of the document Payload puts on `req.user` for the `users` auth\n * collection. Mirrors the fields declared in `collections/Users.ts` — keep the\n * two in step when a field is added there.\n */\nexport interface AppUser {\n  id: string\n  email: string\n  role: Role\n  /** Relationship to `tenants`; a string id unless the caller asked for depth. */\n  tenant?: string | { id: string } | null\n  /** Set only on `supplier-user` accounts, matches `supplierCode` on orders. */\n  supplierCode?: string | null\n}\n\n/** Error with an HTTP status attached, so endpoint handlers can throw and go. */\nexport class RequestError extends Error {\n  readonly status: number\n\n  constructor(status: number, message: string) {\n    super(message)\n    this.name = 'RequestError'\n    this.status = status\n  }\n}\n\n/**\n * Single place where handler failures become responses. Anything that is not a\n * deliberate `RequestError` is logged server side and answered generically so\n * we never hand a stack trace or a driver message to the caller.\n */\nexport const errorResponse = (error: unknown): Response => {\n  if (error instanceof RequestError) {\n    return Response.json({ message: error.message }, { status: error.status })\n  }\n\n  const status = (error as { status?: unknown } | null)?.status\n  if (status === 404) {\n    return Response.json({ message: 'Not found.' }, { status: 404 })\n  }\n\n  console.error('[orderbook] request failed', error)\n  return Response.json({ message: 'Something went wrong handling that request.' }, { status: 500 })\n}\n\nexport const currentUser = (req: PayloadRequest): AppUser | null =>\n  (req.user as AppUser | undefined) ?? null\n\nexport const isPlatformAdmin = (user: AppUser | null): boolean => user?.role === 'platform-admin'\n\n/** Read the caller's tenant id whether or not the relation came back populated. */\nexport const tenantOf = (user: AppUser | null): string | null => {\n  const tenant = user?.tenant\n  if (!tenant) return null\n  return typeof tenant === 'string' ? tenant : tenant.id\n}\n\n/**\n * Guard for endpoints that only make sense inside one organisation. Platform\n * staff are deliberately rejected here: they have no tenant of their own and\n * are expected to use the admin panel rather than the portal endpoints.\n */\nexport const requireTenant = (req: PayloadRequest): { user: AppUser; tenantId: string } => {\n  const user = currentUser(req)\n  if (!user) {\n    throw new RequestError(401, 'Authentication required.')\n  }\n\n  const tenantId = tenantOf(user)\n  if (!tenantId) {\n    throw new RequestError(403, 'Your account is not attached to an organisation.')\n  }\n\n  return { user, tenantId }\n}\n\n/**\n * Collection-level read rule for tenant-owned documents. Returning a `Where`\n * from an access function makes Payload append it to every find, so list and\n * by-id reads are both narrowed to the caller's own tenant.\n */\nexport const tenantReadAccess: Access = ({ req }) => {\n  const user = currentUser(req)\n  if (!user) {\n    return false\n  }\n\n  // Platform staff run cross-tenant reconciliation and billing runs.\n  if (isPlatformAdmin(user)) {\n    return true\n  }\n\n  const tenantId = tenantOf(user)\n  if (!tenantId) {\n    return false\n  }\n\n  return { tenant: { equals: tenantId } } satisfies Where\n}\n\n/**\n * Same idea for writes, with a role gate in front: only the listed roles may\n * mutate, and then only documents belonging to their own tenant.\n */\nexport const tenantWriteAccess =\n  (...roles: Role[]): Access =>\n  ({ req }) => {\n    const user = currentUser(req)\n    if (!user) {\n      return false\n    }\n\n    if (isPlatformAdmin(user)) {\n      return true\n    }\n\n    if (!roles.includes(user.role)) {\n      return false\n    }\n\n    const tenantId = tenantOf(user)\n    if (!tenantId) {\n      return false\n    }\n\n    return { tenant: { equals: tenantId } } satisfies Where\n  }\n\nexport const platformAdminOnly: Access = ({ req }) => isPlatformAdmin(currentUser(req))\n\n/**\n * Ownership clause for the portal endpoints. Supplier users see the orders and\n * invoices addressed to their supplier code; everyone else sees their tenant's.\n * Throws rather than degrading to an empty clause, because an empty clause on\n * an `overrideAccess` query matches every document in the collection.\n */\nexport const ownershipClause = (user: AppUser): Where => {\n  if (user.role === 'supplier-user') {\n    if (!user.supplierCode) {\n      throw new RequestError(403, 'Your supplier account has no supplier code assigned.')\n    }\n    return { supplierCode: { equals: user.supplierCode } }\n  }\n\n  const tenantId = tenantOf(user)\n  if (!tenantId) {\n    throw new RequestError(403, 'Your account is not attached to an organisation.')\n  }\n\n  return { tenant: { equals: tenantId } }\n}\n\n/** Combine the tenant pin with any number of extra clauses. */\nexport const scopedToTenant = (tenantId: string, ...clauses: Where[]): Where => ({\n  and: [{ tenant: { equals: tenantId } }, ...clauses],\n})\n"
+      }
+    },
+    {
+      "id": "ref-payload-cms-dispatch-order-tracking",
+      "family": "payload-cms",
+      "architecture": "Payload CMS 3 application in TypeScript: collection configs with their own `endpoints` arrays plus root endpoints, all assembled in src/payload.config.ts; Payload's Local API over MongoDB (@payloadcms/db-mongodb) is the only data layer; the caller's identity is `req.user`, populated by the `users` auth collection and carrying a role and a tenant relationship.",
+      "language": "typescript",
+      "file": "payload-cms/src/endpoints/order-tracking.ts",
+      "scanAs": "src/endpoints/order-tracking.ts",
+      "kind": "vulnerable",
+      "category": "query_operator_injection_via_untrusted_filter_value",
+      "cwe": "CWE-943",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "line": 40,
+      "lineRange": [
+        29,
+        44
+      ],
+      "route": "POST /api/order-tracking",
+      "runtimeVerifiable": true,
+      "why": "`body.reference` is dropped into the `where` clause as the whole field condition instead of as the value of an operator, so posting `{\"reference\": {\"not_equals\": \"__none__\"}}` turns the `overrideAccess: true` find into a dump of up to twenty arbitrary purchase orders — references, statuses, supplier names and delivery dates from every organisation — on an endpoint that has no session at all.",
+      "packageJson": {
+        "name": "orderbook-portal",
+        "version": "1.4.2",
+        "private": true,
+        "type": "module",
+        "scripts": {
+          "dev": "next dev",
+          "build": "next build",
+          "generate:types": "payload generate:types"
+        },
+        "dependencies": {
+          "@payloadcms/db-mongodb": "3.33.0",
+          "@payloadcms/next": "3.33.0",
+          "@payloadcms/richtext-lexical": "3.33.0",
+          "@payloadcms/ui": "3.33.0",
+          "graphql": "^16.9.0",
+          "next": "15.2.4",
+          "payload": "3.33.0",
+          "react": "19.0.0",
+          "react-dom": "19.0.0"
+        },
+        "devDependencies": {
+          "@types/node": "^22.13.0",
+          "@types/react": "19.0.0",
+          "typescript": "5.7.3"
+        }
+      },
+      "extraFiles": {
+        "src/lib/tenant-scope.ts": "import type { Access, PayloadRequest, Where } from 'payload'\n\n/**\n * Every organisation on Orderbook is a Payload `tenant` document. Users belong\n * to exactly one tenant, except for platform staff who sit outside the tenant\n * tree and reconcile across all of them from the admin panel.\n */\nexport type Role = 'platform-admin' | 'tenant-admin' | 'buyer' | 'supplier-user'\n\n/**\n * Shape of the document Payload puts on `req.user` for the `users` auth\n * collection. Mirrors the fields declared in `collections/Users.ts` — keep the\n * two in step when a field is added there.\n */\nexport interface AppUser {\n  id: string\n  email: string\n  role: Role\n  /** Relationship to `tenants`; a string id unless the caller asked for depth. */\n  tenant?: string | { id: string } | null\n  /** Set only on `supplier-user` accounts, matches `supplierCode` on orders. */\n  supplierCode?: string | null\n}\n\n/** Error with an HTTP status attached, so endpoint handlers can throw and go. */\nexport class RequestError extends Error {\n  readonly status: number\n\n  constructor(status: number, message: string) {\n    super(message)\n    this.name = 'RequestError'\n    this.status = status\n  }\n}\n\n/**\n * Single place where handler failures become responses. Anything that is not a\n * deliberate `RequestError` is logged server side and answered generically so\n * we never hand a stack trace or a driver message to the caller.\n */\nexport const errorResponse = (error: unknown): Response => {\n  if (error instanceof RequestError) {\n    return Response.json({ message: error.message }, { status: error.status })\n  }\n\n  const status = (error as { status?: unknown } | null)?.status\n  if (status === 404) {\n    return Response.json({ message: 'Not found.' }, { status: 404 })\n  }\n\n  console.error('[orderbook] request failed', error)\n  return Response.json({ message: 'Something went wrong handling that request.' }, { status: 500 })\n}\n\nexport const currentUser = (req: PayloadRequest): AppUser | null =>\n  (req.user as AppUser | undefined) ?? null\n\nexport const isPlatformAdmin = (user: AppUser | null): boolean => user?.role === 'platform-admin'\n\n/** Read the caller's tenant id whether or not the relation came back populated. */\nexport const tenantOf = (user: AppUser | null): string | null => {\n  const tenant = user?.tenant\n  if (!tenant) return null\n  return typeof tenant === 'string' ? tenant : tenant.id\n}\n\n/**\n * Guard for endpoints that only make sense inside one organisation. Platform\n * staff are deliberately rejected here: they have no tenant of their own and\n * are expected to use the admin panel rather than the portal endpoints.\n */\nexport const requireTenant = (req: PayloadRequest): { user: AppUser; tenantId: string } => {\n  const user = currentUser(req)\n  if (!user) {\n    throw new RequestError(401, 'Authentication required.')\n  }\n\n  const tenantId = tenantOf(user)\n  if (!tenantId) {\n    throw new RequestError(403, 'Your account is not attached to an organisation.')\n  }\n\n  return { user, tenantId }\n}\n\n/**\n * Collection-level read rule for tenant-owned documents. Returning a `Where`\n * from an access function makes Payload append it to every find, so list and\n * by-id reads are both narrowed to the caller's own tenant.\n */\nexport const tenantReadAccess: Access = ({ req }) => {\n  const user = currentUser(req)\n  if (!user) {\n    return false\n  }\n\n  // Platform staff run cross-tenant reconciliation and billing runs.\n  if (isPlatformAdmin(user)) {\n    return true\n  }\n\n  const tenantId = tenantOf(user)\n  if (!tenantId) {\n    return false\n  }\n\n  return { tenant: { equals: tenantId } } satisfies Where\n}\n\n/**\n * Same idea for writes, with a role gate in front: only the listed roles may\n * mutate, and then only documents belonging to their own tenant.\n */\nexport const tenantWriteAccess =\n  (...roles: Role[]): Access =>\n  ({ req }) => {\n    const user = currentUser(req)\n    if (!user) {\n      return false\n    }\n\n    if (isPlatformAdmin(user)) {\n      return true\n    }\n\n    if (!roles.includes(user.role)) {\n      return false\n    }\n\n    const tenantId = tenantOf(user)\n    if (!tenantId) {\n      return false\n    }\n\n    return { tenant: { equals: tenantId } } satisfies Where\n  }\n\nexport const platformAdminOnly: Access = ({ req }) => isPlatformAdmin(currentUser(req))\n\n/**\n * Ownership clause for the portal endpoints. Supplier users see the orders and\n * invoices addressed to their supplier code; everyone else sees their tenant's.\n * Throws rather than degrading to an empty clause, because an empty clause on\n * an `overrideAccess` query matches every document in the collection.\n */\nexport const ownershipClause = (user: AppUser): Where => {\n  if (user.role === 'supplier-user') {\n    if (!user.supplierCode) {\n      throw new RequestError(403, 'Your supplier account has no supplier code assigned.')\n    }\n    return { supplierCode: { equals: user.supplierCode } }\n  }\n\n  const tenantId = tenantOf(user)\n  if (!tenantId) {\n    throw new RequestError(403, 'Your account is not attached to an organisation.')\n  }\n\n  return { tenant: { equals: tenantId } }\n}\n\n/** Combine the tenant pin with any number of extra clauses. */\nexport const scopedToTenant = (tenantId: string, ...clauses: Where[]): Where => ({\n  and: [{ tenant: { equals: tenantId } }, ...clauses],\n})\n",
+        "src/payload.config.ts": "import path from 'node:path'\nimport { fileURLToPath } from 'node:url'\n\nimport { mongooseAdapter } from '@payloadcms/db-mongodb'\nimport { lexicalEditor } from '@payloadcms/richtext-lexical'\nimport { buildConfig } from 'payload'\n\nimport { Invoices } from './collections/Invoices'\nimport { PayoutAccounts } from './collections/PayoutAccounts'\nimport { PurchaseOrders } from './collections/PurchaseOrders'\nimport { Tenants } from './collections/Tenants'\nimport { Users } from './collections/Users'\nimport { attachmentDownloadEndpoint } from './endpoints/attachment-download'\nimport { invoiceReferenceLookupEndpoint } from './endpoints/invoice-reference-lookup'\nimport { invoiceStatementEndpoint } from './endpoints/invoice-statements'\nimport { orderFeedEndpoint } from './endpoints/order-feed'\nimport { orderTrackingEndpoint } from './endpoints/order-tracking'\nimport { reportExportEndpoint } from './endpoints/report-export'\n\nconst dirname = path.dirname(fileURLToPath(import.meta.url))\n\nconst serverURL = process.env.PAYLOAD_PUBLIC_SERVER_URL ?? 'http://localhost:3000'\n\nconst payloadSecret = process.env.PAYLOAD_SECRET\nif (!payloadSecret) {\n  throw new Error('PAYLOAD_SECRET is required. Copy .env.example and fill it in before booting.')\n}\n\nexport default buildConfig({\n  serverURL,\n  routes: {\n    // Root-level endpoints below are served under this prefix, so\n    // `path: '/order-feed'` answers on GET /api/order-feed.\n    api: '/api',\n    admin: '/admin',\n  },\n  admin: {\n    user: Users.slug,\n    importMap: { baseDir: path.resolve(dirname) },\n    meta: { titleSuffix: ' — Orderbook' },\n  },\n  collections: [Users, Tenants, PurchaseOrders, Invoices, PayoutAccounts],\n  endpoints: [\n    orderTrackingEndpoint,\n    invoiceReferenceLookupEndpoint,\n    invoiceStatementEndpoint,\n    orderFeedEndpoint,\n    attachmentDownloadEndpoint,\n    reportExportEndpoint,\n  ],\n  editor: lexicalEditor(),\n  secret: payloadSecret,\n  typescript: { outputFile: path.resolve(dirname, 'payload-types.ts') },\n  db: mongooseAdapter({\n    // Local development database; staging and production come from the env.\n    url: process.env.DATABASE_URI ?? 'mongodb://orderbook:orderbook@localhost:27017/orderbook',\n  }),\n  cors: [serverURL],\n  csrf: [serverURL],\n  graphQL: { disable: false },\n  telemetry: false,\n})\n"
+      }
+    },
+    {
+      "id": "ref-payload-cms-invoice-reference-lookup",
+      "family": "payload-cms",
+      "architecture": "Payload CMS 3 application in TypeScript: collection configs with their own `endpoints` arrays plus root endpoints, all assembled in src/payload.config.ts; Payload's Local API over MongoDB (@payloadcms/db-mongodb) is the only data layer; the caller's identity is `req.user`, populated by the `users` auth collection and carrying a role and a tenant relationship.",
+      "language": "typescript",
+      "file": "payload-cms/src/endpoints/invoice-reference-lookup.ts",
+      "scanAs": "src/endpoints/invoice-reference-lookup.ts",
+      "kind": "safe",
+      "pairedWith": "ref-payload-cms-dispatch-order-tracking",
+      "route": "POST /api/invoice-lookup",
+      "runtimeVerifiable": true,
+      "why": "The same unauthenticated `overrideAccess: true` lookup by reference, but the submitted value is rejected unless `typeof` it is a string matching `/^INV-[0-9A-Z]{10}$/`, and it is then placed as the value of an explicit `equals` operator, so a caller can never substitute a Payload operator object for the value.",
+      "packageJson": {
+        "name": "orderbook-portal",
+        "version": "1.4.2",
+        "private": true,
+        "type": "module",
+        "scripts": {
+          "dev": "next dev",
+          "build": "next build",
+          "generate:types": "payload generate:types"
+        },
+        "dependencies": {
+          "@payloadcms/db-mongodb": "3.33.0",
+          "@payloadcms/next": "3.33.0",
+          "@payloadcms/richtext-lexical": "3.33.0",
+          "@payloadcms/ui": "3.33.0",
+          "graphql": "^16.9.0",
+          "next": "15.2.4",
+          "payload": "3.33.0",
+          "react": "19.0.0",
+          "react-dom": "19.0.0"
+        },
+        "devDependencies": {
+          "@types/node": "^22.13.0",
+          "@types/react": "19.0.0",
+          "typescript": "5.7.3"
+        }
+      },
+      "extraFiles": {
+        "src/lib/tenant-scope.ts": "import type { Access, PayloadRequest, Where } from 'payload'\n\n/**\n * Every organisation on Orderbook is a Payload `tenant` document. Users belong\n * to exactly one tenant, except for platform staff who sit outside the tenant\n * tree and reconcile across all of them from the admin panel.\n */\nexport type Role = 'platform-admin' | 'tenant-admin' | 'buyer' | 'supplier-user'\n\n/**\n * Shape of the document Payload puts on `req.user` for the `users` auth\n * collection. Mirrors the fields declared in `collections/Users.ts` — keep the\n * two in step when a field is added there.\n */\nexport interface AppUser {\n  id: string\n  email: string\n  role: Role\n  /** Relationship to `tenants`; a string id unless the caller asked for depth. */\n  tenant?: string | { id: string } | null\n  /** Set only on `supplier-user` accounts, matches `supplierCode` on orders. */\n  supplierCode?: string | null\n}\n\n/** Error with an HTTP status attached, so endpoint handlers can throw and go. */\nexport class RequestError extends Error {\n  readonly status: number\n\n  constructor(status: number, message: string) {\n    super(message)\n    this.name = 'RequestError'\n    this.status = status\n  }\n}\n\n/**\n * Single place where handler failures become responses. Anything that is not a\n * deliberate `RequestError` is logged server side and answered generically so\n * we never hand a stack trace or a driver message to the caller.\n */\nexport const errorResponse = (error: unknown): Response => {\n  if (error instanceof RequestError) {\n    return Response.json({ message: error.message }, { status: error.status })\n  }\n\n  const status = (error as { status?: unknown } | null)?.status\n  if (status === 404) {\n    return Response.json({ message: 'Not found.' }, { status: 404 })\n  }\n\n  console.error('[orderbook] request failed', error)\n  return Response.json({ message: 'Something went wrong handling that request.' }, { status: 500 })\n}\n\nexport const currentUser = (req: PayloadRequest): AppUser | null =>\n  (req.user as AppUser | undefined) ?? null\n\nexport const isPlatformAdmin = (user: AppUser | null): boolean => user?.role === 'platform-admin'\n\n/** Read the caller's tenant id whether or not the relation came back populated. */\nexport const tenantOf = (user: AppUser | null): string | null => {\n  const tenant = user?.tenant\n  if (!tenant) return null\n  return typeof tenant === 'string' ? tenant : tenant.id\n}\n\n/**\n * Guard for endpoints that only make sense inside one organisation. Platform\n * staff are deliberately rejected here: they have no tenant of their own and\n * are expected to use the admin panel rather than the portal endpoints.\n */\nexport const requireTenant = (req: PayloadRequest): { user: AppUser; tenantId: string } => {\n  const user = currentUser(req)\n  if (!user) {\n    throw new RequestError(401, 'Authentication required.')\n  }\n\n  const tenantId = tenantOf(user)\n  if (!tenantId) {\n    throw new RequestError(403, 'Your account is not attached to an organisation.')\n  }\n\n  return { user, tenantId }\n}\n\n/**\n * Collection-level read rule for tenant-owned documents. Returning a `Where`\n * from an access function makes Payload append it to every find, so list and\n * by-id reads are both narrowed to the caller's own tenant.\n */\nexport const tenantReadAccess: Access = ({ req }) => {\n  const user = currentUser(req)\n  if (!user) {\n    return false\n  }\n\n  // Platform staff run cross-tenant reconciliation and billing runs.\n  if (isPlatformAdmin(user)) {\n    return true\n  }\n\n  const tenantId = tenantOf(user)\n  if (!tenantId) {\n    return false\n  }\n\n  return { tenant: { equals: tenantId } } satisfies Where\n}\n\n/**\n * Same idea for writes, with a role gate in front: only the listed roles may\n * mutate, and then only documents belonging to their own tenant.\n */\nexport const tenantWriteAccess =\n  (...roles: Role[]): Access =>\n  ({ req }) => {\n    const user = currentUser(req)\n    if (!user) {\n      return false\n    }\n\n    if (isPlatformAdmin(user)) {\n      return true\n    }\n\n    if (!roles.includes(user.role)) {\n      return false\n    }\n\n    const tenantId = tenantOf(user)\n    if (!tenantId) {\n      return false\n    }\n\n    return { tenant: { equals: tenantId } } satisfies Where\n  }\n\nexport const platformAdminOnly: Access = ({ req }) => isPlatformAdmin(currentUser(req))\n\n/**\n * Ownership clause for the portal endpoints. Supplier users see the orders and\n * invoices addressed to their supplier code; everyone else sees their tenant's.\n * Throws rather than degrading to an empty clause, because an empty clause on\n * an `overrideAccess` query matches every document in the collection.\n */\nexport const ownershipClause = (user: AppUser): Where => {\n  if (user.role === 'supplier-user') {\n    if (!user.supplierCode) {\n      throw new RequestError(403, 'Your supplier account has no supplier code assigned.')\n    }\n    return { supplierCode: { equals: user.supplierCode } }\n  }\n\n  const tenantId = tenantOf(user)\n  if (!tenantId) {\n    throw new RequestError(403, 'Your account is not attached to an organisation.')\n  }\n\n  return { tenant: { equals: tenantId } }\n}\n\n/** Combine the tenant pin with any number of extra clauses. */\nexport const scopedToTenant = (tenantId: string, ...clauses: Where[]): Where => ({\n  and: [{ tenant: { equals: tenantId } }, ...clauses],\n})\n",
+        "src/payload.config.ts": "import path from 'node:path'\nimport { fileURLToPath } from 'node:url'\n\nimport { mongooseAdapter } from '@payloadcms/db-mongodb'\nimport { lexicalEditor } from '@payloadcms/richtext-lexical'\nimport { buildConfig } from 'payload'\n\nimport { Invoices } from './collections/Invoices'\nimport { PayoutAccounts } from './collections/PayoutAccounts'\nimport { PurchaseOrders } from './collections/PurchaseOrders'\nimport { Tenants } from './collections/Tenants'\nimport { Users } from './collections/Users'\nimport { attachmentDownloadEndpoint } from './endpoints/attachment-download'\nimport { invoiceReferenceLookupEndpoint } from './endpoints/invoice-reference-lookup'\nimport { invoiceStatementEndpoint } from './endpoints/invoice-statements'\nimport { orderFeedEndpoint } from './endpoints/order-feed'\nimport { orderTrackingEndpoint } from './endpoints/order-tracking'\nimport { reportExportEndpoint } from './endpoints/report-export'\n\nconst dirname = path.dirname(fileURLToPath(import.meta.url))\n\nconst serverURL = process.env.PAYLOAD_PUBLIC_SERVER_URL ?? 'http://localhost:3000'\n\nconst payloadSecret = process.env.PAYLOAD_SECRET\nif (!payloadSecret) {\n  throw new Error('PAYLOAD_SECRET is required. Copy .env.example and fill it in before booting.')\n}\n\nexport default buildConfig({\n  serverURL,\n  routes: {\n    // Root-level endpoints below are served under this prefix, so\n    // `path: '/order-feed'` answers on GET /api/order-feed.\n    api: '/api',\n    admin: '/admin',\n  },\n  admin: {\n    user: Users.slug,\n    importMap: { baseDir: path.resolve(dirname) },\n    meta: { titleSuffix: ' — Orderbook' },\n  },\n  collections: [Users, Tenants, PurchaseOrders, Invoices, PayoutAccounts],\n  endpoints: [\n    orderTrackingEndpoint,\n    invoiceReferenceLookupEndpoint,\n    invoiceStatementEndpoint,\n    orderFeedEndpoint,\n    attachmentDownloadEndpoint,\n    reportExportEndpoint,\n  ],\n  editor: lexicalEditor(),\n  secret: payloadSecret,\n  typescript: { outputFile: path.resolve(dirname, 'payload-types.ts') },\n  db: mongooseAdapter({\n    // Local development database; staging and production come from the env.\n    url: process.env.DATABASE_URI ?? 'mongodb://orderbook:orderbook@localhost:27017/orderbook',\n  }),\n  cors: [serverURL],\n  csrf: [serverURL],\n  graphQL: { disable: false },\n  telemetry: false,\n})\n"
+      }
+    },
+    {
+      "id": "ref-payload-cms-invoice-statement-header",
+      "family": "payload-cms",
+      "architecture": "Payload CMS 3 application in TypeScript: collection configs with their own `endpoints` arrays plus root endpoints, all assembled in src/payload.config.ts; Payload's Local API over MongoDB (@payloadcms/db-mongodb) is the only data layer; the caller's identity is `req.user`, populated by the `users` auth collection and carrying a role and a tenant relationship.",
+      "language": "typescript",
+      "file": "payload-cms/src/endpoints/invoice-statements.ts",
+      "scanAs": "src/endpoints/invoice-statements.ts",
+      "kind": "vulnerable",
+      "category": "sensitive_related_fields_exposed_by_verbatim_document_response",
+      "cwe": "CWE-201",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "line": 77,
+      "lineRange": [
+        70,
+        89
+      ],
+      "route": "GET /api/statements/:invoiceId",
+      "runtimeVerifiable": true,
+      "why": "The invoice is read with `depth: 2`, which populates the invoice's `tenant` and then that tenant's `payoutAccount`, and the document is then serialised into the response verbatim — so a supplier user opening their own statement also receives the buying organisation's IBAN, BIC and mandate reference along with `apiCredentials.webhookSigningSecret`. `overrideAccess: true` bypasses the field-level read access the comment counts on to hold the secret back.",
+      "packageJson": {
+        "name": "orderbook-portal",
+        "version": "1.4.2",
+        "private": true,
+        "type": "module",
+        "scripts": {
+          "dev": "next dev",
+          "build": "next build",
+          "generate:types": "payload generate:types"
+        },
+        "dependencies": {
+          "@payloadcms/db-mongodb": "3.33.0",
+          "@payloadcms/next": "3.33.0",
+          "@payloadcms/richtext-lexical": "3.33.0",
+          "@payloadcms/ui": "3.33.0",
+          "graphql": "^16.9.0",
+          "next": "15.2.4",
+          "payload": "3.33.0",
+          "react": "19.0.0",
+          "react-dom": "19.0.0"
+        },
+        "devDependencies": {
+          "@types/node": "^22.13.0",
+          "@types/react": "19.0.0",
+          "typescript": "5.7.3"
+        }
+      },
+      "extraFiles": {
+        "src/lib/tenant-scope.ts": "import type { Access, PayloadRequest, Where } from 'payload'\n\n/**\n * Every organisation on Orderbook is a Payload `tenant` document. Users belong\n * to exactly one tenant, except for platform staff who sit outside the tenant\n * tree and reconcile across all of them from the admin panel.\n */\nexport type Role = 'platform-admin' | 'tenant-admin' | 'buyer' | 'supplier-user'\n\n/**\n * Shape of the document Payload puts on `req.user` for the `users` auth\n * collection. Mirrors the fields declared in `collections/Users.ts` — keep the\n * two in step when a field is added there.\n */\nexport interface AppUser {\n  id: string\n  email: string\n  role: Role\n  /** Relationship to `tenants`; a string id unless the caller asked for depth. */\n  tenant?: string | { id: string } | null\n  /** Set only on `supplier-user` accounts, matches `supplierCode` on orders. */\n  supplierCode?: string | null\n}\n\n/** Error with an HTTP status attached, so endpoint handlers can throw and go. */\nexport class RequestError extends Error {\n  readonly status: number\n\n  constructor(status: number, message: string) {\n    super(message)\n    this.name = 'RequestError'\n    this.status = status\n  }\n}\n\n/**\n * Single place where handler failures become responses. Anything that is not a\n * deliberate `RequestError` is logged server side and answered generically so\n * we never hand a stack trace or a driver message to the caller.\n */\nexport const errorResponse = (error: unknown): Response => {\n  if (error instanceof RequestError) {\n    return Response.json({ message: error.message }, { status: error.status })\n  }\n\n  const status = (error as { status?: unknown } | null)?.status\n  if (status === 404) {\n    return Response.json({ message: 'Not found.' }, { status: 404 })\n  }\n\n  console.error('[orderbook] request failed', error)\n  return Response.json({ message: 'Something went wrong handling that request.' }, { status: 500 })\n}\n\nexport const currentUser = (req: PayloadRequest): AppUser | null =>\n  (req.user as AppUser | undefined) ?? null\n\nexport const isPlatformAdmin = (user: AppUser | null): boolean => user?.role === 'platform-admin'\n\n/** Read the caller's tenant id whether or not the relation came back populated. */\nexport const tenantOf = (user: AppUser | null): string | null => {\n  const tenant = user?.tenant\n  if (!tenant) return null\n  return typeof tenant === 'string' ? tenant : tenant.id\n}\n\n/**\n * Guard for endpoints that only make sense inside one organisation. Platform\n * staff are deliberately rejected here: they have no tenant of their own and\n * are expected to use the admin panel rather than the portal endpoints.\n */\nexport const requireTenant = (req: PayloadRequest): { user: AppUser; tenantId: string } => {\n  const user = currentUser(req)\n  if (!user) {\n    throw new RequestError(401, 'Authentication required.')\n  }\n\n  const tenantId = tenantOf(user)\n  if (!tenantId) {\n    throw new RequestError(403, 'Your account is not attached to an organisation.')\n  }\n\n  return { user, tenantId }\n}\n\n/**\n * Collection-level read rule for tenant-owned documents. Returning a `Where`\n * from an access function makes Payload append it to every find, so list and\n * by-id reads are both narrowed to the caller's own tenant.\n */\nexport const tenantReadAccess: Access = ({ req }) => {\n  const user = currentUser(req)\n  if (!user) {\n    return false\n  }\n\n  // Platform staff run cross-tenant reconciliation and billing runs.\n  if (isPlatformAdmin(user)) {\n    return true\n  }\n\n  const tenantId = tenantOf(user)\n  if (!tenantId) {\n    return false\n  }\n\n  return { tenant: { equals: tenantId } } satisfies Where\n}\n\n/**\n * Same idea for writes, with a role gate in front: only the listed roles may\n * mutate, and then only documents belonging to their own tenant.\n */\nexport const tenantWriteAccess =\n  (...roles: Role[]): Access =>\n  ({ req }) => {\n    const user = currentUser(req)\n    if (!user) {\n      return false\n    }\n\n    if (isPlatformAdmin(user)) {\n      return true\n    }\n\n    if (!roles.includes(user.role)) {\n      return false\n    }\n\n    const tenantId = tenantOf(user)\n    if (!tenantId) {\n      return false\n    }\n\n    return { tenant: { equals: tenantId } } satisfies Where\n  }\n\nexport const platformAdminOnly: Access = ({ req }) => isPlatformAdmin(currentUser(req))\n\n/**\n * Ownership clause for the portal endpoints. Supplier users see the orders and\n * invoices addressed to their supplier code; everyone else sees their tenant's.\n * Throws rather than degrading to an empty clause, because an empty clause on\n * an `overrideAccess` query matches every document in the collection.\n */\nexport const ownershipClause = (user: AppUser): Where => {\n  if (user.role === 'supplier-user') {\n    if (!user.supplierCode) {\n      throw new RequestError(403, 'Your supplier account has no supplier code assigned.')\n    }\n    return { supplierCode: { equals: user.supplierCode } }\n  }\n\n  const tenantId = tenantOf(user)\n  if (!tenantId) {\n    throw new RequestError(403, 'Your account is not attached to an organisation.')\n  }\n\n  return { tenant: { equals: tenantId } }\n}\n\n/** Combine the tenant pin with any number of extra clauses. */\nexport const scopedToTenant = (tenantId: string, ...clauses: Where[]): Where => ({\n  and: [{ tenant: { equals: tenantId } }, ...clauses],\n})\n",
+        "src/payload.config.ts": "import path from 'node:path'\nimport { fileURLToPath } from 'node:url'\n\nimport { mongooseAdapter } from '@payloadcms/db-mongodb'\nimport { lexicalEditor } from '@payloadcms/richtext-lexical'\nimport { buildConfig } from 'payload'\n\nimport { Invoices } from './collections/Invoices'\nimport { PayoutAccounts } from './collections/PayoutAccounts'\nimport { PurchaseOrders } from './collections/PurchaseOrders'\nimport { Tenants } from './collections/Tenants'\nimport { Users } from './collections/Users'\nimport { attachmentDownloadEndpoint } from './endpoints/attachment-download'\nimport { invoiceReferenceLookupEndpoint } from './endpoints/invoice-reference-lookup'\nimport { invoiceStatementEndpoint } from './endpoints/invoice-statements'\nimport { orderFeedEndpoint } from './endpoints/order-feed'\nimport { orderTrackingEndpoint } from './endpoints/order-tracking'\nimport { reportExportEndpoint } from './endpoints/report-export'\n\nconst dirname = path.dirname(fileURLToPath(import.meta.url))\n\nconst serverURL = process.env.PAYLOAD_PUBLIC_SERVER_URL ?? 'http://localhost:3000'\n\nconst payloadSecret = process.env.PAYLOAD_SECRET\nif (!payloadSecret) {\n  throw new Error('PAYLOAD_SECRET is required. Copy .env.example and fill it in before booting.')\n}\n\nexport default buildConfig({\n  serverURL,\n  routes: {\n    // Root-level endpoints below are served under this prefix, so\n    // `path: '/order-feed'` answers on GET /api/order-feed.\n    api: '/api',\n    admin: '/admin',\n  },\n  admin: {\n    user: Users.slug,\n    importMap: { baseDir: path.resolve(dirname) },\n    meta: { titleSuffix: ' — Orderbook' },\n  },\n  collections: [Users, Tenants, PurchaseOrders, Invoices, PayoutAccounts],\n  endpoints: [\n    orderTrackingEndpoint,\n    invoiceReferenceLookupEndpoint,\n    invoiceStatementEndpoint,\n    orderFeedEndpoint,\n    attachmentDownloadEndpoint,\n    reportExportEndpoint,\n  ],\n  editor: lexicalEditor(),\n  secret: payloadSecret,\n  typescript: { outputFile: path.resolve(dirname, 'payload-types.ts') },\n  db: mongooseAdapter({\n    // Local development database; staging and production come from the env.\n    url: process.env.DATABASE_URI ?? 'mongodb://orderbook:orderbook@localhost:27017/orderbook',\n  }),\n  cors: [serverURL],\n  csrf: [serverURL],\n  graphQL: { disable: false },\n  telemetry: false,\n})\n"
+      }
+    },
+    {
+      "id": "ref-payload-cms-supplier-order-feed",
+      "family": "payload-cms",
+      "architecture": "Payload CMS 3 application in TypeScript: collection configs with their own `endpoints` arrays plus root endpoints, all assembled in src/payload.config.ts; Payload's Local API over MongoDB (@payloadcms/db-mongodb) is the only data layer; the caller's identity is `req.user`, populated by the `users` auth collection and carrying a role and a tenant relationship.",
+      "language": "typescript",
+      "file": "payload-cms/src/endpoints/order-feed.ts",
+      "scanAs": "src/endpoints/order-feed.ts",
+      "kind": "safe",
+      "pairedWith": "ref-payload-cms-invoice-statement-header",
+      "route": "GET /api/order-feed",
+      "runtimeVerifiable": true,
+      "why": "The same `overrideAccess: true` list read on a tenant-owned collection, but `depth: 0` plus the `select` allow-list means no relation is followed at all, and each document is mapped into an explicit feed item before it is returned, so nothing hanging off the organisation can reach the caller even if a field is added to it later.",
+      "packageJson": {
+        "name": "orderbook-portal",
+        "version": "1.4.2",
+        "private": true,
+        "type": "module",
+        "scripts": {
+          "dev": "next dev",
+          "build": "next build",
+          "generate:types": "payload generate:types"
+        },
+        "dependencies": {
+          "@payloadcms/db-mongodb": "3.33.0",
+          "@payloadcms/next": "3.33.0",
+          "@payloadcms/richtext-lexical": "3.33.0",
+          "@payloadcms/ui": "3.33.0",
+          "graphql": "^16.9.0",
+          "next": "15.2.4",
+          "payload": "3.33.0",
+          "react": "19.0.0",
+          "react-dom": "19.0.0"
+        },
+        "devDependencies": {
+          "@types/node": "^22.13.0",
+          "@types/react": "19.0.0",
+          "typescript": "5.7.3"
+        }
+      },
+      "extraFiles": {
+        "src/lib/tenant-scope.ts": "import type { Access, PayloadRequest, Where } from 'payload'\n\n/**\n * Every organisation on Orderbook is a Payload `tenant` document. Users belong\n * to exactly one tenant, except for platform staff who sit outside the tenant\n * tree and reconcile across all of them from the admin panel.\n */\nexport type Role = 'platform-admin' | 'tenant-admin' | 'buyer' | 'supplier-user'\n\n/**\n * Shape of the document Payload puts on `req.user` for the `users` auth\n * collection. Mirrors the fields declared in `collections/Users.ts` — keep the\n * two in step when a field is added there.\n */\nexport interface AppUser {\n  id: string\n  email: string\n  role: Role\n  /** Relationship to `tenants`; a string id unless the caller asked for depth. */\n  tenant?: string | { id: string } | null\n  /** Set only on `supplier-user` accounts, matches `supplierCode` on orders. */\n  supplierCode?: string | null\n}\n\n/** Error with an HTTP status attached, so endpoint handlers can throw and go. */\nexport class RequestError extends Error {\n  readonly status: number\n\n  constructor(status: number, message: string) {\n    super(message)\n    this.name = 'RequestError'\n    this.status = status\n  }\n}\n\n/**\n * Single place where handler failures become responses. Anything that is not a\n * deliberate `RequestError` is logged server side and answered generically so\n * we never hand a stack trace or a driver message to the caller.\n */\nexport const errorResponse = (error: unknown): Response => {\n  if (error instanceof RequestError) {\n    return Response.json({ message: error.message }, { status: error.status })\n  }\n\n  const status = (error as { status?: unknown } | null)?.status\n  if (status === 404) {\n    return Response.json({ message: 'Not found.' }, { status: 404 })\n  }\n\n  console.error('[orderbook] request failed', error)\n  return Response.json({ message: 'Something went wrong handling that request.' }, { status: 500 })\n}\n\nexport const currentUser = (req: PayloadRequest): AppUser | null =>\n  (req.user as AppUser | undefined) ?? null\n\nexport const isPlatformAdmin = (user: AppUser | null): boolean => user?.role === 'platform-admin'\n\n/** Read the caller's tenant id whether or not the relation came back populated. */\nexport const tenantOf = (user: AppUser | null): string | null => {\n  const tenant = user?.tenant\n  if (!tenant) return null\n  return typeof tenant === 'string' ? tenant : tenant.id\n}\n\n/**\n * Guard for endpoints that only make sense inside one organisation. Platform\n * staff are deliberately rejected here: they have no tenant of their own and\n * are expected to use the admin panel rather than the portal endpoints.\n */\nexport const requireTenant = (req: PayloadRequest): { user: AppUser; tenantId: string } => {\n  const user = currentUser(req)\n  if (!user) {\n    throw new RequestError(401, 'Authentication required.')\n  }\n\n  const tenantId = tenantOf(user)\n  if (!tenantId) {\n    throw new RequestError(403, 'Your account is not attached to an organisation.')\n  }\n\n  return { user, tenantId }\n}\n\n/**\n * Collection-level read rule for tenant-owned documents. Returning a `Where`\n * from an access function makes Payload append it to every find, so list and\n * by-id reads are both narrowed to the caller's own tenant.\n */\nexport const tenantReadAccess: Access = ({ req }) => {\n  const user = currentUser(req)\n  if (!user) {\n    return false\n  }\n\n  // Platform staff run cross-tenant reconciliation and billing runs.\n  if (isPlatformAdmin(user)) {\n    return true\n  }\n\n  const tenantId = tenantOf(user)\n  if (!tenantId) {\n    return false\n  }\n\n  return { tenant: { equals: tenantId } } satisfies Where\n}\n\n/**\n * Same idea for writes, with a role gate in front: only the listed roles may\n * mutate, and then only documents belonging to their own tenant.\n */\nexport const tenantWriteAccess =\n  (...roles: Role[]): Access =>\n  ({ req }) => {\n    const user = currentUser(req)\n    if (!user) {\n      return false\n    }\n\n    if (isPlatformAdmin(user)) {\n      return true\n    }\n\n    if (!roles.includes(user.role)) {\n      return false\n    }\n\n    const tenantId = tenantOf(user)\n    if (!tenantId) {\n      return false\n    }\n\n    return { tenant: { equals: tenantId } } satisfies Where\n  }\n\nexport const platformAdminOnly: Access = ({ req }) => isPlatformAdmin(currentUser(req))\n\n/**\n * Ownership clause for the portal endpoints. Supplier users see the orders and\n * invoices addressed to their supplier code; everyone else sees their tenant's.\n * Throws rather than degrading to an empty clause, because an empty clause on\n * an `overrideAccess` query matches every document in the collection.\n */\nexport const ownershipClause = (user: AppUser): Where => {\n  if (user.role === 'supplier-user') {\n    if (!user.supplierCode) {\n      throw new RequestError(403, 'Your supplier account has no supplier code assigned.')\n    }\n    return { supplierCode: { equals: user.supplierCode } }\n  }\n\n  const tenantId = tenantOf(user)\n  if (!tenantId) {\n    throw new RequestError(403, 'Your account is not attached to an organisation.')\n  }\n\n  return { tenant: { equals: tenantId } }\n}\n\n/** Combine the tenant pin with any number of extra clauses. */\nexport const scopedToTenant = (tenantId: string, ...clauses: Where[]): Where => ({\n  and: [{ tenant: { equals: tenantId } }, ...clauses],\n})\n",
+        "src/payload.config.ts": "import path from 'node:path'\nimport { fileURLToPath } from 'node:url'\n\nimport { mongooseAdapter } from '@payloadcms/db-mongodb'\nimport { lexicalEditor } from '@payloadcms/richtext-lexical'\nimport { buildConfig } from 'payload'\n\nimport { Invoices } from './collections/Invoices'\nimport { PayoutAccounts } from './collections/PayoutAccounts'\nimport { PurchaseOrders } from './collections/PurchaseOrders'\nimport { Tenants } from './collections/Tenants'\nimport { Users } from './collections/Users'\nimport { attachmentDownloadEndpoint } from './endpoints/attachment-download'\nimport { invoiceReferenceLookupEndpoint } from './endpoints/invoice-reference-lookup'\nimport { invoiceStatementEndpoint } from './endpoints/invoice-statements'\nimport { orderFeedEndpoint } from './endpoints/order-feed'\nimport { orderTrackingEndpoint } from './endpoints/order-tracking'\nimport { reportExportEndpoint } from './endpoints/report-export'\n\nconst dirname = path.dirname(fileURLToPath(import.meta.url))\n\nconst serverURL = process.env.PAYLOAD_PUBLIC_SERVER_URL ?? 'http://localhost:3000'\n\nconst payloadSecret = process.env.PAYLOAD_SECRET\nif (!payloadSecret) {\n  throw new Error('PAYLOAD_SECRET is required. Copy .env.example and fill it in before booting.')\n}\n\nexport default buildConfig({\n  serverURL,\n  routes: {\n    // Root-level endpoints below are served under this prefix, so\n    // `path: '/order-feed'` answers on GET /api/order-feed.\n    api: '/api',\n    admin: '/admin',\n  },\n  admin: {\n    user: Users.slug,\n    importMap: { baseDir: path.resolve(dirname) },\n    meta: { titleSuffix: ' — Orderbook' },\n  },\n  collections: [Users, Tenants, PurchaseOrders, Invoices, PayoutAccounts],\n  endpoints: [\n    orderTrackingEndpoint,\n    invoiceReferenceLookupEndpoint,\n    invoiceStatementEndpoint,\n    orderFeedEndpoint,\n    attachmentDownloadEndpoint,\n    reportExportEndpoint,\n  ],\n  editor: lexicalEditor(),\n  secret: payloadSecret,\n  typescript: { outputFile: path.resolve(dirname, 'payload-types.ts') },\n  db: mongooseAdapter({\n    // Local development database; staging and production come from the env.\n    url: process.env.DATABASE_URI ?? 'mongodb://orderbook:orderbook@localhost:27017/orderbook',\n  }),\n  cors: [serverURL],\n  csrf: [serverURL],\n  graphQL: { disable: false },\n  telemetry: false,\n})\n"
+      }
+    },
+    {
+      "id": "ref-payload-cms-attachment-download",
+      "family": "payload-cms",
+      "architecture": "Payload CMS 3 application in TypeScript: collection configs with their own `endpoints` arrays plus root endpoints, all assembled in src/payload.config.ts; Payload's Local API over MongoDB (@payloadcms/db-mongodb) is the only data layer; the caller's identity is `req.user`, populated by the `users` auth collection and carrying a role and a tenant relationship.",
+      "language": "typescript",
+      "file": "payload-cms/src/endpoints/attachment-download.ts",
+      "scanAs": "src/endpoints/attachment-download.ts",
+      "kind": "vulnerable",
+      "category": "path_traversal_in_attachment_download",
+      "cwe": "CWE-22",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 32,
+      "lineRange": [
+        24,
+        48
+      ],
+      "route": "GET /api/attachments/:filename/download",
+      "runtimeVerifiable": true,
+      "why": "The `:filename` route parameter goes straight into `path.join(ATTACHMENT_ROOT, tenantId, filename)` with no containment check, so a value like `../<other-tenant-id>/statement.pdf` or `../../../etc/passwd` escapes both the organisation's folder and the attachment root, and whatever the join resolves to is streamed back to the caller.",
+      "packageJson": {
+        "name": "orderbook-portal",
+        "version": "1.4.2",
+        "private": true,
+        "type": "module",
+        "scripts": {
+          "dev": "next dev",
+          "build": "next build",
+          "generate:types": "payload generate:types"
+        },
+        "dependencies": {
+          "@payloadcms/db-mongodb": "3.33.0",
+          "@payloadcms/next": "3.33.0",
+          "@payloadcms/richtext-lexical": "3.33.0",
+          "@payloadcms/ui": "3.33.0",
+          "graphql": "^16.9.0",
+          "next": "15.2.4",
+          "payload": "3.33.0",
+          "react": "19.0.0",
+          "react-dom": "19.0.0"
+        },
+        "devDependencies": {
+          "@types/node": "^22.13.0",
+          "@types/react": "19.0.0",
+          "typescript": "5.7.3"
+        }
+      },
+      "extraFiles": {
+        "src/lib/tenant-scope.ts": "import type { Access, PayloadRequest, Where } from 'payload'\n\n/**\n * Every organisation on Orderbook is a Payload `tenant` document. Users belong\n * to exactly one tenant, except for platform staff who sit outside the tenant\n * tree and reconcile across all of them from the admin panel.\n */\nexport type Role = 'platform-admin' | 'tenant-admin' | 'buyer' | 'supplier-user'\n\n/**\n * Shape of the document Payload puts on `req.user` for the `users` auth\n * collection. Mirrors the fields declared in `collections/Users.ts` — keep the\n * two in step when a field is added there.\n */\nexport interface AppUser {\n  id: string\n  email: string\n  role: Role\n  /** Relationship to `tenants`; a string id unless the caller asked for depth. */\n  tenant?: string | { id: string } | null\n  /** Set only on `supplier-user` accounts, matches `supplierCode` on orders. */\n  supplierCode?: string | null\n}\n\n/** Error with an HTTP status attached, so endpoint handlers can throw and go. */\nexport class RequestError extends Error {\n  readonly status: number\n\n  constructor(status: number, message: string) {\n    super(message)\n    this.name = 'RequestError'\n    this.status = status\n  }\n}\n\n/**\n * Single place where handler failures become responses. Anything that is not a\n * deliberate `RequestError` is logged server side and answered generically so\n * we never hand a stack trace or a driver message to the caller.\n */\nexport const errorResponse = (error: unknown): Response => {\n  if (error instanceof RequestError) {\n    return Response.json({ message: error.message }, { status: error.status })\n  }\n\n  const status = (error as { status?: unknown } | null)?.status\n  if (status === 404) {\n    return Response.json({ message: 'Not found.' }, { status: 404 })\n  }\n\n  console.error('[orderbook] request failed', error)\n  return Response.json({ message: 'Something went wrong handling that request.' }, { status: 500 })\n}\n\nexport const currentUser = (req: PayloadRequest): AppUser | null =>\n  (req.user as AppUser | undefined) ?? null\n\nexport const isPlatformAdmin = (user: AppUser | null): boolean => user?.role === 'platform-admin'\n\n/** Read the caller's tenant id whether or not the relation came back populated. */\nexport const tenantOf = (user: AppUser | null): string | null => {\n  const tenant = user?.tenant\n  if (!tenant) return null\n  return typeof tenant === 'string' ? tenant : tenant.id\n}\n\n/**\n * Guard for endpoints that only make sense inside one organisation. Platform\n * staff are deliberately rejected here: they have no tenant of their own and\n * are expected to use the admin panel rather than the portal endpoints.\n */\nexport const requireTenant = (req: PayloadRequest): { user: AppUser; tenantId: string } => {\n  const user = currentUser(req)\n  if (!user) {\n    throw new RequestError(401, 'Authentication required.')\n  }\n\n  const tenantId = tenantOf(user)\n  if (!tenantId) {\n    throw new RequestError(403, 'Your account is not attached to an organisation.')\n  }\n\n  return { user, tenantId }\n}\n\n/**\n * Collection-level read rule for tenant-owned documents. Returning a `Where`\n * from an access function makes Payload append it to every find, so list and\n * by-id reads are both narrowed to the caller's own tenant.\n */\nexport const tenantReadAccess: Access = ({ req }) => {\n  const user = currentUser(req)\n  if (!user) {\n    return false\n  }\n\n  // Platform staff run cross-tenant reconciliation and billing runs.\n  if (isPlatformAdmin(user)) {\n    return true\n  }\n\n  const tenantId = tenantOf(user)\n  if (!tenantId) {\n    return false\n  }\n\n  return { tenant: { equals: tenantId } } satisfies Where\n}\n\n/**\n * Same idea for writes, with a role gate in front: only the listed roles may\n * mutate, and then only documents belonging to their own tenant.\n */\nexport const tenantWriteAccess =\n  (...roles: Role[]): Access =>\n  ({ req }) => {\n    const user = currentUser(req)\n    if (!user) {\n      return false\n    }\n\n    if (isPlatformAdmin(user)) {\n      return true\n    }\n\n    if (!roles.includes(user.role)) {\n      return false\n    }\n\n    const tenantId = tenantOf(user)\n    if (!tenantId) {\n      return false\n    }\n\n    return { tenant: { equals: tenantId } } satisfies Where\n  }\n\nexport const platformAdminOnly: Access = ({ req }) => isPlatformAdmin(currentUser(req))\n\n/**\n * Ownership clause for the portal endpoints. Supplier users see the orders and\n * invoices addressed to their supplier code; everyone else sees their tenant's.\n * Throws rather than degrading to an empty clause, because an empty clause on\n * an `overrideAccess` query matches every document in the collection.\n */\nexport const ownershipClause = (user: AppUser): Where => {\n  if (user.role === 'supplier-user') {\n    if (!user.supplierCode) {\n      throw new RequestError(403, 'Your supplier account has no supplier code assigned.')\n    }\n    return { supplierCode: { equals: user.supplierCode } }\n  }\n\n  const tenantId = tenantOf(user)\n  if (!tenantId) {\n    throw new RequestError(403, 'Your account is not attached to an organisation.')\n  }\n\n  return { tenant: { equals: tenantId } }\n}\n\n/** Combine the tenant pin with any number of extra clauses. */\nexport const scopedToTenant = (tenantId: string, ...clauses: Where[]): Where => ({\n  and: [{ tenant: { equals: tenantId } }, ...clauses],\n})\n",
+        "src/lib/attachment-storage.ts": "import path from 'node:path'\n\n/**\n * Root of the generated-document store. The nightly export worker writes\n * statement PDFs and reconciliation CSVs to `<root>/<tenantId>/<name>`, so a\n * tenant's files never share a directory with another tenant's.\n */\nexport const ATTACHMENT_ROOT = path.resolve(process.env.ATTACHMENT_ROOT ?? './var/attachments')\n\nconst CONTENT_TYPES: Record<string, string> = {\n  '.csv': 'text/csv; charset=utf-8',\n  '.json': 'application/json',\n  '.pdf': 'application/pdf',\n  '.txt': 'text/plain; charset=utf-8',\n  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',\n  '.zip': 'application/zip',\n}\n\nexport const contentTypeFor = (name: string): string =>\n  CONTENT_TYPES[path.extname(name).toLowerCase()] ?? 'application/octet-stream'\n\n/** Raised when a storage key would resolve outside the tenant's own folder. */\nexport class StorageKeyError extends Error {\n  constructor(message: string) {\n    super(message)\n    this.name = 'StorageKeyError'\n  }\n}\n\n/**\n * Turn a stored key into an absolute path inside the tenant's own folder.\n *\n * `path.resolve` collapses any `.` and `..` segments first, so the containment\n * comparison below is done on the final location rather than on the text the\n * caller handed us. Anything that ends up outside the folder is refused instead\n * of clamped, so a bad key surfaces as an error rather than as someone else's\n * document.\n */\nexport const resolveWithinTenantStore = (tenantId: string, key: string): string => {\n  const base = path.resolve(ATTACHMENT_ROOT, tenantId)\n  const target = path.resolve(base, key)\n\n  if (target !== base && !target.startsWith(base + path.sep)) {\n    throw new StorageKeyError(`Storage key \"${key}\" resolves outside the store for tenant ${tenantId}.`)\n  }\n\n  return target\n}\n\n/** Human-facing size, used in the export listing screen. */\nexport const formatBytes = (bytes: number): string => {\n  if (bytes < 1024) {\n    return `${bytes} B`\n  }\n  const units = ['KB', 'MB', 'GB']\n  let value = bytes / 1024\n  let unitIndex = 0\n  while (value >= 1024 && unitIndex < units.length - 1) {\n    value /= 1024\n    unitIndex += 1\n  }\n  return `${value.toFixed(1)} ${units[unitIndex]}`\n}\n",
+        "src/payload.config.ts": "import path from 'node:path'\nimport { fileURLToPath } from 'node:url'\n\nimport { mongooseAdapter } from '@payloadcms/db-mongodb'\nimport { lexicalEditor } from '@payloadcms/richtext-lexical'\nimport { buildConfig } from 'payload'\n\nimport { Invoices } from './collections/Invoices'\nimport { PayoutAccounts } from './collections/PayoutAccounts'\nimport { PurchaseOrders } from './collections/PurchaseOrders'\nimport { Tenants } from './collections/Tenants'\nimport { Users } from './collections/Users'\nimport { attachmentDownloadEndpoint } from './endpoints/attachment-download'\nimport { invoiceReferenceLookupEndpoint } from './endpoints/invoice-reference-lookup'\nimport { invoiceStatementEndpoint } from './endpoints/invoice-statements'\nimport { orderFeedEndpoint } from './endpoints/order-feed'\nimport { orderTrackingEndpoint } from './endpoints/order-tracking'\nimport { reportExportEndpoint } from './endpoints/report-export'\n\nconst dirname = path.dirname(fileURLToPath(import.meta.url))\n\nconst serverURL = process.env.PAYLOAD_PUBLIC_SERVER_URL ?? 'http://localhost:3000'\n\nconst payloadSecret = process.env.PAYLOAD_SECRET\nif (!payloadSecret) {\n  throw new Error('PAYLOAD_SECRET is required. Copy .env.example and fill it in before booting.')\n}\n\nexport default buildConfig({\n  serverURL,\n  routes: {\n    // Root-level endpoints below are served under this prefix, so\n    // `path: '/order-feed'` answers on GET /api/order-feed.\n    api: '/api',\n    admin: '/admin',\n  },\n  admin: {\n    user: Users.slug,\n    importMap: { baseDir: path.resolve(dirname) },\n    meta: { titleSuffix: ' — Orderbook' },\n  },\n  collections: [Users, Tenants, PurchaseOrders, Invoices, PayoutAccounts],\n  endpoints: [\n    orderTrackingEndpoint,\n    invoiceReferenceLookupEndpoint,\n    invoiceStatementEndpoint,\n    orderFeedEndpoint,\n    attachmentDownloadEndpoint,\n    reportExportEndpoint,\n  ],\n  editor: lexicalEditor(),\n  secret: payloadSecret,\n  typescript: { outputFile: path.resolve(dirname, 'payload-types.ts') },\n  db: mongooseAdapter({\n    // Local development database; staging and production come from the env.\n    url: process.env.DATABASE_URI ?? 'mongodb://orderbook:orderbook@localhost:27017/orderbook',\n  }),\n  cors: [serverURL],\n  csrf: [serverURL],\n  graphQL: { disable: false },\n  telemetry: false,\n})\n"
+      }
+    },
+    {
+      "id": "ref-payload-cms-report-export-download",
+      "family": "payload-cms",
+      "architecture": "Payload CMS 3 application in TypeScript: collection configs with their own `endpoints` arrays plus root endpoints, all assembled in src/payload.config.ts; Payload's Local API over MongoDB (@payloadcms/db-mongodb) is the only data layer; the caller's identity is `req.user`, populated by the `users` auth collection and carrying a role and a tenant relationship.",
+      "language": "typescript",
+      "file": "payload-cms/src/endpoints/report-export.ts",
+      "scanAs": "src/endpoints/report-export.ts",
+      "kind": "safe",
+      "pairedWith": "ref-payload-cms-attachment-download",
+      "route": "GET /api/exports/:filename/download",
+      "runtimeVerifiable": true,
+      "why": "The same route parameter reaches the same stat-and-stream, but the name must first match `/^[a-z0-9][a-z0-9._-]{0,119}$/i` — a character class that excludes both path separators — `..` is rejected explicitly, and `resolveWithinTenantStore` re-resolves the name against the organisation's own folder and throws when the result lands outside it.",
+      "packageJson": {
+        "name": "orderbook-portal",
+        "version": "1.4.2",
+        "private": true,
+        "type": "module",
+        "scripts": {
+          "dev": "next dev",
+          "build": "next build",
+          "generate:types": "payload generate:types"
+        },
+        "dependencies": {
+          "@payloadcms/db-mongodb": "3.33.0",
+          "@payloadcms/next": "3.33.0",
+          "@payloadcms/richtext-lexical": "3.33.0",
+          "@payloadcms/ui": "3.33.0",
+          "graphql": "^16.9.0",
+          "next": "15.2.4",
+          "payload": "3.33.0",
+          "react": "19.0.0",
+          "react-dom": "19.0.0"
+        },
+        "devDependencies": {
+          "@types/node": "^22.13.0",
+          "@types/react": "19.0.0",
+          "typescript": "5.7.3"
+        }
+      },
+      "extraFiles": {
+        "src/lib/tenant-scope.ts": "import type { Access, PayloadRequest, Where } from 'payload'\n\n/**\n * Every organisation on Orderbook is a Payload `tenant` document. Users belong\n * to exactly one tenant, except for platform staff who sit outside the tenant\n * tree and reconcile across all of them from the admin panel.\n */\nexport type Role = 'platform-admin' | 'tenant-admin' | 'buyer' | 'supplier-user'\n\n/**\n * Shape of the document Payload puts on `req.user` for the `users` auth\n * collection. Mirrors the fields declared in `collections/Users.ts` — keep the\n * two in step when a field is added there.\n */\nexport interface AppUser {\n  id: string\n  email: string\n  role: Role\n  /** Relationship to `tenants`; a string id unless the caller asked for depth. */\n  tenant?: string | { id: string } | null\n  /** Set only on `supplier-user` accounts, matches `supplierCode` on orders. */\n  supplierCode?: string | null\n}\n\n/** Error with an HTTP status attached, so endpoint handlers can throw and go. */\nexport class RequestError extends Error {\n  readonly status: number\n\n  constructor(status: number, message: string) {\n    super(message)\n    this.name = 'RequestError'\n    this.status = status\n  }\n}\n\n/**\n * Single place where handler failures become responses. Anything that is not a\n * deliberate `RequestError` is logged server side and answered generically so\n * we never hand a stack trace or a driver message to the caller.\n */\nexport const errorResponse = (error: unknown): Response => {\n  if (error instanceof RequestError) {\n    return Response.json({ message: error.message }, { status: error.status })\n  }\n\n  const status = (error as { status?: unknown } | null)?.status\n  if (status === 404) {\n    return Response.json({ message: 'Not found.' }, { status: 404 })\n  }\n\n  console.error('[orderbook] request failed', error)\n  return Response.json({ message: 'Something went wrong handling that request.' }, { status: 500 })\n}\n\nexport const currentUser = (req: PayloadRequest): AppUser | null =>\n  (req.user as AppUser | undefined) ?? null\n\nexport const isPlatformAdmin = (user: AppUser | null): boolean => user?.role === 'platform-admin'\n\n/** Read the caller's tenant id whether or not the relation came back populated. */\nexport const tenantOf = (user: AppUser | null): string | null => {\n  const tenant = user?.tenant\n  if (!tenant) return null\n  return typeof tenant === 'string' ? tenant : tenant.id\n}\n\n/**\n * Guard for endpoints that only make sense inside one organisation. Platform\n * staff are deliberately rejected here: they have no tenant of their own and\n * are expected to use the admin panel rather than the portal endpoints.\n */\nexport const requireTenant = (req: PayloadRequest): { user: AppUser; tenantId: string } => {\n  const user = currentUser(req)\n  if (!user) {\n    throw new RequestError(401, 'Authentication required.')\n  }\n\n  const tenantId = tenantOf(user)\n  if (!tenantId) {\n    throw new RequestError(403, 'Your account is not attached to an organisation.')\n  }\n\n  return { user, tenantId }\n}\n\n/**\n * Collection-level read rule for tenant-owned documents. Returning a `Where`\n * from an access function makes Payload append it to every find, so list and\n * by-id reads are both narrowed to the caller's own tenant.\n */\nexport const tenantReadAccess: Access = ({ req }) => {\n  const user = currentUser(req)\n  if (!user) {\n    return false\n  }\n\n  // Platform staff run cross-tenant reconciliation and billing runs.\n  if (isPlatformAdmin(user)) {\n    return true\n  }\n\n  const tenantId = tenantOf(user)\n  if (!tenantId) {\n    return false\n  }\n\n  return { tenant: { equals: tenantId } } satisfies Where\n}\n\n/**\n * Same idea for writes, with a role gate in front: only the listed roles may\n * mutate, and then only documents belonging to their own tenant.\n */\nexport const tenantWriteAccess =\n  (...roles: Role[]): Access =>\n  ({ req }) => {\n    const user = currentUser(req)\n    if (!user) {\n      return false\n    }\n\n    if (isPlatformAdmin(user)) {\n      return true\n    }\n\n    if (!roles.includes(user.role)) {\n      return false\n    }\n\n    const tenantId = tenantOf(user)\n    if (!tenantId) {\n      return false\n    }\n\n    return { tenant: { equals: tenantId } } satisfies Where\n  }\n\nexport const platformAdminOnly: Access = ({ req }) => isPlatformAdmin(currentUser(req))\n\n/**\n * Ownership clause for the portal endpoints. Supplier users see the orders and\n * invoices addressed to their supplier code; everyone else sees their tenant's.\n * Throws rather than degrading to an empty clause, because an empty clause on\n * an `overrideAccess` query matches every document in the collection.\n */\nexport const ownershipClause = (user: AppUser): Where => {\n  if (user.role === 'supplier-user') {\n    if (!user.supplierCode) {\n      throw new RequestError(403, 'Your supplier account has no supplier code assigned.')\n    }\n    return { supplierCode: { equals: user.supplierCode } }\n  }\n\n  const tenantId = tenantOf(user)\n  if (!tenantId) {\n    throw new RequestError(403, 'Your account is not attached to an organisation.')\n  }\n\n  return { tenant: { equals: tenantId } }\n}\n\n/** Combine the tenant pin with any number of extra clauses. */\nexport const scopedToTenant = (tenantId: string, ...clauses: Where[]): Where => ({\n  and: [{ tenant: { equals: tenantId } }, ...clauses],\n})\n",
+        "src/lib/attachment-storage.ts": "import path from 'node:path'\n\n/**\n * Root of the generated-document store. The nightly export worker writes\n * statement PDFs and reconciliation CSVs to `<root>/<tenantId>/<name>`, so a\n * tenant's files never share a directory with another tenant's.\n */\nexport const ATTACHMENT_ROOT = path.resolve(process.env.ATTACHMENT_ROOT ?? './var/attachments')\n\nconst CONTENT_TYPES: Record<string, string> = {\n  '.csv': 'text/csv; charset=utf-8',\n  '.json': 'application/json',\n  '.pdf': 'application/pdf',\n  '.txt': 'text/plain; charset=utf-8',\n  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',\n  '.zip': 'application/zip',\n}\n\nexport const contentTypeFor = (name: string): string =>\n  CONTENT_TYPES[path.extname(name).toLowerCase()] ?? 'application/octet-stream'\n\n/** Raised when a storage key would resolve outside the tenant's own folder. */\nexport class StorageKeyError extends Error {\n  constructor(message: string) {\n    super(message)\n    this.name = 'StorageKeyError'\n  }\n}\n\n/**\n * Turn a stored key into an absolute path inside the tenant's own folder.\n *\n * `path.resolve` collapses any `.` and `..` segments first, so the containment\n * comparison below is done on the final location rather than on the text the\n * caller handed us. Anything that ends up outside the folder is refused instead\n * of clamped, so a bad key surfaces as an error rather than as someone else's\n * document.\n */\nexport const resolveWithinTenantStore = (tenantId: string, key: string): string => {\n  const base = path.resolve(ATTACHMENT_ROOT, tenantId)\n  const target = path.resolve(base, key)\n\n  if (target !== base && !target.startsWith(base + path.sep)) {\n    throw new StorageKeyError(`Storage key \"${key}\" resolves outside the store for tenant ${tenantId}.`)\n  }\n\n  return target\n}\n\n/** Human-facing size, used in the export listing screen. */\nexport const formatBytes = (bytes: number): string => {\n  if (bytes < 1024) {\n    return `${bytes} B`\n  }\n  const units = ['KB', 'MB', 'GB']\n  let value = bytes / 1024\n  let unitIndex = 0\n  while (value >= 1024 && unitIndex < units.length - 1) {\n    value /= 1024\n    unitIndex += 1\n  }\n  return `${value.toFixed(1)} ${units[unitIndex]}`\n}\n",
+        "src/payload.config.ts": "import path from 'node:path'\nimport { fileURLToPath } from 'node:url'\n\nimport { mongooseAdapter } from '@payloadcms/db-mongodb'\nimport { lexicalEditor } from '@payloadcms/richtext-lexical'\nimport { buildConfig } from 'payload'\n\nimport { Invoices } from './collections/Invoices'\nimport { PayoutAccounts } from './collections/PayoutAccounts'\nimport { PurchaseOrders } from './collections/PurchaseOrders'\nimport { Tenants } from './collections/Tenants'\nimport { Users } from './collections/Users'\nimport { attachmentDownloadEndpoint } from './endpoints/attachment-download'\nimport { invoiceReferenceLookupEndpoint } from './endpoints/invoice-reference-lookup'\nimport { invoiceStatementEndpoint } from './endpoints/invoice-statements'\nimport { orderFeedEndpoint } from './endpoints/order-feed'\nimport { orderTrackingEndpoint } from './endpoints/order-tracking'\nimport { reportExportEndpoint } from './endpoints/report-export'\n\nconst dirname = path.dirname(fileURLToPath(import.meta.url))\n\nconst serverURL = process.env.PAYLOAD_PUBLIC_SERVER_URL ?? 'http://localhost:3000'\n\nconst payloadSecret = process.env.PAYLOAD_SECRET\nif (!payloadSecret) {\n  throw new Error('PAYLOAD_SECRET is required. Copy .env.example and fill it in before booting.')\n}\n\nexport default buildConfig({\n  serverURL,\n  routes: {\n    // Root-level endpoints below are served under this prefix, so\n    // `path: '/order-feed'` answers on GET /api/order-feed.\n    api: '/api',\n    admin: '/admin',\n  },\n  admin: {\n    user: Users.slug,\n    importMap: { baseDir: path.resolve(dirname) },\n    meta: { titleSuffix: ' — Orderbook' },\n  },\n  collections: [Users, Tenants, PurchaseOrders, Invoices, PayoutAccounts],\n  endpoints: [\n    orderTrackingEndpoint,\n    invoiceReferenceLookupEndpoint,\n    invoiceStatementEndpoint,\n    orderFeedEndpoint,\n    attachmentDownloadEndpoint,\n    reportExportEndpoint,\n  ],\n  editor: lexicalEditor(),\n  secret: payloadSecret,\n  typescript: { outputFile: path.resolve(dirname, 'payload-types.ts') },\n  db: mongooseAdapter({\n    // Local development database; staging and production come from the env.\n    url: process.env.DATABASE_URI ?? 'mongodb://orderbook:orderbook@localhost:27017/orderbook',\n  }),\n  cors: [serverURL],\n  csrf: [serverURL],\n  graphQL: { disable: false },\n  telemetry: false,\n})\n"
+      }
+    }
+  ]
+}

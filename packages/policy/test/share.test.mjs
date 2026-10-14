@@ -227,3 +227,11 @@ test("projection preview describes exactly what a principal receives", () => {
   assert.match(lines.join(" "), /Findings: 2 of 3/);
   assert.match(lines.join(" "), /Hidden fields: evidence/);
 });
+
+test("a projection keeps a finding's baseline state unless metadata is withheld", () => {
+  const report = { ...REPORT, findings: REPORT.findings.map((item) => ({ ...item, baselineState: "new" })) };
+  const shared = projectReport(report, allowOnly(["F1"]), { principalType: "email", label: "a@example.com" });
+  assert.equal(shared.findings[0].baselineState, "new");
+  const bare = projectReport(report, allowOnly(["F1"], { metadata: false }), { principalType: "email", label: "a@example.com" });
+  assert.equal(bare.findings[0].baselineState, undefined);
+});

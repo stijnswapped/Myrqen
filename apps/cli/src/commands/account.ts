@@ -5,7 +5,17 @@ import { resolveClient } from "../api/client.js";
 import { blank, field, heading, json, style, write } from "../ui/output.js";
 import { confirm } from "../ui/prompt.js";
 
-export async function statusCommand(options: { asJson?: boolean } = {}): Promise<void> {
+/**
+ * Account, device, and quota state.
+ *
+ * `collect` returns the payload instead of printing it, so `myrqen status` can
+ * put the account half and the integration half in ONE json document. Two
+ * `json()` calls put two documents on stdout, and `JSON.parse` fails on the
+ * concatenation — which is the whole point of `--json`.
+ */
+export async function statusCommand(
+  options: { asJson?: boolean; collect?: boolean } = {}
+): Promise<Record<string, unknown> | void> {
   const config = await readConfig();
   const credential = config.account ? await readCredential(config.account.userId) : null;
   const { client } = await resolveClient();
@@ -19,13 +29,15 @@ export async function statusCommand(options: { asJson?: boolean } = {}): Promise
     }
   }
 
+  const payload = {
+    apiBaseUrl: config.apiBaseUrl,
+    linked: Boolean(credential),
+    account: config.account ? { email: config.account.email, deviceName: config.account.deviceName } : null,
+    quota
+  };
+  if (options.collect) return payload;
   if (options.asJson) {
-    json({
-      apiBaseUrl: config.apiBaseUrl,
-      linked: Boolean(credential),
-      account: config.account ? { email: config.account.email, deviceName: config.account.deviceName } : null,
-      quota
-    });
+    json(payload);
     return;
   }
 
@@ -35,7 +47,10 @@ export async function statusCommand(options: { asJson?: boolean } = {}): Promise
     field("Account", config.account.email);
     field("Device", `${config.account.deviceName} · credential in ${credential.backend}`);
   } else {
-    field("Account", `not linked. Run "${BRAND.cliName} link".`);
+    // `link` writes files into the repository; somebody who only wants an
+    // account wants `login`. Sending them to the installer is the wrong default
+    // for a tool that edits configuration.
+    field("Account", `not linked. Run "${BRAND.cliName} login".`);
   }
   if (quota) {
     field(
@@ -72,4 +87,30 @@ export async function setUrlCommand(url: string): Promise<void> {
   const normalized = new URL(url).origin;
   await updateConfig((current) => ({ ...current, apiBaseUrl: normalized }));
   write(`App URL set to ${normalized}`);
+}
+
+/**
+ * Turn product analytics on or off, persistently.
+ *
+ * The setting already existed and was already honoured, but the only ways to
+ * change it were an environment variable on every single command or hand-editing
+ * `config.json`. A privacy control a user cannot reach without a text editor is
+ * not a control, and the privacy page had to describe one that did not exist.
+ *
+ * `MYRQEN_TELEMETRY=off` still wins for a single command, which is the right
+ * precedence: an environment variable is the narrower, more deliberate act.
+ */
+export async function setTelemetryCommand(value: string): Promise<void> {
+  const enabled = value === "on";
+  if (!enabled && value !== "off") throw new Error("Usage: config telemetry <on|off>");
+
+  await updateConfig((current) => ({ ...current, telemetry: { enabled } }));
+
+  if (enabled) {
+    write(`${style.ok("On")}. Product events are sent from this machine while it is linked to an account.`);
+    write(style.dim("A fixed list of event names and numeric metrics. Never a file path, a finding, or a hostname."));
+    return;
+  }
+  write(`${style.ok("Off")}. No product event will be sent from this machine.`);
+  write(style.dim("Nothing else changes: scanning, reports, sync, and sharing are unaffected."));
 }

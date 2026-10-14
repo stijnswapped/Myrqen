@@ -3,6 +3,67 @@ import path from "node:path";
 import ts from "typescript";
 
 export interface ParsedFile {
+  /**
+   * Which of this file's exported functions were observed being handed caller data by a
+   * call in another file: `exported name → parameter index → why`.
+   *
+   * Set by `scan` after `buildCallSiteIndex` runs, before any rule sees the file. It
+   * lives here rather than on `RuleContext` so that `analyzeFunction` can seed a taint
+   * scope from it without every caller of it having to thread an argument through — nine
+   * of the ten rule files reach the taint model, and the alternative was teaching each
+   * one separately about a fact that belongs to the file.
+   *
+   * Absent when nothing in the project calls into this file.
+   */
+  observedParameters?: Map<string, Map<number, string>>;
+  /**
+   * Parameters of functions in this file that a resolved call site, anywhere in the
+   * project, was observed handing caller data: `function node → parameter index → why`.
+   *
+   * Set by `propagateTaint` in `engine/interproc.ts`. Keyed by the function node rather
+   * than by name, so two methods called `find` in two classes are never confused. The
+   * name-keyed `observedParameters` above is the earlier, one-hop form and is kept.
+   */
+  parameterSeeds?: Map<import("typescript").Node, Map<number, string>>;
+  /**
+   * The request parameter of each handler a router or server in this project registered,
+   * by position: `function node → parameter index → origin`. Set by `scan` from
+   * `engine/handlers.ts`, so a handler whose request parameter is called `rq`, or that is
+   * written in a different module from its route, is still read as receiving caller data.
+   */
+  requestSeeds?: Map<import("typescript").Node, Map<number, string>>;
+  /**
+   * The same, for an object literal argument: only the properties that held caller data.
+   * `load({ id: req.params.id, user: req.user })` seeds `id` and leaves `user` alone.
+   */
+  propertySeeds?: Map<import("typescript").Node, Map<number, Map<string, string>>>;
+  /**
+   * What a project function does with an argument, when this call resolves to one:
+   * whether any of its returns carries that argument's taint, and whether it hands the
+   * argument back by steps the engine reads. `null` when the call does not resolve to a
+   * function this scan can read. Installed by `scan` from `engine/summaries.ts`.
+   */
+  returnSummary?: (call: import("typescript").CallExpression, index: number) => { tainted: boolean; observed: boolean } | null;
+  /**
+   * The route a function inherits from the call sites that handed it caller data, when
+   * they all agree on one. A finding inside a helper or a service belongs to the endpoint
+   * that reached it, not to whichever route happens to be declared nearest to the helper.
+   * Installed by `scan`; `undefined` when the function was not seeded or its callers
+   * disagree.
+   */
+  seedRouteOf?: (fn: import("typescript").Node) => { method: string; path: string; line: number; node?: import("typescript").Node } | undefined;
+  /**
+   * Resolves the name of a schema (`JobBody` in `JobBody.parse(req.body)`) to the expression
+   * that builds it, across modules. Installed by `scan` from the module graph; without it a
+   * schema is read only when declared in the same file. `engine/validation.ts`.
+   */
+  resolveSchema?: (identifier: import("typescript").Identifier) => import("typescript").Expression | null;
+  /**
+   * The registration a function is the handler of — its route and the middleware in front
+   * of it, wherever the registration is written. Installed by `scan` from
+   * `engine/handlers.ts`; `undefined` for a function no router or server registered.
+   */
+  requestHandlerOf?: (fn: import("typescript").Node) => import("../engine/handlers.js").RequestHandler | undefined;
   /** Repository-relative, POSIX separators, so findings are portable. */
   relativePath: string;
   absolutePath: string;

@@ -88,7 +88,7 @@ A Myrqen scan has two halves.
 
 The static pass belongs to Myrqen itself.
 
-It parses TypeScript and JavaScript and follows attacker-controlled data through a function, including patterns that show up in real applications:
+It parses TypeScript, JavaScript and Python (routes modelled for FastAPI and Flask). In JavaScript and TypeScript it follows attacker-controlled data within functions and across modules where a call resolves, up to four calls deep, including patterns that show up in real applications:
 
 * destructured request reads;
 * aliases and type assertions;
@@ -271,7 +271,8 @@ node /path/to/myrqen/apps/cli/dist/myrqen.mjs auto --sync no
 | Path                                       | Purpose                                                                               |
 | ------------------------------------------ | ------------------------------------------------------------------------------------- |
 | [`apps/cli`](apps/cli)                     | The `myrqen` command                                                                  |
-| [`packages/scan`](packages/scan)           | Static analysis and intra-procedural taint tracking over the TypeScript AST           |
+| [`packages/scan`](packages/scan)           | Static analysis and cross-module taint tracking over the TypeScript AST, plus dependency advisories |
+| [`packages/scan-python`](packages/scan-python) | Static analysis of Python (FastAPI and Flask)                                   |
 | [`packages/policy`](packages/policy)       | Authorization scope, prohibited actions, redaction, deduplication, and finding intake |
 | [`packages/report`](packages/report)       | HTML, Markdown, JSON, and SARIF report rendering                                      |
 | [`packages/skill`](packages/skill)         | The portable Agent Skill and its reference documents                                  |
@@ -350,6 +351,7 @@ If the issue concerns Myrqen's hosted service rather than the published source, 
 Myrqen's production dependencies include:
 
 * [`typescript`](https://www.npmjs.com/package/typescript) — Apache-2.0
+* [`@lezer/python`](https://www.npmjs.com/package/@lezer/python), [`@lezer/common`](https://www.npmjs.com/package/@lezer/common), [`@lezer/lr`](https://www.npmjs.com/package/@lezer/lr) — MIT
 * [`ajv`](https://www.npmjs.com/package/ajv) — MIT
 * [`ajv-formats`](https://www.npmjs.com/package/ajv-formats) — MIT
 * [`commander`](https://www.npmjs.com/package/commander) — MIT
@@ -381,3 +383,5 @@ Read the complete terms in **[LICENSE](LICENSE)**.
 [Website](https://myqren.cc/) · [Quick start](#quick-start) · [Benchmarks](#reproducible-benchmarks) · [Licence](LICENSE)
 
 </div>
+
+The dependency advisory snapshot in `packages/scan/advisories` is derived from the [OSV](https://osv.dev) and GitHub Advisory databases, licensed CC-BY-4.0.

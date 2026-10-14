@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability in Myrqen
+    url: https://github.com/stijnswapped/Myrqen/security/advisories/new
+    about: Never in a public issue. Private advisory here, or email security@myrqen.cc.
+  - name: Documentation
+    url: https://docs.myrqen.cc
+    about: Installation, the CLI reference, the safety model, and the API.
+  - name: Measured accuracy, and how it was measured
+    url: https://myrqen.cc/benchmarks
+    about: Read this before reporting that a vulnerability was missed — recall is below its gate and the gaps are named.

@@ -554,6 +554,202 @@ export const REPORT_SCHEMA = {
     "methodologyVersion": {
       "type": "string",
       "maxLength": 40
+    },
+    "verdict": {
+      "description": "Verdict-first summary computed from the findings when the report was built. Renderers recompute it from the findings they are given and never trust this copy.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tone",
+        "headline",
+        "runMode",
+        "caveat",
+        "fixFirst"
+      ],
+      "properties": {
+        "tone": {
+          "enum": [
+            "verified_risk",
+            "unverified_risk",
+            "clear",
+            "settled",
+            "withheld"
+          ]
+        },
+        "headline": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 400
+        },
+        "detail": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "runMode": {
+          "enum": [
+            "agent",
+            "static_only",
+            "unattributed"
+          ]
+        },
+        "nextStep": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "caveat": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 400
+        },
+        "fixFirst": {
+          "type": "array",
+          "maxItems": 3,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "findingId",
+              "title",
+              "severity",
+              "verification",
+              "location",
+              "why",
+              "fixPrompt"
+            ],
+            "properties": {
+              "findingId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "title": {
+                "type": "string",
+                "maxLength": 240
+              },
+              "severity": {
+                "enum": [
+                  "critical",
+                  "high",
+                  "medium",
+                  "low",
+                  "info"
+                ]
+              },
+              "verification": {
+                "enum": [
+                  "verified",
+                  "strong_evidence",
+                  "needs_review"
+                ]
+              },
+              "location": {
+                "type": "string",
+                "maxLength": 1200
+              },
+              "route": {
+                "type": "string",
+                "maxLength": 1000
+              },
+              "why": {
+                "type": "string",
+                "maxLength": 400
+              },
+              "fixPrompt": {
+                "type": "string",
+                "maxLength": 40000
+              }
+            }
+          }
+        }
+      }
+    },
+    "baseline": {
+      "description": "Comparison against .myrqen/baseline.json, when one was present for this scan.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "createdAt",
+        "counts",
+        "fixed"
+      ],
+      "properties": {
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "fromReportId": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "counts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "new",
+            "unchanged",
+            "fixed"
+          ],
+          "properties": {
+            "new": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "unchanged": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "fixed": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "fixed": {
+          "type": "array",
+          "maxItems": 5000,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "fingerprint",
+              "category",
+              "title",
+              "severity"
+            ],
+            "properties": {
+              "fingerprint": {
+                "type": "string",
+                "pattern": "^bl_[0-9a-f]{32}$"
+              },
+              "category": {
+                "type": "string",
+                "maxLength": 120
+              },
+              "title": {
+                "type": "string",
+                "maxLength": 240
+              },
+              "severity": {
+                "enum": [
+                  "critical",
+                  "high",
+                  "medium",
+                  "low",
+                  "info"
+                ]
+              },
+              "file": {
+                "type": "string",
+                "maxLength": 1000
+              },
+              "route": {
+                "type": "string",
+                "maxLength": 1000
+              }
+            }
+          }
+        }
+      }
     }
   }
 } as const;
@@ -839,6 +1035,58 @@ export const FINDING_SCHEMA = {
         "maxLength": 80
       },
       "maxItems": 32
+    },
+    "compliance": {
+      "description": "Standard references derived from the category at report time: CWE, OWASP Top 10 (2021 and 2025), and OWASP ASVS requirement ids (v4.0.3-x.y.z / v5.0.0-x.y.z).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cwe",
+        "owasp2021",
+        "owasp2025",
+        "asvs"
+      ],
+      "properties": {
+        "cwe": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^CWE-[0-9]+$"
+          },
+          "maxItems": 16
+        },
+        "owasp2021": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^A(0[1-9]|10):2021$"
+          },
+          "maxItems": 10
+        },
+        "owasp2025": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^A(0[1-9]|10):2025$"
+          },
+          "maxItems": 10
+        },
+        "asvs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+-[0-9]+\\.[0-9]+\\.[0-9]+$"
+          },
+          "maxItems": 16
+        }
+      }
+    },
+    "baselineState": {
+      "description": "Present only when the scan was compared against a baseline: new since it, or already in it.",
+      "enum": [
+        "new",
+        "unchanged"
+      ]
     }
   }
 } as const;

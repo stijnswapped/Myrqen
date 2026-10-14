@@ -230,6 +230,143 @@ test("a reset token built from Math.random is reported with its route", async ()
   assert.equal(reported[0].route, "POST /auth/reset");
 });
 
+test("a pairing code accumulated a character at a time from Math.random is reported", async () => {
+  const found = await analyse(
+    "main/pairing-bridge.js",
+    `
+      const { ipcMain } = require("electron");
+      const { randomUUID } = require("node:crypto");
+      const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+      const pending = new Map();
+      function jitter(baseMs) {
+        return baseMs + Math.floor(Math.random() * 250);
+      }
+      function pairingCode() {
+        let code = "";
+        for (let i = 0; i < 8; i += 1) {
+          code += CODE_ALPHABET[Math.floor(Math.random() * CODE_ALPHABET.length)];
+        }
+        return code;
+      }
+      ipcMain.handle("pairing:start", async () => {
+        const id = randomUUID();
+        const code = pairingCode();
+        pending.set(id, { code });
+        return { id, code };
+      });
+      module.exports = { pairingCode };
+    `
+  );
+  const reported = of(found, "insecure_randomness");
+  assert.equal(
+    reported.length,
+    1,
+    `a code that admits a device is a bearer credential, and the jitter beside it is not: ${JSON.stringify(categories(found))}`
+  );
+  assert.equal(reported[0].location.line, 12, "the report points at the draw, not at the jitter above it");
+});
+
+test("a coupon code, a status code and a country code drawn from Math.random stay silent", async () => {
+  const found = await analyse(
+    "src/catalogue.js",
+    `
+      const ALPHABET = "ABCDE";
+      function promoCode() {
+        let couponCode = "";
+        for (let i = 0; i < 6; i += 1) couponCode += ALPHABET[Math.floor(Math.random() * ALPHABET.length)];
+        return couponCode;
+      }
+      function flakyStatus() {
+        const statusCode = [200, 201, 204][Math.floor(Math.random() * 3)];
+        return statusCode;
+      }
+      function anyCountry(list) {
+        const countryCode = list[Math.floor(Math.random() * list.length)];
+        return countryCode;
+      }
+      module.exports = { promoCode, flakyStatus, anyCountry };
+    `
+  );
+  assert.deepEqual(
+    categories(found),
+    [],
+    "\"code\" only names something unguessable when a qualifier says what it admits the holder to"
+  );
+});
+
+test("an access pin assembled with padStart and a backup code built from the clock are reported", async () => {
+  const found = await analyse(
+    "src/enrolment.js",
+    `
+      let issued = 0;
+      function accessPin() {
+        return String(Math.floor(Math.random() * 1e6)).padStart(6, "0");
+      }
+      function nextBackup() {
+        issued += 1;
+        const backupCode = \`\${Date.now().toString(36)}-\${issued}\`;
+        return backupCode;
+      }
+      module.exports = { accessPin, nextBackup };
+    `
+  );
+  const reported = of(found, "insecure_randomness");
+  assert.equal(reported.length, 2, `both assemblies are the same defect: ${JSON.stringify(categories(found))}`);
+});
+
+test("a generated value is reported for how it is checked, even when its name says nothing", async () => {
+  const found = await analyse(
+    "src/claims.js",
+    `
+      const store = new Map();
+      function newValue() {
+        return Math.random().toString(36).slice(2);
+      }
+      function issue(userId) {
+        const value = newValue();
+        store.set(userId, { value });
+        return value;
+      }
+      function redeem(userId, presented) {
+        const record = store.get(userId);
+        return { ok: record.value === String(presented) };
+      }
+      module.exports = { issue, redeem };
+    `
+  );
+  const reported = of(found, "insecure_randomness");
+  assert.equal(
+    reported.length,
+    1,
+    `a value checked against what the caller presents is a bearer credential whatever it is called: ${JSON.stringify(categories(found))}`
+  );
+  assert.match(reported[0].reasoning, /checked against/);
+  assert.deepEqual(of(found, "weak_session_identifier"), [], "being verified does not make the value a session handle");
+});
+
+test("a randomly chosen variant compared with the same field from the query is not reported", async () => {
+  const found = await analyse(
+    "src/experiment.js",
+    `
+      const variants = ["a", "b"];
+      function pickVariant() {
+        return variants[Math.floor(Math.random() * variants.length)];
+      }
+      function render(req) {
+        const variant = pickVariant();
+        if (variant === req.query.variant) return "sticky";
+        return variant;
+      }
+      module.exports = { render };
+    `
+  );
+  assert.deepEqual(
+    categories(found),
+    [],
+    "the same field on both sides is the caller's own value echoed back, not a secret against a guess"
+  );
+});
+
 test("Math.random used for retry jitter is not reported", async () => {
   const found = await analyse(
     "src/retry.js",
@@ -767,4 +904,74 @@ test("a correct session cookie over plain http is not reported for Secure alone"
     `
   );
   assert.deepEqual(of(found, "insecure_cookie_configuration"), []);
+});
+
+/* ------------------------------------------- a credential that authenticates to nothing */
+
+/*
+ * `postgres://user:pass@localhost/db` is what a framework's generator writes into its
+ * development datastore config, and the username, password and database name are usually
+ * the project's name three times. There is no disclosure to report: the credential cannot
+ * be used from anywhere but the machine it is already on, and "rotate this at the issuer"
+ * is advice with no issuer.
+ *
+ * The pair matters more than the suppression. Only the *host* decides — a real hostname or
+ * a routable private address stays reported however development-ish the file looks around
+ * it, because that one can be used by whoever reads the repository.
+ */
+
+test("a loopback connection string is not a leaked credential", async () => {
+  const found = await analyse(
+    "config/datastores.js",
+    `
+    module.exports.datastores = {
+      default: {
+        adapter: 'sails-postgresql',
+        url: 'postgres://northgate:northgate@localhost:5432/northgate_dev'
+      }
+    };
+    `
+  );
+  assert.deepEqual(of(found, "hardcoded_secret"), []);
+});
+
+test("the same shape pointed at a container hostname is not one either", async () => {
+  const found = await analyse(
+    "config/queue.ts",
+    `
+    export const queue = {
+      // docker compose puts redis on the same private network under this name
+      url: "redis://default:devpassword@redis:6379"
+    };
+    `
+  );
+  assert.deepEqual(of(found, "hardcoded_secret"), []);
+});
+
+test("the same shape pointed at a real host is reported", async () => {
+  const found = await analyse(
+    "config/datastores.ts",
+    `
+    export const datastores = {
+      default: {
+        url: "postgres://reporting:Hunter2LiveValue@db.prod.example.com:5432/main"
+      }
+    };
+    `
+  );
+  assert.equal(of(found, "hardcoded_secret").length, 1);
+});
+
+test("a routable private address is a real host", async () => {
+  // 10.0.0.0/8 is private and is not loopback: whoever reads the repository can reach it
+  // from anywhere on that network, which is the whole exposure.
+  const found = await analyse(
+    "config/datastores.ts",
+    `
+    export const datastores = {
+      default: { url: "postgres://svc:S3cretLiveValue@10.0.4.12:5432/orders" }
+    };
+    `
+  );
+  assert.equal(of(found, "hardcoded_secret").length, 1);
 });

@@ -1,0 +1,602 @@
+{
+  "family": "modern-js",
+  "architecture": "Modern JavaScript and TypeScript server runtimes outside the Express/Next lineage: Deno.serve and Bun.serve HTTP services, Astro endpoints and actions, TanStack Start and SolidStart server functions, a Socket.IO gateway, a Server-Sent Events stream, an MV3 browser-extension service worker, and a router the team wrote themselves.",
+  "cases": [
+    {
+      "id": "h2-modern-js-account-statement-filter",
+      "family": "modern-js",
+      "architecture": "A Deno HTTP service (Deno.serve + URLPattern) for a personal-banking ledger, talking to Postgres through deno.land/x/postgres.",
+      "language": "typescript",
+      "file": "modern-js/deno-ledger/handlers/statements.ts",
+      "scanAs": "handlers/statements.ts",
+      "kind": "vulnerable",
+      "category": "sql_injection",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "GET /accounts/:accountId/statements",
+      "line": 43,
+      "lineRange": [
+        41,
+        56
+      ],
+      "runtimeVerifiable": true,
+      "extraFiles": {
+        "deno.json": "{\n  \"name\": \"@acme/ledger-api\",\n  \"version\": \"3.2.0\",\n  \"tasks\": {\n    \"dev\": \"deno run --allow-net --allow-env --watch main.ts\",\n    \"start\": \"deno run --allow-net --allow-env main.ts\"\n  },\n  \"imports\": {\n    \"postgres/\": \"https://deno.land/x/postgres@v0.19.3/\"\n  },\n  \"compilerOptions\": { \"strict\": true }\n}\n",
+        "main.ts": "import { resolveSession } from \"./auth/session.ts\";\nimport { listStatements } from \"./handlers/statements.ts\";\nimport { listTransactions } from \"./handlers/transactions.ts\";\nimport { json, notFound, serverError } from \"./http/responses.ts\";\nimport { logger } from \"./observability/logger.ts\";\n\nconst STATEMENTS = new URLPattern({ pathname: \"/accounts/:accountId/statements\" });\nconst TRANSACTIONS = new URLPattern({ pathname: \"/accounts/:accountId/transactions\" });\n\nDeno.serve({ port: 8080 }, async (request) => {\n  const session = await resolveSession(request);\n  if (!session) return json({ error: \"unauthorized\" }, 401);\n\n  try {\n    const statements = STATEMENTS.exec(request.url);\n    if (statements && request.method === \"GET\") {\n      return await listStatements(request, session, statements.pathname.groups.accountId!);\n    }\n\n    const transactions = TRANSACTIONS.exec(request.url);\n    if (transactions && request.method === \"GET\") {\n      return await listTransactions(request, session, transactions.pathname.groups.accountId!);\n    }\n\n    return notFound();\n  } catch (error) {\n    logger.error(\"request failed\", { path: new URL(request.url).pathname, error: String(error) });\n    return serverError();\n  }\n});\n"
+      },
+      "why": "The account id, the owner id, the sort column and the page size are all handled carefully, and then the free-text merchant filter is pasted straight into the WHERE clause as a quoted LIKE literal. A single apostrophe in `merchant` closes the string and the rest of the predicate list is attacker-authored SQL running with the API's database role — the tenant scoping in the same query is the first thing it can drop."
+    },
+    {
+      "id": "h2-modern-js-account-transaction-filter",
+      "family": "modern-js",
+      "architecture": "A Deno HTTP service (Deno.serve + URLPattern) for a personal-banking ledger, talking to Postgres through deno.land/x/postgres.",
+      "language": "typescript",
+      "file": "modern-js/deno-ledger/handlers/transactions.ts",
+      "scanAs": "handlers/transactions.ts",
+      "kind": "safe",
+      "pairedWith": "h2-modern-js-account-statement-filter",
+      "runtimeVerifiable": true,
+      "extraFiles": {
+        "deno.json": "{\n  \"name\": \"@acme/ledger-api\",\n  \"version\": \"3.2.0\",\n  \"tasks\": {\n    \"dev\": \"deno run --allow-net --allow-env --watch main.ts\",\n    \"start\": \"deno run --allow-net --allow-env main.ts\"\n  },\n  \"imports\": {\n    \"postgres/\": \"https://deno.land/x/postgres@v0.19.3/\"\n  },\n  \"compilerOptions\": { \"strict\": true }\n}\n",
+        "main.ts": "import { resolveSession } from \"./auth/session.ts\";\nimport { listStatements } from \"./handlers/statements.ts\";\nimport { listTransactions } from \"./handlers/transactions.ts\";\nimport { json, notFound, serverError } from \"./http/responses.ts\";\nimport { logger } from \"./observability/logger.ts\";\n\nconst STATEMENTS = new URLPattern({ pathname: \"/accounts/:accountId/statements\" });\nconst TRANSACTIONS = new URLPattern({ pathname: \"/accounts/:accountId/transactions\" });\n\nDeno.serve({ port: 8080 }, async (request) => {\n  const session = await resolveSession(request);\n  if (!session) return json({ error: \"unauthorized\" }, 401);\n\n  try {\n    const statements = STATEMENTS.exec(request.url);\n    if (statements && request.method === \"GET\") {\n      return await listStatements(request, session, statements.pathname.groups.accountId!);\n    }\n\n    const transactions = TRANSACTIONS.exec(request.url);\n    if (transactions && request.method === \"GET\") {\n      return await listTransactions(request, session, transactions.pathname.groups.accountId!);\n    }\n\n    return notFound();\n  } catch (error) {\n    logger.error(\"request failed\", { path: new URL(request.url).pathname, error: String(error) });\n    return serverError();\n  }\n});\n"
+      },
+      "why": "The SQL text is assembled by concatenating predicate fragments and interpolating `${sort}` and `${PAGE_SIZE}`, which is the shape that usually signals injection. Every one of those interpolations is a value the server owns: `sort` has already been checked against an allow-list set, PAGE_SIZE is a module constant, and the counterparty filter contributes only `$${values.length + 1}` — a placeholder number — while the search term itself is pushed onto the bound `values` array."
+    },
+    {
+      "id": "h2-modern-js-handbook-asset-route",
+      "family": "modern-js",
+      "architecture": "Two small Bun.serve static content services in a monorepo, each mapping a URL slug onto a file under its own content directory.",
+      "language": "typescript",
+      "file": "modern-js/bun-static/services/handbook/server.ts",
+      "scanAs": "services/handbook/server.ts",
+      "kind": "vulnerable",
+      "category": "path_traversal",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "GET /handbook/*",
+      "line": 41,
+      "lineRange": [
+        33,
+        41
+      ],
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "handbook-service",
+        "private": true,
+        "type": "module",
+        "devDependencies": {
+          "@types/bun": "^1.1.0"
+        }
+      },
+      "why": "The `..` guard runs against `url.pathname`, which is still percent-encoded, and the value that reaches `join()` is the decoded one. `/handbook/%2e%2e%2f%2e%2e%2fetc%2fpasswd` passes the check as a literal string with no dots in it and then decodes into a traversal, so any file the Bun process can read is served."
+    },
+    {
+      "id": "h2-modern-js-press-kit-asset-route",
+      "family": "modern-js",
+      "architecture": "Two small Bun.serve static content services in a monorepo, each mapping a URL slug onto a file under its own content directory.",
+      "language": "typescript",
+      "file": "modern-js/bun-static/services/press-kit/server.ts",
+      "scanAs": "services/press-kit/server.ts",
+      "kind": "safe",
+      "pairedWith": "h2-modern-js-handbook-asset-route",
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "press-kit-service",
+        "private": true,
+        "type": "module",
+        "devDependencies": {
+          "@types/bun": "^1.1.0"
+        }
+      },
+      "why": "It still resolves a filesystem path directly from the request path, and it still decodes the slug first — but the decode happens before the check rather than after it, and the check is containment on the resolved absolute path rather than a substring test. `resolve()` has already collapsed every `..`, so `insideContentRoot` is deciding about the real target, and the `${CONTENT_ROOT}${sep}` prefix stops a sibling directory whose name merely starts with the same characters."
+    },
+    {
+      "id": "h2-modern-js-editor-link-card",
+      "family": "modern-js",
+      "architecture": "An Astro 4 storefront in server output mode; API routes live in src/pages/api and read the session the auth middleware puts on locals.",
+      "language": "typescript",
+      "file": "modern-js/astro-storefront/src/pages/api/link-preview.ts",
+      "scanAs": "src/pages/api/link-preview.ts",
+      "kind": "vulnerable",
+      "category": "server_side_request_forgery",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "POST /api/link-preview",
+      "line": 39,
+      "lineRange": [
+        29,
+        42
+      ],
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "storefront",
+        "private": true,
+        "type": "module",
+        "dependencies": {
+          "astro": "^4.15.0",
+          "@astrojs/node": "^8.3.0",
+          "zod": "^3.23.8"
+        }
+      },
+      "extraFiles": {
+        "astro.config.mjs": "import { defineConfig } from \"astro/config\";\nimport node from \"@astrojs/node\";\n\nexport default defineConfig({\n  output: \"server\",\n  adapter: node({ mode: \"standalone\" }),\n  site: \"https://storefront.example.com\",\n});\n"
+      },
+      "why": "Any signed-in merchant chooses the destination of a server-side fetch, and the only guard is a four-entry loopback deny list. `http://169.254.169.254/latest/meta-data/`, `http://10.0.0.5:6379/`, a hostname whose DNS record points inside the VPC, or a public URL that 302s to any of those all sail through, and the response body plus `response.url` come back to the caller."
+    },
+    {
+      "id": "h2-modern-js-editor-embed-card",
+      "family": "modern-js",
+      "architecture": "An Astro 4 storefront in server output mode; API routes live in src/pages/api and read the session the auth middleware puts on locals.",
+      "language": "typescript",
+      "file": "modern-js/astro-storefront/src/pages/api/oembed.ts",
+      "scanAs": "src/pages/api/oembed.ts",
+      "kind": "safe",
+      "pairedWith": "h2-modern-js-editor-link-card",
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "storefront",
+        "private": true,
+        "type": "module",
+        "dependencies": {
+          "astro": "^4.15.0",
+          "@astrojs/node": "^8.3.0",
+          "zod": "^3.23.8"
+        }
+      },
+      "extraFiles": {
+        "astro.config.mjs": "import { defineConfig } from \"astro/config\";\nimport node from \"@astrojs/node\";\n\nexport default defineConfig({\n  output: \"server\",\n  adapter: node({ mode: \"standalone\" }),\n  site: \"https://storefront.example.com\",\n});\n"
+      },
+      "why": "A merchant-supplied URL is parsed and handed to `fetch`, which looks like the same defect — but the thing fetched is `endpoint`, built from a hardcoded provider URL selected by exact `URL.origin` match. The submitted link only ever travels as a query parameter of that provider endpoint, and `redirect: \"manual\"` stops the provider from bouncing the request somewhere internal."
+    },
+    {
+      "id": "h2-modern-js-cart-order-total",
+      "family": "modern-js",
+      "architecture": "An Astro 4 storefront using Astro Actions; the cart is a client island that calls the action over the actions RPC endpoint.",
+      "language": "typescript",
+      "file": "modern-js/astro-storefront/src/actions/orders.ts",
+      "scanAs": "src/actions/orders.ts",
+      "kind": "vulnerable",
+      "category": "business_logic_price_manipulation",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 49,
+      "lineRange": [
+        46,
+        52
+      ],
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "storefront",
+        "private": true,
+        "type": "module",
+        "dependencies": {
+          "astro": "^4.15.0",
+          "@astrojs/node": "^8.3.0",
+          "zod": "^3.23.8",
+          "pg": "^8.12.0"
+        }
+      },
+      "extraFiles": {
+        "astro.config.mjs": "import { defineConfig } from \"astro/config\";\nimport node from \"@astrojs/node\";\n\nexport default defineConfig({\n  output: \"server\",\n  adapter: node({ mode: \"standalone\" }),\n  site: \"https://storefront.example.com\",\n});\n"
+      },
+      "why": "The catalogue is loaded and used to check that each SKU is sellable and in stock, so the handler reads as though it is server-authoritative — but the money comes from `item.unitPriceCents`, a number the client sent. Zod only proves it is a non-negative integer, so a caller posts `unitPriceCents: 1` and the order row, and every downstream charge built from it, is a cent."
+    },
+    {
+      "id": "h2-modern-js-cart-checkout-total",
+      "family": "modern-js",
+      "architecture": "An Astro 4 marketplace using Astro Actions; the cart is a client island that calls the action over the actions RPC endpoint.",
+      "language": "typescript",
+      "file": "modern-js/astro-marketplace/src/actions/checkout.ts",
+      "scanAs": "src/actions/checkout.ts",
+      "kind": "safe",
+      "pairedWith": "h2-modern-js-cart-order-total",
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "marketplace",
+        "private": true,
+        "type": "module",
+        "dependencies": {
+          "astro": "^4.15.0",
+          "@astrojs/node": "^8.3.0",
+          "zod": "^3.23.8",
+          "pg": "^8.12.0"
+        }
+      },
+      "extraFiles": {
+        "astro.config.mjs": "import { defineConfig } from \"astro/config\";\nimport node from \"@astrojs/node\";\n\nexport default defineConfig({\n  output: \"server\",\n  adapter: node({ mode: \"standalone\" }),\n  site: \"https://storefront.example.com\",\n});\n"
+      },
+      "why": "The input schema still carries a per-line price from the browser, which is exactly what the vulnerable sibling gets wrong. Here `displayedPriceCents` is only ever compared against the listing so the buyer can be told the seller repriced mid-session; the subtotal is accumulated from `listing.unitPriceCents`, read from the database inside the same loop, so the client's number can reject a checkout but can never set the amount."
+    },
+    {
+      "id": "h2-modern-js-procurement-signoff",
+      "family": "modern-js",
+      "architecture": "A TanStack Start procurement app; server functions created with createServerFn back an approvals inbox and an emailed one-click approve link.",
+      "language": "typescript",
+      "file": "modern-js/tanstack-procure/app/server/purchase-orders.ts",
+      "scanAs": "app/server/purchase-orders.ts",
+      "kind": "vulnerable",
+      "category": "broken_function_level_authorization",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 37,
+      "lineRange": [
+        18,
+        46
+      ],
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "procure",
+        "private": true,
+        "type": "module",
+        "dependencies": {
+          "@tanstack/start": "^1.87.0",
+          "react": "^18.3.1",
+          "zod": "^3.23.8",
+          "@prisma/client": "^5.19.0"
+        }
+      },
+      "extraFiles": {
+        "app/lib/session.ts": "import { getWebRequest } from \"@tanstack/start/server\";\nimport { db } from \"./db\";\n\nexport type Role = \"requester\" | \"approver\" | \"finance\" | \"admin\";\n\nexport interface Session {\n  userId: string;\n  tenantId: string;\n  roles: Role[];\n}\n\nexport class HttpError extends Error {\n  constructor(readonly status: number, message: string) {\n    super(message);\n  }\n}\n\n/** Resolves the signed session cookie. Throws 401 when there isn't one. */\nexport async function requireSession(): Promise<Session> {\n  const request = getWebRequest();\n  const token = request.headers.get(\"cookie\")?.match(/procure_session=([^;]+)/)?.[1];\n  if (!token) throw new HttpError(401, \"Sign in to continue.\");\n\n  const row = await db.session.findFirst({\n    where: { tokenHash: hash(token), expiresAt: { gt: new Date() } },\n    select: { userId: true, tenantId: true, roles: true },\n  });\n  if (!row) throw new HttpError(401, \"Your session has expired.\");\n  return { userId: row.userId, tenantId: row.tenantId, roles: row.roles as Role[] };\n}\n\nfunction hash(token: string): string {\n  return require(\"node:crypto\").createHash(\"sha256\").update(token).digest(\"hex\");\n}\n",
+        "app.config.ts": "import { defineConfig } from \"@tanstack/start/config\";\n\nexport default defineConfig({\n  server: { preset: \"node-server\" },\n  vite: { ssr: { noExternal: [\"@prisma/client\"] } },\n});\n"
+      },
+      "why": "`requireSession()` proves only that somebody is signed in; the tenant check that follows makes the handler look guarded. Nothing consults `session.roles`, nothing compares `session.userId` against `order.submittedById`, and nothing requires the order to be in `submitted` — so any member of the tenant, including the requester who raised it, can POST their own draft purchase order straight to `approved` for any amount, and the audit row will faithfully record them as the approver."
+    },
+    {
+      "id": "h2-modern-js-expense-signoff",
+      "family": "modern-js",
+      "architecture": "A TanStack Start procurement app; server functions created with createServerFn back an approvals inbox and an emailed one-click approve link.",
+      "language": "typescript",
+      "file": "modern-js/tanstack-procure/app/server/expense-claims.ts",
+      "scanAs": "app/server/expense-claims.ts",
+      "kind": "safe",
+      "pairedWith": "h2-modern-js-procurement-signoff",
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "procure",
+        "private": true,
+        "type": "module",
+        "dependencies": {
+          "@tanstack/start": "^1.87.0",
+          "react": "^18.3.1",
+          "zod": "^3.23.8",
+          "@prisma/client": "^5.19.0"
+        }
+      },
+      "extraFiles": {
+        "app/lib/session.ts": "import { getWebRequest } from \"@tanstack/start/server\";\nimport { db } from \"./db\";\n\nexport type Role = \"requester\" | \"approver\" | \"finance\" | \"admin\";\n\nexport interface Session {\n  userId: string;\n  tenantId: string;\n  roles: Role[];\n}\n\nexport class HttpError extends Error {\n  constructor(readonly status: number, message: string) {\n    super(message);\n  }\n}\n\n/** Resolves the signed session cookie. Throws 401 when there isn't one. */\nexport async function requireSession(): Promise<Session> {\n  const request = getWebRequest();\n  const token = request.headers.get(\"cookie\")?.match(/procure_session=([^;]+)/)?.[1];\n  if (!token) throw new HttpError(401, \"Sign in to continue.\");\n\n  const row = await db.session.findFirst({\n    where: { tokenHash: hash(token), expiresAt: { gt: new Date() } },\n    select: { userId: true, tenantId: true, roles: true },\n  });\n  if (!row) throw new HttpError(401, \"Your session has expired.\");\n  return { userId: row.userId, tenantId: row.tenantId, roles: row.roles as Role[] };\n}\n\nfunction hash(token: string): string {\n  return require(\"node:crypto\").createHash(\"sha256\").update(token).digest(\"hex\");\n}\n",
+        "app/lib/authz.ts": "import { HttpError, type Role, type Session } from \"./session\";\n\n/**\n * Role gate for the approval workflow. Kept out of the server functions so the\n * matrix lives in one place and can be reviewed on its own.\n */\nexport function requireRole(session: Session, ...allowed: Role[]): void {\n  if (session.roles.includes(\"admin\")) return;\n  if (allowed.some((role) => session.roles.includes(role))) return;\n  throw new HttpError(403, \"You do not have permission to do that.\");\n}\n\n/** Nobody signs off their own spend, whatever role they hold. */\nexport function refuseSelfApproval(session: Session, submittedById: string): void {\n  if (session.userId === submittedById) {\n    throw new HttpError(403, \"A claim cannot be approved by the person who submitted it.\");\n  }\n}\n",
+        "app.config.ts": "import { defineConfig } from \"@tanstack/start/config\";\n\nexport default defineConfig({\n  server: { preset: \"node-server\" },\n  vite: { ssr: { noExternal: [\"@prisma/client\"] } },\n});\n"
+      },
+      "why": "The handler body contains no visible role comparison, which is what makes it tempting — the decision lives two files away in `app/lib/authz.ts`. `requireRole` throws 403 unless the caller holds approver, finance or admin, `refuseSelfApproval` throws when the approver submitted the claim, the status guard refuses anything that is not `submitted`, and the update repeats that status in its own `where` clause so a concurrent approval cannot slip past."
+    },
+    {
+      "id": "h2-modern-js-profile-drawer-patch",
+      "family": "modern-js",
+      "architecture": "A SolidStart CRM; `\"use server\"` actions in src/lib/server are called straight from Solid components and write through Prisma.",
+      "language": "typescript",
+      "file": "modern-js/solid-crm/src/lib/server/profile.ts",
+      "scanAs": "src/lib/server/profile.ts",
+      "kind": "vulnerable",
+      "category": "mass_assignment",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 40,
+      "lineRange": [
+        38,
+        49
+      ],
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "solid-crm",
+        "private": true,
+        "type": "module",
+        "dependencies": {
+          "@solidjs/start": "^1.0.10",
+          "@solidjs/router": "^0.14.7",
+          "solid-js": "^1.8.22",
+          "@prisma/client": "^5.19.0"
+        }
+      },
+      "extraFiles": {
+        "app.config.ts": "import { defineConfig } from \"@solidjs/start/config\";\n\nexport default defineConfig({\n  server: { preset: \"node-server\" },\n  middleware: \"./src/middleware.ts\",\n});\n",
+        "src/lib/server/session.ts": "import { getRequestEvent } from \"solid-js/web\";\nimport { db } from \"../db\";\n\nexport interface Viewer {\n  id: string;\n  organisationId: string;\n  role: \"member\" | \"manager\" | \"owner\";\n}\n\n/** Reads the viewer the session middleware attached to the request event. */\nexport async function currentViewer(): Promise<Viewer> {\n  const event = getRequestEvent();\n  const viewer = event?.locals?.viewer as Viewer | undefined;\n  if (!viewer) throw new Error(\"UNAUTHENTICATED\");\n  return viewer;\n}\n\nexport async function assertOwner(viewer: Viewer): Promise<void> {\n  const fresh = await db.user.findUnique({ where: { id: viewer.id }, select: { role: true } });\n  if (fresh?.role !== \"owner\") throw new Error(\"FORBIDDEN\");\n}\n"
+      },
+      "why": "Four fields are validated by name and then the whole caller-supplied object is spread into the Prisma `data`. The validation says nothing about the keys nobody thought to check, so a request carrying `{\"role\": \"owner\"}` or `{\"organisationId\": \"<someone else's>\"}` writes those columns; the `select` clause narrows only what comes back, not what goes in."
+    },
+    {
+      "id": "h2-modern-js-organisation-settings-patch",
+      "family": "modern-js",
+      "architecture": "A SolidStart CRM; `\"use server\"` actions in src/lib/server are called straight from Solid components and write through Prisma.",
+      "language": "typescript",
+      "file": "modern-js/solid-crm/src/lib/server/organisation.ts",
+      "scanAs": "src/lib/server/organisation.ts",
+      "kind": "safe",
+      "pairedWith": "h2-modern-js-profile-drawer-patch",
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "solid-crm",
+        "private": true,
+        "type": "module",
+        "dependencies": {
+          "@solidjs/start": "^1.0.10",
+          "@solidjs/router": "^0.14.7",
+          "solid-js": "^1.8.22",
+          "@prisma/client": "^5.19.0"
+        }
+      },
+      "extraFiles": {
+        "app.config.ts": "import { defineConfig } from \"@solidjs/start/config\";\n\nexport default defineConfig({\n  server: { preset: \"node-server\" },\n  middleware: \"./src/middleware.ts\",\n});\n",
+        "src/lib/server/session.ts": "import { getRequestEvent } from \"solid-js/web\";\nimport { db } from \"../db\";\n\nexport interface Viewer {\n  id: string;\n  organisationId: string;\n  role: \"member\" | \"manager\" | \"owner\";\n}\n\n/** Reads the viewer the session middleware attached to the request event. */\nexport async function currentViewer(): Promise<Viewer> {\n  const event = getRequestEvent();\n  const viewer = event?.locals?.viewer as Viewer | undefined;\n  if (!viewer) throw new Error(\"UNAUTHENTICATED\");\n  return viewer;\n}\n\nexport async function assertOwner(viewer: Viewer): Promise<void> {\n  const fresh = await db.user.findUnique({ where: { id: viewer.id }, select: { role: true } });\n  if (fresh?.role !== \"owner\") throw new Error(\"FORBIDDEN\");\n}\n"
+      },
+      "why": "It ends in the same `data: { ...changes, updatedAt: new Date() }` spread as its vulnerable sibling, but `changes` is not the request body — it is rebuilt key by key from the `EDITABLE` tuple, so a key the form does not own never reaches Prisma. The write is additionally gated on `assertOwner`, which re-reads the role from the database rather than trusting the session copy."
+    },
+    {
+      "id": "h2-modern-js-desk-saved-view",
+      "family": "modern-js",
+      "architecture": "A Socket.IO gateway for a support desk; an authenticated namespace puts the tenant on socket.data and message handlers query MongoDB.",
+      "language": "typescript",
+      "file": "modern-js/realtime-desk/src/gateway/conversations.ts",
+      "scanAs": "src/gateway/conversations.ts",
+      "kind": "vulnerable",
+      "category": "nosql_injection",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 25,
+      "lineRange": [
+        25,
+        32
+      ],
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "realtime-desk",
+        "private": true,
+        "type": "module",
+        "dependencies": {
+          "socket.io": "^4.7.5",
+          "mongodb": "^6.8.0",
+          "jose": "^5.9.2"
+        }
+      },
+      "extraFiles": {
+        "src/gateway/index.ts": "import { Server } from \"socket.io\";\nimport { verifySocketToken } from \"../lib/tokens\";\nimport { registerConversationHandlers } from \"./conversations\";\nimport { registerContactHandlers } from \"./contacts\";\n\nexport function createGateway(httpServer: import(\"node:http\").Server): Server {\n  const io = new Server(httpServer, { cors: { origin: \"https://desk.example.com\" } });\n\n  const agents = io.of(\"/agents\");\n\n  // Every socket carries a tenant from the handshake token. Handlers must never\n  // read a tenant from the message body.\n  agents.use(async (socket, next) => {\n    try {\n      const claims = await verifySocketToken(socket.handshake.auth?.token);\n      socket.data.tenantId = claims.tenantId;\n      socket.data.agentId = claims.sub;\n      next();\n    } catch (error) {\n      next(new Error(\"unauthorized\"));\n    }\n  });\n\n  agents.on(\"connection\", (socket) => {\n    registerConversationHandlers(socket);\n    registerContactHandlers(socket);\n  });\n\n  return io;\n}\n"
+      },
+      "why": "A Socket.IO message is caller data exactly as an HTTP body is, and this one is spread whole into a Mongo filter. The agent controls operators — `{\"status\": {\"$ne\": null}}` enumerates everything, `$regex` turns the collection into an oracle — and because the spread comes after `tenantId`, a filter containing its own `tenantId` overwrites the scoping the middleware established and reads another customer's conversations."
+    },
+    {
+      "id": "h2-modern-js-desk-contact-view",
+      "family": "modern-js",
+      "architecture": "A Socket.IO gateway for a support desk; an authenticated namespace puts the tenant on socket.data and message handlers query MongoDB.",
+      "language": "typescript",
+      "file": "modern-js/realtime-desk/src/gateway/contacts.ts",
+      "scanAs": "src/gateway/contacts.ts",
+      "kind": "safe",
+      "pairedWith": "h2-modern-js-desk-saved-view",
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "realtime-desk",
+        "private": true,
+        "type": "module",
+        "dependencies": {
+          "socket.io": "^4.7.5",
+          "mongodb": "^6.8.0",
+          "jose": "^5.9.2"
+        }
+      },
+      "extraFiles": {
+        "src/gateway/index.ts": "import { Server } from \"socket.io\";\nimport { verifySocketToken } from \"../lib/tokens\";\nimport { registerConversationHandlers } from \"./conversations\";\nimport { registerContactHandlers } from \"./contacts\";\n\nexport function createGateway(httpServer: import(\"node:http\").Server): Server {\n  const io = new Server(httpServer, { cors: { origin: \"https://desk.example.com\" } });\n\n  const agents = io.of(\"/agents\");\n\n  // Every socket carries a tenant from the handshake token. Handlers must never\n  // read a tenant from the message body.\n  agents.use(async (socket, next) => {\n    try {\n      const claims = await verifySocketToken(socket.handshake.auth?.token);\n      socket.data.tenantId = claims.tenantId;\n      socket.data.agentId = claims.sub;\n      next();\n    } catch (error) {\n      next(new Error(\"unauthorized\"));\n    }\n  });\n\n  agents.on(\"connection\", (socket) => {\n    registerConversationHandlers(socket);\n    registerContactHandlers(socket);\n  });\n\n  return io;\n}\n"
+      },
+      "why": "The handler takes the same open `filter` bag off the same untrusted socket message and still builds a `$regex` clause out of it. Every field is read out by name behind a `typeof === \"string\"` test so no operator object can survive, the name is passed through `literal()` before it becomes a pattern, and `tenantId` is written first and never overwritten because nothing is spread over it."
+    },
+    {
+      "id": "h2-modern-js-deployment-stream-origin",
+      "family": "modern-js",
+      "architecture": "A Bun.serve status service that exposes per-account Server-Sent Event streams which the dashboard opens with EventSource and withCredentials.",
+      "language": "typescript",
+      "file": "modern-js/pulse/src/sse/deployments.ts",
+      "scanAs": "src/sse/deployments.ts",
+      "kind": "vulnerable",
+      "category": "insecure_cors_configuration",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "GET /events/deployments",
+      "line": 31,
+      "lineRange": [
+        30,
+        34
+      ],
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "pulse",
+        "private": true,
+        "type": "module",
+        "devDependencies": {
+          "@types/bun": "^1.1.0"
+        }
+      },
+      "why": "`origin.endsWith(\"pulse.dev\")` is a substring test on the whole origin string, not a check on the host label, so `https://notpulse.dev` and `https://mypulse.dev` both match — either is registrable by anyone. The matched origin is then echoed into Access-Control-Allow-Origin alongside Allow-Credentials: true, which lets a page on such a domain open the stream with the victim's session cookie and read every deployment event for their account."
+    },
+    {
+      "id": "h2-modern-js-incident-stream-origin",
+      "family": "modern-js",
+      "architecture": "A Bun.serve status service that exposes per-account Server-Sent Event streams which the dashboard opens with EventSource and withCredentials.",
+      "language": "typescript",
+      "file": "modern-js/pulse/src/sse/incidents.ts",
+      "scanAs": "src/sse/incidents.ts",
+      "kind": "safe",
+      "pairedWith": "h2-modern-js-deployment-stream-origin",
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "pulse",
+        "private": true,
+        "type": "module",
+        "devDependencies": {
+          "@types/bun": "^1.1.0"
+        }
+      },
+      "why": "It reflects the request Origin into Access-Control-Allow-Origin with credentials enabled, which is the shape that is normally wrong. It is right here because `isDashboardOrigin` parses the header with `new URL`, so `hostname` is the real host rather than a suffix of the raw string, requires https and the default port, and anchors the subdomain match with a leading dot — the look-alike registration that defeats a bare `endsWith` cannot match."
+    },
+    {
+      "id": "h2-modern-js-companion-external-bridge",
+      "family": "modern-js",
+      "architecture": "A Manifest V3 browser extension whose background service worker holds the user's API token and answers runtime messages from the popup and from the web console.",
+      "language": "javascript",
+      "file": "modern-js/console-companion/background/service-worker.js",
+      "scanAs": "background/service-worker.js",
+      "kind": "vulnerable",
+      "category": "missing_authentication",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 46,
+      "lineRange": [
+        46,
+        55
+      ],
+      "runtimeVerifiable": true,
+      "extraFiles": {
+        "manifest.json": "{\n  \"manifest_version\": 3,\n  \"name\": \"Console Companion\",\n  \"version\": \"1.4.2\",\n  \"description\": \"Pin a project's build status to the toolbar and open logs in one click.\",\n  \"background\": {\n    \"service_worker\": \"background/service-worker.js\",\n    \"type\": \"module\"\n  },\n  \"action\": { \"default_popup\": \"popup/index.html\" },\n  \"permissions\": [\"storage\", \"alarms\", \"notifications\"],\n  \"host_permissions\": [\"https://api.console.example.com/*\"],\n  \"externally_connectable\": {\n    \"matches\": [\"*://*/*\"]\n  }\n}\n"
+      },
+      "why": "`onMessageExternal` is the boundary between the extension and the open web, and the manifest opens it to `*://*/*`, so every page the user visits can post to this listener. The handler never looks at `sender` before dispatching, so any site can make the worker call the console API with the stored bearer token and read the response — project list, build logs and all — straight out of `sendResponse`."
+    },
+    {
+      "id": "h2-modern-js-deploy-external-bridge",
+      "family": "modern-js",
+      "architecture": "A Manifest V3 browser extension whose background service worker holds the user's API token and answers runtime messages from the popup and from the web console.",
+      "language": "javascript",
+      "file": "modern-js/deploy-companion/extension/background/service-worker.js",
+      "scanAs": "extension/background/service-worker.js",
+      "kind": "safe",
+      "pairedWith": "h2-modern-js-companion-external-bridge",
+      "runtimeVerifiable": true,
+      "extraFiles": {
+        "extension/manifest.json": "{\n  \"manifest_version\": 3,\n  \"name\": \"Deploy Companion\",\n  \"version\": \"2.0.1\",\n  \"description\": \"Pin an environment's release status to the toolbar and open logs in one click.\",\n  \"background\": {\n    \"service_worker\": \"background/service-worker.js\",\n    \"type\": \"module\"\n  },\n  \"action\": { \"default_popup\": \"popup/index.html\" },\n  \"permissions\": [\"storage\", \"alarms\", \"notifications\"],\n  \"host_permissions\": [\"https://api.deploy.example.com/*\"],\n  \"externally_connectable\": {\n    \"matches\": [\"https://app.deploy.example.com/*\"]\n  }\n}\n"
+      },
+      "why": "The same privileged bridge, the same stored bearer token, the same `onMessageExternal` listener — but the manifest exposes it only to `https://app.deploy.example.com/*` and the listener independently compares `sender.origin` against that exact origin before dispatching. `sender.origin` is set by the browser and cannot be forged by the page, and the two checks are deliberately not allowed to rely on each other."
+    },
+    {
+      "id": "h2-modern-js-archive-search-page",
+      "family": "modern-js",
+      "architecture": "A server-rendered portal built on a router the team wrote themselves: route modules export method, path and handler, and pages are template literals passed through explicit encoders.",
+      "language": "javascript",
+      "file": "modern-js/sift-portal/routes/search.js",
+      "scanAs": "routes/search.js",
+      "kind": "vulnerable",
+      "category": "reflected_cross_site_scripting",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "GET /search",
+      "line": 27,
+      "lineRange": [
+        24,
+        39
+      ],
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "sift-portal",
+        "private": true,
+        "type": "module"
+      },
+      "extraFiles": {
+        "lib/markup.js": "const REPLACEMENTS = {\n  \"&\": \"&amp;\",\n  \"<\": \"&lt;\",\n  \">\": \"&gt;\",\n  '\"': \"&quot;\",\n  \"'\": \"&#39;\",\n};\n\n/** Text-node encoder. Everything that reaches a template goes through this. */\nexport function entities(value) {\n  return String(value ?? \"\").replace(/[&<>\"']/g, (character) => REPLACEMENTS[character]);\n}\n\n/** Attribute encoder: returns the value *with* its quotes so callers cannot forget them. */\nexport function quoteAttr(value) {\n  return `\"${entities(value)}\"`;\n}\n\nexport function layout(title, body) {\n  return `<!doctype html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"utf-8\">\n    <title>${entities(title)} — Sift</title>\n    <link rel=\"stylesheet\" href=\"/static/sift.css\">\n  </head>\n  <body>\n    <main class=\"shell\">${body}</main>\n  </body>\n</html>`;\n}\n",
+        "lib/router.js": "/**\n * The smallest router that does what the portal needs: literal segments, a\n * `:name` capture, and nothing else. Route modules are loaded once at boot and\n * each exports `method`, `path` and `handler`.\n */\n\nfunction compile(pattern) {\n  const names = [];\n  const source = pattern\n    .split(\"/\")\n    .map((segment) => {\n      if (!segment.startsWith(\":\")) return segment.replace(/[.*+?^${}()|[\\]\\\\]/g, \"\\\\$&\");\n      names.push(segment.slice(1));\n      return \"([^/]+)\";\n    })\n    .join(\"/\");\n  return { names, regex: new RegExp(`^${source}$`) };\n}\n\nexport function createRouter(modules) {\n  const routes = modules.map((module) => ({\n    method: module.method,\n    handler: module.handler,\n    ...compile(module.path),\n  }));\n\n  return async function dispatch(request) {\n    const url = new URL(request.url);\n\n    for (const route of routes) {\n      if (route.method !== request.method) continue;\n      const match = route.regex.exec(url.pathname);\n      if (!match) continue;\n\n      const params = Object.fromEntries(route.names.map((name, index) => [name, decodeURIComponent(match[index + 1])]));\n      return route.handler({\n        request,\n        params,\n        query: url.searchParams,\n        html: (markup, status = 200) =>\n          new Response(markup, { status, headers: { \"content-type\": \"text/html; charset=utf-8\" } }),\n      });\n    }\n\n    return new Response(\"Not found\", { status: 404 });\n  };\n}\n"
+      },
+      "why": "Every other interpolation on the page is encoded — titles and snippets through `entities`, the input value and the pager href through `quoteAttr` — and the one that renders the search term back inside the empty-results message is not. `?q=<img src=x onerror=...>` reaches the browser as markup in an HTML response, so the payload runs on the portal's origin for anyone who follows the link."
+    },
+    {
+      "id": "h2-modern-js-staff-directory-page",
+      "family": "modern-js",
+      "architecture": "A server-rendered portal built on a router the team wrote themselves: route modules export method, path and handler, and pages are template literals passed through explicit encoders.",
+      "language": "javascript",
+      "file": "modern-js/sift-portal/routes/directory.js",
+      "scanAs": "routes/directory.js",
+      "kind": "safe",
+      "pairedWith": "h2-modern-js-archive-search-page",
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "sift-portal",
+        "private": true,
+        "type": "module"
+      },
+      "extraFiles": {
+        "lib/markup.js": "const REPLACEMENTS = {\n  \"&\": \"&amp;\",\n  \"<\": \"&lt;\",\n  \">\": \"&gt;\",\n  '\"': \"&quot;\",\n  \"'\": \"&#39;\",\n};\n\n/** Text-node encoder. Everything that reaches a template goes through this. */\nexport function entities(value) {\n  return String(value ?? \"\").replace(/[&<>\"']/g, (character) => REPLACEMENTS[character]);\n}\n\n/** Attribute encoder: returns the value *with* its quotes so callers cannot forget them. */\nexport function quoteAttr(value) {\n  return `\"${entities(value)}\"`;\n}\n\nexport function layout(title, body) {\n  return `<!doctype html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"utf-8\">\n    <title>${entities(title)} — Sift</title>\n    <link rel=\"stylesheet\" href=\"/static/sift.css\">\n  </head>\n  <body>\n    <main class=\"shell\">${body}</main>\n  </body>\n</html>`;\n}\n",
+        "lib/router.js": "/**\n * The smallest router that does what the portal needs: literal segments, a\n * `:name` capture, and nothing else. Route modules are loaded once at boot and\n * each exports `method`, `path` and `handler`.\n */\n\nfunction compile(pattern) {\n  const names = [];\n  const source = pattern\n    .split(\"/\")\n    .map((segment) => {\n      if (!segment.startsWith(\":\")) return segment.replace(/[.*+?^${}()|[\\]\\\\]/g, \"\\\\$&\");\n      names.push(segment.slice(1));\n      return \"([^/]+)\";\n    })\n    .join(\"/\");\n  return { names, regex: new RegExp(`^${source}$`) };\n}\n\nexport function createRouter(modules) {\n  const routes = modules.map((module) => ({\n    method: module.method,\n    handler: module.handler,\n    ...compile(module.path),\n  }));\n\n  return async function dispatch(request) {\n    const url = new URL(request.url);\n\n    for (const route of routes) {\n      if (route.method !== request.method) continue;\n      const match = route.regex.exec(url.pathname);\n      if (!match) continue;\n\n      const params = Object.fromEntries(route.names.map((name, index) => [name, decodeURIComponent(match[index + 1])]));\n      return route.handler({\n        request,\n        params,\n        query: url.searchParams,\n        html: (markup, status = 200) =>\n          new Response(markup, { status, headers: { \"content-type\": \"text/html; charset=utf-8\" } }),\n      });\n    }\n\n    return new Response(\"Not found\", { status: 404 });\n  };\n}\n"
+      },
+      "why": "The page is raw HTML built by string interpolation and handed back with a text/html content type, which is the construct a scanner is looking for. Every value that comes from the query string reaches the template through `entities` or `quoteAttr` first — neither is named `escape`, and `quoteAttr` returns the surrounding quotes with the value so an unquoted attribute is not possible to write by accident."
+    },
+    {
+      "id": "h2-modern-js-gift-card-redemption",
+      "family": "modern-js",
+      "architecture": "A Bun.serve wallet API over Postgres via node-postgres; routes are matched by regex in server.ts and receive the resolved session.",
+      "language": "typescript",
+      "file": "modern-js/bun-wallet/src/routes/redeem.ts",
+      "scanAs": "src/routes/redeem.ts",
+      "kind": "vulnerable",
+      "category": "race_condition_double_spend",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "POST /gift-cards/:code/redeem",
+      "line": 48,
+      "lineRange": [
+        42,
+        51
+      ],
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "bun-wallet",
+        "private": true,
+        "type": "module",
+        "dependencies": {
+          "pg": "^8.12.0"
+        }
+      },
+      "extraFiles": {
+        "src/server.ts": "import { redeemGiftCard } from \"./routes/redeem\";\nimport { withdrawFromWallet } from \"./routes/withdraw\";\nimport { sessionFor } from \"./lib/session\";\n\nconst REDEEM = /^\\/gift-cards\\/([^/]+)\\/redeem$/;\nconst WITHDRAW = /^\\/wallets\\/([^/]+)\\/withdrawals$/;\n\nBun.serve({\n  port: Number(Bun.env.PORT ?? 3200),\n  async fetch(request) {\n    const session = await sessionFor(request);\n    if (!session) return new Response(\"unauthorized\", { status: 401 });\n\n    const { pathname } = new URL(request.url);\n\n    const redeem = REDEEM.exec(pathname);\n    if (redeem && request.method === \"POST\") {\n      return redeemGiftCard(request, session, decodeURIComponent(redeem[1]));\n    }\n\n    const withdraw = WITHDRAW.exec(pathname);\n    if (withdraw && request.method === \"POST\") {\n      return withdrawFromWallet(request, session, decodeURIComponent(withdraw[1]));\n    }\n\n    return new Response(\"Not found\", { status: 404 });\n  },\n});\n"
+      },
+      "why": "The balance is read in one statement, compared in application code, and written back in another statement with an absolute value — no transaction, no SELECT ... FOR UPDATE, and no condition on the UPDATE. Two requests with the same code that overlap between the read and the write both see the original balance, both pass the sufficiency check, and both insert a wallet credit, so the card pays out twice. The mobile client's retry-on-timeout behaviour makes this reachable without an attacker even trying."
+    },
+    {
+      "id": "h2-modern-js-wallet-withdrawal",
+      "family": "modern-js",
+      "architecture": "A Bun.serve wallet API over Postgres via node-postgres; routes are matched by regex in server.ts and receive the resolved session.",
+      "language": "typescript",
+      "file": "modern-js/bun-wallet/src/routes/withdraw.ts",
+      "scanAs": "src/routes/withdraw.ts",
+      "kind": "safe",
+      "pairedWith": "h2-modern-js-gift-card-redemption",
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "bun-wallet",
+        "private": true,
+        "type": "module",
+        "dependencies": {
+          "pg": "^8.12.0"
+        }
+      },
+      "extraFiles": {
+        "src/server.ts": "import { redeemGiftCard } from \"./routes/redeem\";\nimport { withdrawFromWallet } from \"./routes/withdraw\";\nimport { sessionFor } from \"./lib/session\";\n\nconst REDEEM = /^\\/gift-cards\\/([^/]+)\\/redeem$/;\nconst WITHDRAW = /^\\/wallets\\/([^/]+)\\/withdrawals$/;\n\nBun.serve({\n  port: Number(Bun.env.PORT ?? 3200),\n  async fetch(request) {\n    const session = await sessionFor(request);\n    if (!session) return new Response(\"unauthorized\", { status: 401 });\n\n    const { pathname } = new URL(request.url);\n\n    const redeem = REDEEM.exec(pathname);\n    if (redeem && request.method === \"POST\") {\n      return redeemGiftCard(request, session, decodeURIComponent(redeem[1]));\n    }\n\n    const withdraw = WITHDRAW.exec(pathname);\n    if (withdraw && request.method === \"POST\") {\n      return withdrawFromWallet(request, session, decodeURIComponent(withdraw[1]));\n    }\n\n    return new Response(\"Not found\", { status: 404 });\n  },\n});\n"
+      },
+      "why": "The same read-then-check-then-write sequence is visible, including a balance comparison in application code, which is what makes it look like the same defect. The read only produces the customer-facing message: the debit is a single UPDATE that subtracts relative to the stored column and carries `balance_cents >= $2` in its own WHERE, so one of two concurrent withdrawals matches zero rows and is rejected, and the ledger insert is idempotent on the client's key."
+    }
+  ]
+}

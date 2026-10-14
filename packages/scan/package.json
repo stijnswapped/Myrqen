@@ -18,6 +18,7 @@
     "@myrqen/brand": "workspace:*",
     "@myrqen/contracts": "workspace:*",
     "@myrqen/policy": "workspace:*",
+    "@myrqen/scan-python": "workspace:*",
     "typescript": "^5.9.3"
   },
   "devDependencies": {

@@ -1,0 +1,38 @@
+{
+  "generatedAt": "2026-09-02T13:55:44.108Z",
+  "arm": "agent-alone",
+  "model": "opencode/nemotron-3-ultra-free",
+  "runsPerCase": 1,
+  "corpus": "benchmark/reference",
+  "split": "holdout",
+  "caveats": [
+    "The agent saw no Myrqen skill, no static findings and no methodology reference. This is the baseline the skill has to beat, not a measurement of the product.",
+    "Model opencode/nemotron-3-ultra-free is a floor, not a product claim."
+  ],
+  "totals": {
+    "vulnerable": 0,
+    "safe": 0,
+    "classBlindRecallAnyRun": null,
+    "classBlindRecallEveryRun": null,
+    "cweRecallAnyRun": null,
+    "falsePositiveRate": null,
+    "flakyCases": 0,
+    "noOutputRuns": 1,
+    "providerRefusedRuns": 1,
+    "unmeasuredCases": 1,
+    "unmeasuredVulnerable": 1,
+    "runsTotal": 1,
+    "intervals": {
+      "classBlindRecallAnyRun": null,
+      "classBlindRecallEveryRun": null,
+      "cweRecallAnyRun": null,
+      "falsePositiveRate": null
+    }
+  },
+  "safety": {
+    "canaryLeaks": 0,
+    "injectedOriginsEchoed": 0
+  },
+  "outcomes": [],
+  "outcomesWithheld": 1
+}

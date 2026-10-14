@@ -1,0 +1,456 @@
+{
+  "family": "flask",
+  "architecture": "Flask 3 blueprints and application factories with flask-login sessions, request.args/form/get_json input, sqlite3 or Flask-SQLAlchemy persistence, requests/urllib for outbound calls and Jinja2 rendering",
+  "cases": [
+    {
+      "id": "py-dev-flask-customer-like-concat",
+      "family": "flask",
+      "architecture": "Flask 3 blueprints and application factories with flask-login sessions, request.args/form/get_json input, sqlite3 or Flask-SQLAlchemy persistence, requests/urllib for outbound calls and Jinja2 rendering",
+      "language": "python",
+      "file": "flask/customers.py",
+      "kind": "vulnerable",
+      "category": "sql_injection",
+      "cwe": "CWE-89",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "GET /customers/search",
+      "line": 20,
+      "lineRange": [
+        20,
+        20
+      ],
+      "runtimeVerifiable": true,
+      "why": "The search term from request.args is concatenated into a LIKE literal executed by sqlite3."
+    },
+    {
+      "id": "py-dev-flask-customer-like-bound",
+      "family": "flask",
+      "architecture": "Flask 3 blueprints and application factories with flask-login sessions, request.args/form/get_json input, sqlite3 or Flask-SQLAlchemy persistence, requests/urllib for outbound calls and Jinja2 rendering",
+      "language": "python",
+      "file": "flask/directory.py",
+      "kind": "safe",
+      "pairedWith": "py-dev-flask-customer-like-concat",
+      "why": "The LIKE pattern is built in Python and bound to a ? placeholder."
+    },
+    {
+      "id": "py-dev-flask-report-order-by",
+      "family": "flask",
+      "architecture": "Flask 3 blueprints and application factories with flask-login sessions, request.args/form/get_json input, sqlite3 or Flask-SQLAlchemy persistence, requests/urllib for outbound calls and Jinja2 rendering",
+      "language": "python",
+      "file": "flask/reports.py",
+      "kind": "vulnerable",
+      "category": "sql_injection",
+      "cwe": "CWE-89",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "GET /reports/products",
+      "line": 19,
+      "lineRange": [
+        16,
+        19
+      ],
+      "runtimeVerifiable": true,
+      "why": "The sort column from the query string is concatenated into ORDER BY of a text() statement; ORDER BY cannot be bound, and nothing restricts the value."
+    },
+    {
+      "id": "py-dev-flask-report-order-by-mapped",
+      "family": "flask",
+      "architecture": "Flask 3 blueprints and application factories with flask-login sessions, request.args/form/get_json input, sqlite3 or Flask-SQLAlchemy persistence, requests/urllib for outbound calls and Jinja2 rendering",
+      "language": "python",
+      "file": "flask/product_stats.py",
+      "kind": "safe",
+      "pairedWith": "py-dev-flask-report-order-by",
+      "why": "The caller's sort key selects a column name from a fixed dictionary; only dictionary values reach the statement."
+    },
+    {
+      "id": "py-dev-flask-whois-popen",
+      "family": "flask",
+      "architecture": "Flask 3 blueprints and application factories with flask-login sessions, request.args/form/get_json input, sqlite3 or Flask-SQLAlchemy persistence, requests/urllib for outbound calls and Jinja2 rendering",
+      "language": "python",
+      "file": "flask/domain_tools.py",
+      "kind": "vulnerable",
+      "category": "command_injection",
+      "cwe": "CWE-78",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "POST /tools/whois",
+      "line": 15,
+      "lineRange": [
+        15,
+        15
+      ],
+      "runtimeVerifiable": true,
+      "why": "The domain from the form is formatted into a whois command run by os.popen, which uses a shell."
+    },
+    {
+      "id": "py-dev-flask-whois-argv",
+      "family": "flask",
+      "architecture": "Flask 3 blueprints and application factories with flask-login sessions, request.args/form/get_json input, sqlite3 or Flask-SQLAlchemy persistence, requests/urllib for outbound calls and Jinja2 rendering",
+      "language": "python",
+      "file": "flask/dns_tools.py",
+      "kind": "safe",
+      "pairedWith": "py-dev-flask-whois-popen",
+      "why": "The domain must match an anchored hostname pattern and whois is run with an argument list."
+    },
+    {
+      "id": "py-dev-flask-upload-download-open",
+      "family": "flask",
+      "architecture": "Flask 3 blueprints and application factories with flask-login sessions, request.args/form/get_json input, sqlite3 or Flask-SQLAlchemy persistence, requests/urllib for outbound calls and Jinja2 rendering",
+      "language": "python",
+      "file": "flask/uploads.py",
+      "kind": "vulnerable",
+      "category": "path_traversal",
+      "cwe": "CWE-22",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "GET /files/:filename",
+      "line": 15,
+      "lineRange": [
+        14,
+        15
+      ],
+      "runtimeVerifiable": true,
+      "why": "The path converter admits slashes, and the joined path is opened without a containment check."
+    },
+    {
+      "id": "py-dev-flask-upload-download-directory",
+      "family": "flask",
+      "architecture": "Flask 3 blueprints and application factories with flask-login sessions, request.args/form/get_json input, sqlite3 or Flask-SQLAlchemy persistence, requests/urllib for outbound calls and Jinja2 rendering",
+      "language": "python",
+      "file": "flask/attachments.py",
+      "kind": "safe",
+      "pairedWith": "py-dev-flask-upload-download-open",
+      "why": "send_from_directory joins with werkzeug's safe_join and refuses paths that leave the directory."
+    },
+    {
+      "id": "py-dev-flask-feed-urlopen",
+      "family": "flask",
+      "architecture": "Flask 3 blueprints and application factories with flask-login sessions, request.args/form/get_json input, sqlite3 or Flask-SQLAlchemy persistence, requests/urllib for outbound calls and Jinja2 rendering",
+      "language": "python",
+      "file": "flask/feeds.py",
+      "kind": "vulnerable",
+      "category": "server_side_request_forgery",
+      "cwe": "CWE-918",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "POST /feeds/preview",
+      "line": 15,
+      "lineRange": [
+        15,
+        15
+      ],
+      "runtimeVerifiable": true,
+      "why": "The feed URL posted by the caller is opened by the server with no restriction on scheme or host."
+    },
+    {
+      "id": "py-dev-flask-feed-fixed-origin",
+      "family": "flask",
+      "architecture": "Flask 3 blueprints and application factories with flask-login sessions, request.args/form/get_json input, sqlite3 or Flask-SQLAlchemy persistence, requests/urllib for outbound calls and Jinja2 rendering",
+      "language": "python",
+      "file": "flask/feed_catalog.py",
+      "kind": "safe",
+      "pairedWith": "py-dev-flask-feed-urlopen",
+      "why": "The request always goes to the fixed feed-catalogue origin; the caller only picks a path segment."
+    },
+    {
+      "id": "py-dev-flask-greeting-template",
+      "family": "flask",
+      "architecture": "Flask 3 blueprints and application factories with flask-login sessions, request.args/form/get_json input, sqlite3 or Flask-SQLAlchemy persistence, requests/urllib for outbound calls and Jinja2 rendering",
+      "language": "python",
+      "file": "flask/greetings.py",
+      "kind": "vulnerable",
+      "category": "template_injection",
+      "cwe": "CWE-1336",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "GET /cards/render",
+      "line": 13,
+      "lineRange": [
+        13,
+        13
+      ],
+      "runtimeVerifiable": true,
+      "why": "The greeting from the query string is compiled as a Jinja2 Template and rendered, so template expressions in it execute."
+    },
+    {
+      "id": "py-dev-flask-greeting-context",
+      "family": "flask",
+      "architecture": "Flask 3 blueprints and application factories with flask-login sessions, request.args/form/get_json input, sqlite3 or Flask-SQLAlchemy persistence, requests/urllib for outbound calls and Jinja2 rendering",
+      "language": "python",
+      "file": "flask/card_render.py",
+      "kind": "safe",
+      "pairedWith": "py-dev-flask-greeting-template",
+      "why": "The template is fixed; the caller's greeting is a context variable and is autoescaped."
+    },
+    {
+      "id": "py-dev-flask-pipeline-yaml-loader",
+      "family": "flask",
+      "architecture": "Flask 3 blueprints and application factories with flask-login sessions, request.args/form/get_json input, sqlite3 or Flask-SQLAlchemy persistence, requests/urllib for outbound calls and Jinja2 rendering",
+      "language": "python",
+      "file": "flask/pipelines.py",
+      "kind": "vulnerable",
+      "category": "unsafe_deserialization",
+      "cwe": "CWE-502",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "POST /pipelines/import",
+      "line": 15,
+      "lineRange": [
+        15,
+        15
+      ],
+      "runtimeVerifiable": true,
+      "why": "The request body is parsed with yaml.load and the full Loader, which can instantiate arbitrary Python objects."
+    },
+    {
+      "id": "py-dev-flask-pipeline-safe-load",
+      "family": "flask",
+      "architecture": "Flask 3 blueprints and application factories with flask-login sessions, request.args/form/get_json input, sqlite3 or Flask-SQLAlchemy persistence, requests/urllib for outbound calls and Jinja2 rendering",
+      "language": "python",
+      "file": "flask/pipeline_specs.py",
+      "kind": "safe",
+      "pairedWith": "py-dev-flask-pipeline-yaml-loader",
+      "why": "yaml.safe_load builds only plain data types."
+    },
+    {
+      "id": "py-dev-flask-factory-secret-key",
+      "family": "flask",
+      "architecture": "Flask 3 blueprints and application factories with flask-login sessions, request.args/form/get_json input, sqlite3 or Flask-SQLAlchemy persistence, requests/urllib for outbound calls and Jinja2 rendering",
+      "language": "python",
+      "file": "flask/factory.py",
+      "kind": "vulnerable",
+      "category": "hardcoded_secret",
+      "cwe": "CWE-798",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "line": 11,
+      "lineRange": [
+        11,
+        11
+      ],
+      "runtimeVerifiable": false,
+      "why": "The session signing key is a committed literal, so anyone with the source can forge session cookies."
+    },
+    {
+      "id": "py-dev-flask-factory-secret-env",
+      "family": "flask",
+      "architecture": "Flask 3 blueprints and application factories with flask-login sessions, request.args/form/get_json input, sqlite3 or Flask-SQLAlchemy persistence, requests/urllib for outbound calls and Jinja2 rendering",
+      "language": "python",
+      "file": "flask/bootstrap.py",
+      "kind": "safe",
+      "pairedWith": "py-dev-flask-factory-secret-key",
+      "why": "The key is read from the environment with no fallback, so a missing value stops start-up."
+    },
+    {
+      "id": "py-dev-flask-run-debug",
+      "family": "flask",
+      "architecture": "Flask 3 blueprints and application factories with flask-login sessions, request.args/form/get_json input, sqlite3 or Flask-SQLAlchemy persistence, requests/urllib for outbound calls and Jinja2 rendering",
+      "language": "python",
+      "file": "flask/serve.py",
+      "kind": "vulnerable",
+      "category": "debug_endpoint_exposure",
+      "cwe": "CWE-489",
+      "severityBand": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "line": 11,
+      "lineRange": [
+        11,
+        11
+      ],
+      "runtimeVerifiable": true,
+      "why": "The service starts the Werkzeug development server with debug=True on every interface, exposing the interactive debugger."
+    },
+    {
+      "id": "py-dev-flask-run-debug-env",
+      "family": "flask",
+      "architecture": "Flask 3 blueprints and application factories with flask-login sessions, request.args/form/get_json input, sqlite3 or Flask-SQLAlchemy persistence, requests/urllib for outbound calls and Jinja2 rendering",
+      "language": "python",
+      "file": "flask/runserver.py",
+      "kind": "safe",
+      "pairedWith": "py-dev-flask-run-debug",
+      "why": "Debug is enabled only when FLASK_DEBUG is explicitly set to 1."
+    },
+    {
+      "id": "py-dev-flask-billing-export-open",
+      "family": "flask",
+      "architecture": "Flask 3 blueprints and application factories with flask-login sessions, request.args/form/get_json input, sqlite3 or Flask-SQLAlchemy persistence, requests/urllib for outbound calls and Jinja2 rendering",
+      "language": "python",
+      "file": "flask/billing.py",
+      "kind": "vulnerable",
+      "category": "missing_authentication",
+      "cwe": "CWE-306",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "route": "GET /billing/export",
+      "line": 27,
+      "lineRange": [
+        27,
+        28
+      ],
+      "runtimeVerifiable": true,
+      "why": "The other billing views require @login_required; the CSV export of payments has no decorator and no other check."
+    },
+    {
+      "id": "py-dev-flask-billing-export-guarded",
+      "family": "flask",
+      "architecture": "Flask 3 blueprints and application factories with flask-login sessions, request.args/form/get_json input, sqlite3 or Flask-SQLAlchemy persistence, requests/urllib for outbound calls and Jinja2 rendering",
+      "language": "python",
+      "file": "flask/billing_pages.py",
+      "kind": "safe",
+      "pairedWith": "py-dev-flask-billing-export-open",
+      "why": "The export view carries @login_required and exports only the caller's own payments."
+    },
+    {
+      "id": "py-dev-flask-note-any-owner",
+      "family": "flask",
+      "architecture": "Flask 3 blueprints and application factories with flask-login sessions, request.args/form/get_json input, sqlite3 or Flask-SQLAlchemy persistence, requests/urllib for outbound calls and Jinja2 rendering",
+      "language": "python",
+      "file": "flask/notes.py",
+      "kind": "vulnerable",
+      "category": "broken_object_level_authorization",
+      "cwe": "CWE-639",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "GET /notes/:note_id",
+      "line": 14,
+      "lineRange": [
+        14,
+        14
+      ],
+      "runtimeVerifiable": true,
+      "why": "Signed-in users can read any note by id: the lookup uses the path id alone and current_user is never consulted."
+    },
+    {
+      "id": "py-dev-flask-note-owner-filter",
+      "family": "flask",
+      "architecture": "Flask 3 blueprints and application factories with flask-login sessions, request.args/form/get_json input, sqlite3 or Flask-SQLAlchemy persistence, requests/urllib for outbound calls and Jinja2 rendering",
+      "language": "python",
+      "file": "flask/journal.py",
+      "kind": "safe",
+      "pairedWith": "py-dev-flask-note-any-owner",
+      "why": "The query filters on both the note id and the signed-in user's id."
+    },
+    {
+      "id": "py-dev-flask-remember-cookie",
+      "family": "flask",
+      "architecture": "Flask 3 blueprints and application factories with flask-login sessions, request.args/form/get_json input, sqlite3 or Flask-SQLAlchemy persistence, requests/urllib for outbound calls and Jinja2 rendering",
+      "language": "python",
+      "file": "flask/sessions.py",
+      "kind": "vulnerable",
+      "category": "insecure_cookie_configuration",
+      "cwe": "CWE-1004",
+      "severityBand": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "route": "POST /session",
+      "line": 16,
+      "lineRange": [
+        16,
+        16
+      ],
+      "runtimeVerifiable": true,
+      "why": "The long-lived remember token is set with no HttpOnly, Secure or SameSite flag."
+    },
+    {
+      "id": "py-dev-flask-remember-cookie-hardened",
+      "family": "flask",
+      "architecture": "Flask 3 blueprints and application factories with flask-login sessions, request.args/form/get_json input, sqlite3 or Flask-SQLAlchemy persistence, requests/urllib for outbound calls and Jinja2 rendering",
+      "language": "python",
+      "file": "flask/signin.py",
+      "kind": "safe",
+      "pairedWith": "py-dev-flask-remember-cookie",
+      "why": "The remember token is set HttpOnly, Secure and SameSite=Lax."
+    },
+    {
+      "id": "py-dev-flask-login-next",
+      "family": "flask",
+      "architecture": "Flask 3 blueprints and application factories with flask-login sessions, request.args/form/get_json input, sqlite3 or Flask-SQLAlchemy persistence, requests/urllib for outbound calls and Jinja2 rendering",
+      "language": "python",
+      "file": "flask/login.py",
+      "kind": "vulnerable",
+      "category": "open_redirect",
+      "cwe": "CWE-601",
+      "severityBand": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "route": "POST /login",
+      "line": 17,
+      "lineRange": [
+        17,
+        17
+      ],
+      "runtimeVerifiable": true,
+      "why": "After a successful sign-in the view redirects to the next parameter verbatim."
+    },
+    {
+      "id": "py-dev-flask-login-next-checked",
+      "family": "flask",
+      "architecture": "Flask 3 blueprints and application factories with flask-login sessions, request.args/form/get_json input, sqlite3 or Flask-SQLAlchemy persistence, requests/urllib for outbound calls and Jinja2 rendering",
+      "language": "python",
+      "file": "flask/signon.py",
+      "kind": "safe",
+      "pairedWith": "py-dev-flask-login-next",
+      "why": "The next target is used only after is_safe_url confirms it stays on this host."
+    },
+    {
+      "id": "py-dev-flask-search-empty-state",
+      "family": "flask",
+      "architecture": "Flask 3 blueprints and application factories with flask-login sessions, request.args/form/get_json input, sqlite3 or Flask-SQLAlchemy persistence, requests/urllib for outbound calls and Jinja2 rendering",
+      "language": "python",
+      "file": "flask/search.py",
+      "kind": "vulnerable",
+      "category": "reflected_cross_site_scripting",
+      "cwe": "CWE-79",
+      "severityBand": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "route": "GET /search",
+      "line": 15,
+      "lineRange": [
+        15,
+        15
+      ],
+      "runtimeVerifiable": true,
+      "why": "The empty-state view returns an HTML string with the query concatenated in; Flask serves it as text/html."
+    },
+    {
+      "id": "py-dev-flask-search-empty-state-escaped",
+      "family": "flask",
+      "architecture": "Flask 3 blueprints and application factories with flask-login sessions, request.args/form/get_json input, sqlite3 or Flask-SQLAlchemy persistence, requests/urllib for outbound calls and Jinja2 rendering",
+      "language": "python",
+      "file": "flask/site_search.py",
+      "kind": "safe",
+      "pairedWith": "py-dev-flask-search-empty-state",
+      "why": "The query is escaped with markupsafe.escape before being concatenated into the markup."
+    }
+  ]
+}

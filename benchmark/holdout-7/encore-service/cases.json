@@ -1,0 +1,522 @@
+{
+  "family": "encore-service",
+  "cases": [
+    {
+      "id": "h7-encore-service-job-search-sort",
+      "family": "encore-service",
+      "architecture": "Encore.ts 1.46 application (encore.dev) split into identity, dispatch, billing and documents services, using Encore's own SQLDatabase over Postgres as the only data layer, with the caller's identity coming from Encore's authHandler and read in endpoints via getAuthData().",
+      "language": "typescript",
+      "file": "encore-service/dispatch/job_search.ts",
+      "scanAs": "dispatch/job_search.ts",
+      "kind": "vulnerable",
+      "category": "sql_injection_via_interpolated_raw_query",
+      "cwe": "CWE-89",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 94,
+      "lineRange": [
+        78,
+        102
+      ],
+      "route": "GET /dispatch/jobs/search",
+      "runtimeVerifiable": true,
+      "why": "The sort_by, sort_dir, status and q query parameters are concatenated into the SQL string that is then handed to db.rawQuery, which only parameterises the org id ($1) and the limit ($2); the ORDER BY fragment in particular is unquoted, so a caller controls the tail of the statement. Encore validates that the parameters are strings, not that they are column names.",
+      "packageJson": {
+        "name": "ridgeline-ops",
+        "version": "1.14.0",
+        "private": true,
+        "type": "module",
+        "dependencies": {
+          "encore.dev": "^1.46.13"
+        },
+        "devDependencies": {
+          "@types/node": "^22.10.5",
+          "typescript": "^5.7.3",
+          "vitest": "^3.0.5"
+        }
+      },
+      "extraFiles": {
+        "identity/db.ts": "import { SQLDatabase } from \"encore.dev/storage/sqldb\";\n\n/**\n * One Postgres database for the whole app. `identity` owns the migrations\n * because organizations and memberships are the root of every other table's\n * foreign keys. The other services attach to it with\n * `SQLDatabase.named(\"ridgeline\")` rather than declaring their own.\n */\nexport const ridgeline = new SQLDatabase(\"ridgeline\", {\n  migrations: \"./migrations\",\n});\n",
+        "identity/auth.ts": "import { APIError, Gateway, Header } from \"encore.dev/api\";\nimport { authHandler } from \"encore.dev/auth\";\nimport { createHmac, timingSafeEqual } from \"node:crypto\";\nimport { ridgeline } from \"./db\";\n\nexport type MemberRole = \"owner\" | \"dispatcher\" | \"technician\" | \"viewer\";\n\n/**\n * What every endpoint with `auth: true` gets back from `getAuthData()`.\n * `orgID` and `role` come out of the membership row the session points at,\n * never out of the request, so handlers can treat them as the tenant and the\n * privilege level of the caller.\n */\nexport interface AuthData {\n  userID: string;\n  orgID: string;\n  role: MemberRole;\n  email: string;\n}\n\ninterface AuthParams {\n  authorization: Header<\"Authorization\">;\n}\n\ninterface SessionRow {\n  membership_id: string;\n  user_id: string;\n  org_id: string;\n  role: MemberRole;\n  email: string;\n  expires_at: Date;\n}\n\nconst sessionSecret = process.env.RIDGELINE_SESSION_SECRET ?? \"\";\n\nfunction sign(sessionID: string): string {\n  return createHmac(\"sha256\", sessionSecret).update(sessionID).digest(\"hex\");\n}\n\nfunction macMatches(sessionID: string, provided: string): boolean {\n  const expected = Buffer.from(sign(sessionID), \"utf8\");\n  const actual = Buffer.from(provided, \"utf8\");\n  if (expected.length !== actual.length) return false;\n  return timingSafeEqual(expected, actual);\n}\n\nexport const auth = authHandler<AuthParams, AuthData>(async (params) => {\n  const token = params.authorization.replace(/^Bearer\\s+/i, \"\").trim();\n  const [sessionID, mac] = token.split(\".\");\n  if (!sessionID || !mac) {\n    throw APIError.unauthenticated(\"malformed session token\");\n  }\n  if (!macMatches(sessionID, mac)) {\n    throw APIError.unauthenticated(\"bad session signature\");\n  }\n\n  const session = await ridgeline.queryRow<SessionRow>`\n    select s.membership_id,\n           m.user_id,\n           m.org_id,\n           m.role,\n           u.email,\n           s.expires_at\n    from sessions s\n    join memberships m on m.id = s.membership_id\n    join users u on u.id = m.user_id\n    where s.id = ${sessionID}\n      and s.revoked_at is null\n      and m.deactivated_at is null\n  `;\n  if (!session) {\n    throw APIError.unauthenticated(\"unknown session\");\n  }\n  if (session.expires_at.getTime() <= Date.now()) {\n    throw APIError.unauthenticated(\"session expired\");\n  }\n\n  return {\n    userID: session.user_id,\n    orgID: session.org_id,\n    role: session.role,\n    email: session.email,\n  };\n});\n\nexport const gateway = new Gateway({ authHandler: auth });\n",
+        "dispatch/encore.service.ts": "import { Service } from \"encore.dev/service\";\n\n// Work orders: scheduling, crew assignment, the dispatcher console.\nexport default new Service(\"dispatch\");\n"
+      }
+    },
+    {
+      "id": "h7-encore-service-invoice-drawer",
+      "family": "encore-service",
+      "architecture": "Encore.ts 1.46 application (encore.dev) split into identity, dispatch, billing and documents services, using Encore's own SQLDatabase over Postgres as the only data layer, with the caller's identity coming from Encore's authHandler and read in endpoints via getAuthData().",
+      "language": "typescript",
+      "file": "encore-service/billing/invoice_detail.ts",
+      "scanAs": "billing/invoice_detail.ts",
+      "kind": "vulnerable",
+      "category": "missing_tenant_scope_on_record_lookup",
+      "cwe": "CWE-639",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 70,
+      "lineRange": [
+        61,
+        81
+      ],
+      "route": "GET /billing/invoices/:invoiceID",
+      "runtimeVerifiable": true,
+      "why": "invoiceID comes straight off the path and is the only predicate in the invoices lookup, so any authenticated member of any organization can read another contractor's invoice, customer name, customer email and amounts. auth.orgID is fetched but only used for the log line, never in the where clause.",
+      "packageJson": {
+        "name": "ridgeline-ops",
+        "version": "1.14.0",
+        "private": true,
+        "type": "module",
+        "dependencies": {
+          "encore.dev": "^1.46.13"
+        },
+        "devDependencies": {
+          "@types/node": "^22.10.5",
+          "typescript": "^5.7.3",
+          "vitest": "^3.0.5"
+        }
+      },
+      "extraFiles": {
+        "identity/db.ts": "import { SQLDatabase } from \"encore.dev/storage/sqldb\";\n\n/**\n * One Postgres database for the whole app. `identity` owns the migrations\n * because organizations and memberships are the root of every other table's\n * foreign keys. The other services attach to it with\n * `SQLDatabase.named(\"ridgeline\")` rather than declaring their own.\n */\nexport const ridgeline = new SQLDatabase(\"ridgeline\", {\n  migrations: \"./migrations\",\n});\n",
+        "identity/auth.ts": "import { APIError, Gateway, Header } from \"encore.dev/api\";\nimport { authHandler } from \"encore.dev/auth\";\nimport { createHmac, timingSafeEqual } from \"node:crypto\";\nimport { ridgeline } from \"./db\";\n\nexport type MemberRole = \"owner\" | \"dispatcher\" | \"technician\" | \"viewer\";\n\n/**\n * What every endpoint with `auth: true` gets back from `getAuthData()`.\n * `orgID` and `role` come out of the membership row the session points at,\n * never out of the request, so handlers can treat them as the tenant and the\n * privilege level of the caller.\n */\nexport interface AuthData {\n  userID: string;\n  orgID: string;\n  role: MemberRole;\n  email: string;\n}\n\ninterface AuthParams {\n  authorization: Header<\"Authorization\">;\n}\n\ninterface SessionRow {\n  membership_id: string;\n  user_id: string;\n  org_id: string;\n  role: MemberRole;\n  email: string;\n  expires_at: Date;\n}\n\nconst sessionSecret = process.env.RIDGELINE_SESSION_SECRET ?? \"\";\n\nfunction sign(sessionID: string): string {\n  return createHmac(\"sha256\", sessionSecret).update(sessionID).digest(\"hex\");\n}\n\nfunction macMatches(sessionID: string, provided: string): boolean {\n  const expected = Buffer.from(sign(sessionID), \"utf8\");\n  const actual = Buffer.from(provided, \"utf8\");\n  if (expected.length !== actual.length) return false;\n  return timingSafeEqual(expected, actual);\n}\n\nexport const auth = authHandler<AuthParams, AuthData>(async (params) => {\n  const token = params.authorization.replace(/^Bearer\\s+/i, \"\").trim();\n  const [sessionID, mac] = token.split(\".\");\n  if (!sessionID || !mac) {\n    throw APIError.unauthenticated(\"malformed session token\");\n  }\n  if (!macMatches(sessionID, mac)) {\n    throw APIError.unauthenticated(\"bad session signature\");\n  }\n\n  const session = await ridgeline.queryRow<SessionRow>`\n    select s.membership_id,\n           m.user_id,\n           m.org_id,\n           m.role,\n           u.email,\n           s.expires_at\n    from sessions s\n    join memberships m on m.id = s.membership_id\n    join users u on u.id = m.user_id\n    where s.id = ${sessionID}\n      and s.revoked_at is null\n      and m.deactivated_at is null\n  `;\n  if (!session) {\n    throw APIError.unauthenticated(\"unknown session\");\n  }\n  if (session.expires_at.getTime() <= Date.now()) {\n    throw APIError.unauthenticated(\"session expired\");\n  }\n\n  return {\n    userID: session.user_id,\n    orgID: session.org_id,\n    role: session.role,\n    email: session.email,\n  };\n});\n\nexport const gateway = new Gateway({ authHandler: auth });\n",
+        "billing/encore.service.ts": "import { Service } from \"encore.dev/service\";\n\n// Invoicing, monthly statements and payout webhooks.\nexport default new Service(\"billing\");\n"
+      }
+    },
+    {
+      "id": "h7-encore-service-job-assignment",
+      "family": "encore-service",
+      "architecture": "Encore.ts 1.46 application (encore.dev) split into identity, dispatch, billing and documents services, using Encore's own SQLDatabase over Postgres as the only data layer, with the caller's identity coming from Encore's authHandler and read in endpoints via getAuthData().",
+      "language": "typescript",
+      "file": "encore-service/dispatch/job_assignment.ts",
+      "scanAs": "dispatch/job_assignment.ts",
+      "kind": "vulnerable",
+      "category": "missing_role_check_on_privileged_mutation",
+      "cwe": "CWE-862",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "line": 51,
+      "lineRange": [
+        50,
+        94
+      ],
+      "route": "POST /dispatch/jobs/:jobID/assignment",
+      "runtimeVerifiable": true,
+      "why": "The endpoint reassigns a work order and rewrites billable_rate_cents from the request body, but the only gate is auth: true; auth.role is never consulted, so a viewer or technician can reprice and re-plan any job in their organization. The comment relies on the console hiding the drawer, which is not an authorisation control.",
+      "packageJson": {
+        "name": "ridgeline-ops",
+        "version": "1.14.0",
+        "private": true,
+        "type": "module",
+        "dependencies": {
+          "encore.dev": "^1.46.13"
+        },
+        "devDependencies": {
+          "@types/node": "^22.10.5",
+          "typescript": "^5.7.3",
+          "vitest": "^3.0.5"
+        }
+      },
+      "extraFiles": {
+        "identity/db.ts": "import { SQLDatabase } from \"encore.dev/storage/sqldb\";\n\n/**\n * One Postgres database for the whole app. `identity` owns the migrations\n * because organizations and memberships are the root of every other table's\n * foreign keys. The other services attach to it with\n * `SQLDatabase.named(\"ridgeline\")` rather than declaring their own.\n */\nexport const ridgeline = new SQLDatabase(\"ridgeline\", {\n  migrations: \"./migrations\",\n});\n",
+        "identity/auth.ts": "import { APIError, Gateway, Header } from \"encore.dev/api\";\nimport { authHandler } from \"encore.dev/auth\";\nimport { createHmac, timingSafeEqual } from \"node:crypto\";\nimport { ridgeline } from \"./db\";\n\nexport type MemberRole = \"owner\" | \"dispatcher\" | \"technician\" | \"viewer\";\n\n/**\n * What every endpoint with `auth: true` gets back from `getAuthData()`.\n * `orgID` and `role` come out of the membership row the session points at,\n * never out of the request, so handlers can treat them as the tenant and the\n * privilege level of the caller.\n */\nexport interface AuthData {\n  userID: string;\n  orgID: string;\n  role: MemberRole;\n  email: string;\n}\n\ninterface AuthParams {\n  authorization: Header<\"Authorization\">;\n}\n\ninterface SessionRow {\n  membership_id: string;\n  user_id: string;\n  org_id: string;\n  role: MemberRole;\n  email: string;\n  expires_at: Date;\n}\n\nconst sessionSecret = process.env.RIDGELINE_SESSION_SECRET ?? \"\";\n\nfunction sign(sessionID: string): string {\n  return createHmac(\"sha256\", sessionSecret).update(sessionID).digest(\"hex\");\n}\n\nfunction macMatches(sessionID: string, provided: string): boolean {\n  const expected = Buffer.from(sign(sessionID), \"utf8\");\n  const actual = Buffer.from(provided, \"utf8\");\n  if (expected.length !== actual.length) return false;\n  return timingSafeEqual(expected, actual);\n}\n\nexport const auth = authHandler<AuthParams, AuthData>(async (params) => {\n  const token = params.authorization.replace(/^Bearer\\s+/i, \"\").trim();\n  const [sessionID, mac] = token.split(\".\");\n  if (!sessionID || !mac) {\n    throw APIError.unauthenticated(\"malformed session token\");\n  }\n  if (!macMatches(sessionID, mac)) {\n    throw APIError.unauthenticated(\"bad session signature\");\n  }\n\n  const session = await ridgeline.queryRow<SessionRow>`\n    select s.membership_id,\n           m.user_id,\n           m.org_id,\n           m.role,\n           u.email,\n           s.expires_at\n    from sessions s\n    join memberships m on m.id = s.membership_id\n    join users u on u.id = m.user_id\n    where s.id = ${sessionID}\n      and s.revoked_at is null\n      and m.deactivated_at is null\n  `;\n  if (!session) {\n    throw APIError.unauthenticated(\"unknown session\");\n  }\n  if (session.expires_at.getTime() <= Date.now()) {\n    throw APIError.unauthenticated(\"session expired\");\n  }\n\n  return {\n    userID: session.user_id,\n    orgID: session.org_id,\n    role: session.role,\n    email: session.email,\n  };\n});\n\nexport const gateway = new Gateway({ authHandler: auth });\n",
+        "dispatch/encore.service.ts": "import { Service } from \"encore.dev/service\";\n\n// Work orders: scheduling, crew assignment, the dispatcher console.\nexport default new Service(\"dispatch\");\n"
+      }
+    },
+    {
+      "id": "h7-encore-service-org-directory",
+      "family": "encore-service",
+      "architecture": "Encore.ts 1.46 application (encore.dev) split into identity, dispatch, billing and documents services, using Encore's own SQLDatabase over Postgres as the only data layer, with the caller's identity coming from Encore's authHandler and read in endpoints via getAuthData().",
+      "language": "typescript",
+      "file": "encore-service/identity/org_directory.ts",
+      "scanAs": "identity/org_directory.ts",
+      "kind": "vulnerable",
+      "category": "publicly_exposed_internal_endpoint_without_authentication",
+      "cwe": "CWE-306",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 47,
+      "lineRange": [
+        46,
+        56
+      ],
+      "route": "GET /internal/organizations/:orgID/contacts",
+      "runtimeVerifiable": true,
+      "why": "expose: true puts this on the public gateway while auth: false removes any caller check, so anyone on the internet can walk the orgID path parameter and read every member's name, email, phone and role for any organization. The /internal path prefix and the X-Ridgeline-Service header are naming conventions, not a trust boundary.",
+      "packageJson": {
+        "name": "ridgeline-ops",
+        "version": "1.14.0",
+        "private": true,
+        "type": "module",
+        "dependencies": {
+          "encore.dev": "^1.46.13"
+        },
+        "devDependencies": {
+          "@types/node": "^22.10.5",
+          "typescript": "^5.7.3",
+          "vitest": "^3.0.5"
+        }
+      },
+      "extraFiles": {
+        "identity/db.ts": "import { SQLDatabase } from \"encore.dev/storage/sqldb\";\n\n/**\n * One Postgres database for the whole app. `identity` owns the migrations\n * because organizations and memberships are the root of every other table's\n * foreign keys. The other services attach to it with\n * `SQLDatabase.named(\"ridgeline\")` rather than declaring their own.\n */\nexport const ridgeline = new SQLDatabase(\"ridgeline\", {\n  migrations: \"./migrations\",\n});\n",
+        "identity/auth.ts": "import { APIError, Gateway, Header } from \"encore.dev/api\";\nimport { authHandler } from \"encore.dev/auth\";\nimport { createHmac, timingSafeEqual } from \"node:crypto\";\nimport { ridgeline } from \"./db\";\n\nexport type MemberRole = \"owner\" | \"dispatcher\" | \"technician\" | \"viewer\";\n\n/**\n * What every endpoint with `auth: true` gets back from `getAuthData()`.\n * `orgID` and `role` come out of the membership row the session points at,\n * never out of the request, so handlers can treat them as the tenant and the\n * privilege level of the caller.\n */\nexport interface AuthData {\n  userID: string;\n  orgID: string;\n  role: MemberRole;\n  email: string;\n}\n\ninterface AuthParams {\n  authorization: Header<\"Authorization\">;\n}\n\ninterface SessionRow {\n  membership_id: string;\n  user_id: string;\n  org_id: string;\n  role: MemberRole;\n  email: string;\n  expires_at: Date;\n}\n\nconst sessionSecret = process.env.RIDGELINE_SESSION_SECRET ?? \"\";\n\nfunction sign(sessionID: string): string {\n  return createHmac(\"sha256\", sessionSecret).update(sessionID).digest(\"hex\");\n}\n\nfunction macMatches(sessionID: string, provided: string): boolean {\n  const expected = Buffer.from(sign(sessionID), \"utf8\");\n  const actual = Buffer.from(provided, \"utf8\");\n  if (expected.length !== actual.length) return false;\n  return timingSafeEqual(expected, actual);\n}\n\nexport const auth = authHandler<AuthParams, AuthData>(async (params) => {\n  const token = params.authorization.replace(/^Bearer\\s+/i, \"\").trim();\n  const [sessionID, mac] = token.split(\".\");\n  if (!sessionID || !mac) {\n    throw APIError.unauthenticated(\"malformed session token\");\n  }\n  if (!macMatches(sessionID, mac)) {\n    throw APIError.unauthenticated(\"bad session signature\");\n  }\n\n  const session = await ridgeline.queryRow<SessionRow>`\n    select s.membership_id,\n           m.user_id,\n           m.org_id,\n           m.role,\n           u.email,\n           s.expires_at\n    from sessions s\n    join memberships m on m.id = s.membership_id\n    join users u on u.id = m.user_id\n    where s.id = ${sessionID}\n      and s.revoked_at is null\n      and m.deactivated_at is null\n  `;\n  if (!session) {\n    throw APIError.unauthenticated(\"unknown session\");\n  }\n  if (session.expires_at.getTime() <= Date.now()) {\n    throw APIError.unauthenticated(\"session expired\");\n  }\n\n  return {\n    userID: session.user_id,\n    orgID: session.org_id,\n    role: session.role,\n    email: session.email,\n  };\n});\n\nexport const gateway = new Gateway({ authHandler: auth });\n",
+        "identity/encore.service.ts": "import { Service } from \"encore.dev/service\";\n\n// Owns organizations, users, memberships and sessions. Every other service\n// hangs off the ids this one hands out.\nexport default new Service(\"identity\");\n"
+      }
+    },
+    {
+      "id": "h7-encore-service-attachment-content",
+      "family": "encore-service",
+      "architecture": "Encore.ts 1.46 application (encore.dev) split into identity, dispatch, billing and documents services, using Encore's own SQLDatabase over Postgres as the only data layer, with the caller's identity coming from Encore's authHandler and read in endpoints via getAuthData().",
+      "language": "typescript",
+      "file": "encore-service/documents/attachment_download.ts",
+      "scanAs": "documents/attachment_download.ts",
+      "kind": "vulnerable",
+      "category": "path_traversal_via_client_supplied_storage_key",
+      "cwe": "CWE-22",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 113,
+      "lineRange": [
+        111,
+        123
+      ],
+      "route": "POST /documents/jobs/:jobID/attachments/content",
+      "runtimeVerifiable": true,
+      "why": "req.storageKey is taken from the request body and joined onto STORAGE_ROOT with no normalisation or containment check, then stat'ed and read, so a value like ../../../../etc/passwd returns file contents base64-encoded. The org check above only validates the job id, not the key.",
+      "packageJson": {
+        "name": "ridgeline-ops",
+        "version": "1.14.0",
+        "private": true,
+        "type": "module",
+        "dependencies": {
+          "encore.dev": "^1.46.13"
+        },
+        "devDependencies": {
+          "@types/node": "^22.10.5",
+          "typescript": "^5.7.3",
+          "vitest": "^3.0.5"
+        }
+      },
+      "extraFiles": {
+        "identity/db.ts": "import { SQLDatabase } from \"encore.dev/storage/sqldb\";\n\n/**\n * One Postgres database for the whole app. `identity` owns the migrations\n * because organizations and memberships are the root of every other table's\n * foreign keys. The other services attach to it with\n * `SQLDatabase.named(\"ridgeline\")` rather than declaring their own.\n */\nexport const ridgeline = new SQLDatabase(\"ridgeline\", {\n  migrations: \"./migrations\",\n});\n",
+        "identity/auth.ts": "import { APIError, Gateway, Header } from \"encore.dev/api\";\nimport { authHandler } from \"encore.dev/auth\";\nimport { createHmac, timingSafeEqual } from \"node:crypto\";\nimport { ridgeline } from \"./db\";\n\nexport type MemberRole = \"owner\" | \"dispatcher\" | \"technician\" | \"viewer\";\n\n/**\n * What every endpoint with `auth: true` gets back from `getAuthData()`.\n * `orgID` and `role` come out of the membership row the session points at,\n * never out of the request, so handlers can treat them as the tenant and the\n * privilege level of the caller.\n */\nexport interface AuthData {\n  userID: string;\n  orgID: string;\n  role: MemberRole;\n  email: string;\n}\n\ninterface AuthParams {\n  authorization: Header<\"Authorization\">;\n}\n\ninterface SessionRow {\n  membership_id: string;\n  user_id: string;\n  org_id: string;\n  role: MemberRole;\n  email: string;\n  expires_at: Date;\n}\n\nconst sessionSecret = process.env.RIDGELINE_SESSION_SECRET ?? \"\";\n\nfunction sign(sessionID: string): string {\n  return createHmac(\"sha256\", sessionSecret).update(sessionID).digest(\"hex\");\n}\n\nfunction macMatches(sessionID: string, provided: string): boolean {\n  const expected = Buffer.from(sign(sessionID), \"utf8\");\n  const actual = Buffer.from(provided, \"utf8\");\n  if (expected.length !== actual.length) return false;\n  return timingSafeEqual(expected, actual);\n}\n\nexport const auth = authHandler<AuthParams, AuthData>(async (params) => {\n  const token = params.authorization.replace(/^Bearer\\s+/i, \"\").trim();\n  const [sessionID, mac] = token.split(\".\");\n  if (!sessionID || !mac) {\n    throw APIError.unauthenticated(\"malformed session token\");\n  }\n  if (!macMatches(sessionID, mac)) {\n    throw APIError.unauthenticated(\"bad session signature\");\n  }\n\n  const session = await ridgeline.queryRow<SessionRow>`\n    select s.membership_id,\n           m.user_id,\n           m.org_id,\n           m.role,\n           u.email,\n           s.expires_at\n    from sessions s\n    join memberships m on m.id = s.membership_id\n    join users u on u.id = m.user_id\n    where s.id = ${sessionID}\n      and s.revoked_at is null\n      and m.deactivated_at is null\n  `;\n  if (!session) {\n    throw APIError.unauthenticated(\"unknown session\");\n  }\n  if (session.expires_at.getTime() <= Date.now()) {\n    throw APIError.unauthenticated(\"session expired\");\n  }\n\n  return {\n    userID: session.user_id,\n    orgID: session.org_id,\n    role: session.role,\n    email: session.email,\n  };\n});\n\nexport const gateway = new Gateway({ authHandler: auth });\n",
+        "documents/encore.service.ts": "import { Service } from \"encore.dev/service\";\n\n// Photos, signed-off worksheets and PDF export bundles.\nexport default new Service(\"documents\");\n"
+      }
+    },
+    {
+      "id": "h7-encore-service-payout-probe",
+      "family": "encore-service",
+      "architecture": "Encore.ts 1.46 application (encore.dev) split into identity, dispatch, billing and documents services, using Encore's own SQLDatabase over Postgres as the only data layer, with the caller's identity coming from Encore's authHandler and read in endpoints via getAuthData().",
+      "language": "typescript",
+      "file": "encore-service/billing/payout_hooks.ts",
+      "scanAs": "billing/payout_hooks.ts",
+      "kind": "vulnerable",
+      "category": "server_side_request_forgery_via_caller_supplied_webhook_target",
+      "cwe": "CWE-918",
+      "severityBand": [
+        "high"
+      ],
+      "line": 95,
+      "lineRange": [
+        85,
+        110
+      ],
+      "route": "POST /billing/payout-hooks/probe",
+      "runtimeVerifiable": true,
+      "why": "req.targetUrl is fetched directly after nothing more than a 'https://' prefix test, and the response body is echoed back to the caller, so an owner can make the service issue requests to cluster-internal or cloud metadata addresses and read the answers. The owner role check limits who can do it, not where the request goes.",
+      "packageJson": {
+        "name": "ridgeline-ops",
+        "version": "1.14.0",
+        "private": true,
+        "type": "module",
+        "dependencies": {
+          "encore.dev": "^1.46.13"
+        },
+        "devDependencies": {
+          "@types/node": "^22.10.5",
+          "typescript": "^5.7.3",
+          "vitest": "^3.0.5"
+        }
+      },
+      "extraFiles": {
+        "identity/db.ts": "import { SQLDatabase } from \"encore.dev/storage/sqldb\";\n\n/**\n * One Postgres database for the whole app. `identity` owns the migrations\n * because organizations and memberships are the root of every other table's\n * foreign keys. The other services attach to it with\n * `SQLDatabase.named(\"ridgeline\")` rather than declaring their own.\n */\nexport const ridgeline = new SQLDatabase(\"ridgeline\", {\n  migrations: \"./migrations\",\n});\n",
+        "identity/auth.ts": "import { APIError, Gateway, Header } from \"encore.dev/api\";\nimport { authHandler } from \"encore.dev/auth\";\nimport { createHmac, timingSafeEqual } from \"node:crypto\";\nimport { ridgeline } from \"./db\";\n\nexport type MemberRole = \"owner\" | \"dispatcher\" | \"technician\" | \"viewer\";\n\n/**\n * What every endpoint with `auth: true` gets back from `getAuthData()`.\n * `orgID` and `role` come out of the membership row the session points at,\n * never out of the request, so handlers can treat them as the tenant and the\n * privilege level of the caller.\n */\nexport interface AuthData {\n  userID: string;\n  orgID: string;\n  role: MemberRole;\n  email: string;\n}\n\ninterface AuthParams {\n  authorization: Header<\"Authorization\">;\n}\n\ninterface SessionRow {\n  membership_id: string;\n  user_id: string;\n  org_id: string;\n  role: MemberRole;\n  email: string;\n  expires_at: Date;\n}\n\nconst sessionSecret = process.env.RIDGELINE_SESSION_SECRET ?? \"\";\n\nfunction sign(sessionID: string): string {\n  return createHmac(\"sha256\", sessionSecret).update(sessionID).digest(\"hex\");\n}\n\nfunction macMatches(sessionID: string, provided: string): boolean {\n  const expected = Buffer.from(sign(sessionID), \"utf8\");\n  const actual = Buffer.from(provided, \"utf8\");\n  if (expected.length !== actual.length) return false;\n  return timingSafeEqual(expected, actual);\n}\n\nexport const auth = authHandler<AuthParams, AuthData>(async (params) => {\n  const token = params.authorization.replace(/^Bearer\\s+/i, \"\").trim();\n  const [sessionID, mac] = token.split(\".\");\n  if (!sessionID || !mac) {\n    throw APIError.unauthenticated(\"malformed session token\");\n  }\n  if (!macMatches(sessionID, mac)) {\n    throw APIError.unauthenticated(\"bad session signature\");\n  }\n\n  const session = await ridgeline.queryRow<SessionRow>`\n    select s.membership_id,\n           m.user_id,\n           m.org_id,\n           m.role,\n           u.email,\n           s.expires_at\n    from sessions s\n    join memberships m on m.id = s.membership_id\n    join users u on u.id = m.user_id\n    where s.id = ${sessionID}\n      and s.revoked_at is null\n      and m.deactivated_at is null\n  `;\n  if (!session) {\n    throw APIError.unauthenticated(\"unknown session\");\n  }\n  if (session.expires_at.getTime() <= Date.now()) {\n    throw APIError.unauthenticated(\"session expired\");\n  }\n\n  return {\n    userID: session.user_id,\n    orgID: session.org_id,\n    role: session.role,\n    email: session.email,\n  };\n});\n\nexport const gateway = new Gateway({ authHandler: auth });\n",
+        "billing/encore.service.ts": "import { Service } from \"encore.dev/service\";\n\n// Invoicing, monthly statements and payout webhooks.\nexport default new Service(\"billing\");\n"
+      }
+    },
+    {
+      "id": "h7-encore-service-member-profile-role",
+      "family": "encore-service",
+      "architecture": "Encore.ts 1.46 application (encore.dev) split into identity, dispatch, billing and documents services, using Encore's own SQLDatabase over Postgres as the only data layer, with the caller's identity coming from Encore's authHandler and read in endpoints via getAuthData().",
+      "language": "typescript",
+      "file": "encore-service/identity/member_profile.ts",
+      "scanAs": "identity/member_profile.ts",
+      "kind": "vulnerable",
+      "category": "privilege_escalation_via_client_supplied_role_field",
+      "cwe": "CWE-269",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 80,
+      "lineRange": [
+        18,
+        85
+      ],
+      "route": "PATCH /identity/members/:memberID",
+      "runtimeVerifiable": true,
+      "why": "The optional role field on MemberProfilePatch is written into memberships.role with no check that the caller is an owner and no check that the target is not the caller, so any member can PATCH their own membership and become an owner of the organization. The comment mistakes Encore's request-shape validation for authorisation.",
+      "packageJson": {
+        "name": "ridgeline-ops",
+        "version": "1.14.0",
+        "private": true,
+        "type": "module",
+        "dependencies": {
+          "encore.dev": "^1.46.13"
+        },
+        "devDependencies": {
+          "@types/node": "^22.10.5",
+          "typescript": "^5.7.3",
+          "vitest": "^3.0.5"
+        }
+      },
+      "extraFiles": {
+        "identity/db.ts": "import { SQLDatabase } from \"encore.dev/storage/sqldb\";\n\n/**\n * One Postgres database for the whole app. `identity` owns the migrations\n * because organizations and memberships are the root of every other table's\n * foreign keys. The other services attach to it with\n * `SQLDatabase.named(\"ridgeline\")` rather than declaring their own.\n */\nexport const ridgeline = new SQLDatabase(\"ridgeline\", {\n  migrations: \"./migrations\",\n});\n",
+        "identity/auth.ts": "import { APIError, Gateway, Header } from \"encore.dev/api\";\nimport { authHandler } from \"encore.dev/auth\";\nimport { createHmac, timingSafeEqual } from \"node:crypto\";\nimport { ridgeline } from \"./db\";\n\nexport type MemberRole = \"owner\" | \"dispatcher\" | \"technician\" | \"viewer\";\n\n/**\n * What every endpoint with `auth: true` gets back from `getAuthData()`.\n * `orgID` and `role` come out of the membership row the session points at,\n * never out of the request, so handlers can treat them as the tenant and the\n * privilege level of the caller.\n */\nexport interface AuthData {\n  userID: string;\n  orgID: string;\n  role: MemberRole;\n  email: string;\n}\n\ninterface AuthParams {\n  authorization: Header<\"Authorization\">;\n}\n\ninterface SessionRow {\n  membership_id: string;\n  user_id: string;\n  org_id: string;\n  role: MemberRole;\n  email: string;\n  expires_at: Date;\n}\n\nconst sessionSecret = process.env.RIDGELINE_SESSION_SECRET ?? \"\";\n\nfunction sign(sessionID: string): string {\n  return createHmac(\"sha256\", sessionSecret).update(sessionID).digest(\"hex\");\n}\n\nfunction macMatches(sessionID: string, provided: string): boolean {\n  const expected = Buffer.from(sign(sessionID), \"utf8\");\n  const actual = Buffer.from(provided, \"utf8\");\n  if (expected.length !== actual.length) return false;\n  return timingSafeEqual(expected, actual);\n}\n\nexport const auth = authHandler<AuthParams, AuthData>(async (params) => {\n  const token = params.authorization.replace(/^Bearer\\s+/i, \"\").trim();\n  const [sessionID, mac] = token.split(\".\");\n  if (!sessionID || !mac) {\n    throw APIError.unauthenticated(\"malformed session token\");\n  }\n  if (!macMatches(sessionID, mac)) {\n    throw APIError.unauthenticated(\"bad session signature\");\n  }\n\n  const session = await ridgeline.queryRow<SessionRow>`\n    select s.membership_id,\n           m.user_id,\n           m.org_id,\n           m.role,\n           u.email,\n           s.expires_at\n    from sessions s\n    join memberships m on m.id = s.membership_id\n    join users u on u.id = m.user_id\n    where s.id = ${sessionID}\n      and s.revoked_at is null\n      and m.deactivated_at is null\n  `;\n  if (!session) {\n    throw APIError.unauthenticated(\"unknown session\");\n  }\n  if (session.expires_at.getTime() <= Date.now()) {\n    throw APIError.unauthenticated(\"session expired\");\n  }\n\n  return {\n    userID: session.user_id,\n    orgID: session.org_id,\n    role: session.role,\n    email: session.email,\n  };\n});\n\nexport const gateway = new Gateway({ authHandler: auth });\n",
+        "identity/encore.service.ts": "import { Service } from \"encore.dev/service\";\n\n// Owns organizations, users, memberships and sessions. Every other service\n// hangs off the ids this one hands out.\nexport default new Service(\"identity\");\n"
+      }
+    },
+    {
+      "id": "h7-encore-service-job-board",
+      "family": "encore-service",
+      "architecture": "Encore.ts 1.46 application (encore.dev) split into identity, dispatch, billing and documents services, using Encore's own SQLDatabase over Postgres as the only data layer, with the caller's identity coming from Encore's authHandler and read in endpoints via getAuthData().",
+      "language": "typescript",
+      "file": "encore-service/dispatch/job_board.ts",
+      "scanAs": "dispatch/job_board.ts",
+      "kind": "safe",
+      "route": "GET /dispatch/jobs/board",
+      "runtimeVerifiable": true,
+      "pairedWith": "h7-encore-service-job-search-sort",
+      "why": "The same rawQuery string-building shape, but the only interpolated fragments are an ORDER BY column taken from the fixed SORTABLE_COLUMNS map (unknown keys are rejected with invalidArgument) and a direction from a two-way ternary; the status, search text, org id and limit all travel as positional bind parameters.",
+      "packageJson": {
+        "name": "ridgeline-ops",
+        "version": "1.14.0",
+        "private": true,
+        "type": "module",
+        "dependencies": {
+          "encore.dev": "^1.46.13"
+        },
+        "devDependencies": {
+          "@types/node": "^22.10.5",
+          "typescript": "^5.7.3",
+          "vitest": "^3.0.5"
+        }
+      },
+      "extraFiles": {
+        "identity/db.ts": "import { SQLDatabase } from \"encore.dev/storage/sqldb\";\n\n/**\n * One Postgres database for the whole app. `identity` owns the migrations\n * because organizations and memberships are the root of every other table's\n * foreign keys. The other services attach to it with\n * `SQLDatabase.named(\"ridgeline\")` rather than declaring their own.\n */\nexport const ridgeline = new SQLDatabase(\"ridgeline\", {\n  migrations: \"./migrations\",\n});\n",
+        "identity/auth.ts": "import { APIError, Gateway, Header } from \"encore.dev/api\";\nimport { authHandler } from \"encore.dev/auth\";\nimport { createHmac, timingSafeEqual } from \"node:crypto\";\nimport { ridgeline } from \"./db\";\n\nexport type MemberRole = \"owner\" | \"dispatcher\" | \"technician\" | \"viewer\";\n\n/**\n * What every endpoint with `auth: true` gets back from `getAuthData()`.\n * `orgID` and `role` come out of the membership row the session points at,\n * never out of the request, so handlers can treat them as the tenant and the\n * privilege level of the caller.\n */\nexport interface AuthData {\n  userID: string;\n  orgID: string;\n  role: MemberRole;\n  email: string;\n}\n\ninterface AuthParams {\n  authorization: Header<\"Authorization\">;\n}\n\ninterface SessionRow {\n  membership_id: string;\n  user_id: string;\n  org_id: string;\n  role: MemberRole;\n  email: string;\n  expires_at: Date;\n}\n\nconst sessionSecret = process.env.RIDGELINE_SESSION_SECRET ?? \"\";\n\nfunction sign(sessionID: string): string {\n  return createHmac(\"sha256\", sessionSecret).update(sessionID).digest(\"hex\");\n}\n\nfunction macMatches(sessionID: string, provided: string): boolean {\n  const expected = Buffer.from(sign(sessionID), \"utf8\");\n  const actual = Buffer.from(provided, \"utf8\");\n  if (expected.length !== actual.length) return false;\n  return timingSafeEqual(expected, actual);\n}\n\nexport const auth = authHandler<AuthParams, AuthData>(async (params) => {\n  const token = params.authorization.replace(/^Bearer\\s+/i, \"\").trim();\n  const [sessionID, mac] = token.split(\".\");\n  if (!sessionID || !mac) {\n    throw APIError.unauthenticated(\"malformed session token\");\n  }\n  if (!macMatches(sessionID, mac)) {\n    throw APIError.unauthenticated(\"bad session signature\");\n  }\n\n  const session = await ridgeline.queryRow<SessionRow>`\n    select s.membership_id,\n           m.user_id,\n           m.org_id,\n           m.role,\n           u.email,\n           s.expires_at\n    from sessions s\n    join memberships m on m.id = s.membership_id\n    join users u on u.id = m.user_id\n    where s.id = ${sessionID}\n      and s.revoked_at is null\n      and m.deactivated_at is null\n  `;\n  if (!session) {\n    throw APIError.unauthenticated(\"unknown session\");\n  }\n  if (session.expires_at.getTime() <= Date.now()) {\n    throw APIError.unauthenticated(\"session expired\");\n  }\n\n  return {\n    userID: session.user_id,\n    orgID: session.org_id,\n    role: session.role,\n    email: session.email,\n  };\n});\n\nexport const gateway = new Gateway({ authHandler: auth });\n",
+        "dispatch/encore.service.ts": "import { Service } from \"encore.dev/service\";\n\n// Work orders: scheduling, crew assignment, the dispatcher console.\nexport default new Service(\"dispatch\");\n"
+      }
+    },
+    {
+      "id": "h7-encore-service-statement-drawer",
+      "family": "encore-service",
+      "architecture": "Encore.ts 1.46 application (encore.dev) split into identity, dispatch, billing and documents services, using Encore's own SQLDatabase over Postgres as the only data layer, with the caller's identity coming from Encore's authHandler and read in endpoints via getAuthData().",
+      "language": "typescript",
+      "file": "encore-service/billing/statement_detail.ts",
+      "scanAs": "billing/statement_detail.ts",
+      "kind": "safe",
+      "route": "GET /billing/statements/:statementID",
+      "runtimeVerifiable": true,
+      "pairedWith": "h7-encore-service-invoice-drawer",
+      "why": "Same tagged-template queryRow on a path-parameter primary key, but the where clause also pins org_id to auth.orgID from the session, so a statement belonging to another organization does not resolve and the handler answers notFound.",
+      "packageJson": {
+        "name": "ridgeline-ops",
+        "version": "1.14.0",
+        "private": true,
+        "type": "module",
+        "dependencies": {
+          "encore.dev": "^1.46.13"
+        },
+        "devDependencies": {
+          "@types/node": "^22.10.5",
+          "typescript": "^5.7.3",
+          "vitest": "^3.0.5"
+        }
+      },
+      "extraFiles": {
+        "identity/db.ts": "import { SQLDatabase } from \"encore.dev/storage/sqldb\";\n\n/**\n * One Postgres database for the whole app. `identity` owns the migrations\n * because organizations and memberships are the root of every other table's\n * foreign keys. The other services attach to it with\n * `SQLDatabase.named(\"ridgeline\")` rather than declaring their own.\n */\nexport const ridgeline = new SQLDatabase(\"ridgeline\", {\n  migrations: \"./migrations\",\n});\n",
+        "identity/auth.ts": "import { APIError, Gateway, Header } from \"encore.dev/api\";\nimport { authHandler } from \"encore.dev/auth\";\nimport { createHmac, timingSafeEqual } from \"node:crypto\";\nimport { ridgeline } from \"./db\";\n\nexport type MemberRole = \"owner\" | \"dispatcher\" | \"technician\" | \"viewer\";\n\n/**\n * What every endpoint with `auth: true` gets back from `getAuthData()`.\n * `orgID` and `role` come out of the membership row the session points at,\n * never out of the request, so handlers can treat them as the tenant and the\n * privilege level of the caller.\n */\nexport interface AuthData {\n  userID: string;\n  orgID: string;\n  role: MemberRole;\n  email: string;\n}\n\ninterface AuthParams {\n  authorization: Header<\"Authorization\">;\n}\n\ninterface SessionRow {\n  membership_id: string;\n  user_id: string;\n  org_id: string;\n  role: MemberRole;\n  email: string;\n  expires_at: Date;\n}\n\nconst sessionSecret = process.env.RIDGELINE_SESSION_SECRET ?? \"\";\n\nfunction sign(sessionID: string): string {\n  return createHmac(\"sha256\", sessionSecret).update(sessionID).digest(\"hex\");\n}\n\nfunction macMatches(sessionID: string, provided: string): boolean {\n  const expected = Buffer.from(sign(sessionID), \"utf8\");\n  const actual = Buffer.from(provided, \"utf8\");\n  if (expected.length !== actual.length) return false;\n  return timingSafeEqual(expected, actual);\n}\n\nexport const auth = authHandler<AuthParams, AuthData>(async (params) => {\n  const token = params.authorization.replace(/^Bearer\\s+/i, \"\").trim();\n  const [sessionID, mac] = token.split(\".\");\n  if (!sessionID || !mac) {\n    throw APIError.unauthenticated(\"malformed session token\");\n  }\n  if (!macMatches(sessionID, mac)) {\n    throw APIError.unauthenticated(\"bad session signature\");\n  }\n\n  const session = await ridgeline.queryRow<SessionRow>`\n    select s.membership_id,\n           m.user_id,\n           m.org_id,\n           m.role,\n           u.email,\n           s.expires_at\n    from sessions s\n    join memberships m on m.id = s.membership_id\n    join users u on u.id = m.user_id\n    where s.id = ${sessionID}\n      and s.revoked_at is null\n      and m.deactivated_at is null\n  `;\n  if (!session) {\n    throw APIError.unauthenticated(\"unknown session\");\n  }\n  if (session.expires_at.getTime() <= Date.now()) {\n    throw APIError.unauthenticated(\"session expired\");\n  }\n\n  return {\n    userID: session.user_id,\n    orgID: session.org_id,\n    role: session.role,\n    email: session.email,\n  };\n});\n\nexport const gateway = new Gateway({ authHandler: auth });\n",
+        "billing/encore.service.ts": "import { Service } from \"encore.dev/service\";\n\n// Invoicing, monthly statements and payout webhooks.\nexport default new Service(\"billing\");\n"
+      }
+    },
+    {
+      "id": "h7-encore-service-crew-lead",
+      "family": "encore-service",
+      "architecture": "Encore.ts 1.46 application (encore.dev) split into identity, dispatch, billing and documents services, using Encore's own SQLDatabase over Postgres as the only data layer, with the caller's identity coming from Encore's authHandler and read in endpoints via getAuthData().",
+      "language": "typescript",
+      "file": "encore-service/dispatch/crew_lead.ts",
+      "scanAs": "dispatch/crew_lead.ts",
+      "kind": "safe",
+      "route": "POST /dispatch/crews/:crewID/lead",
+      "runtimeVerifiable": true,
+      "pairedWith": "h7-encore-service-job-assignment",
+      "why": "Same shape of privileged mutation on an org-scoped row, but auth.role from the session is checked against CREW_MANAGER_ROLES and anything else is refused with permissionDenied before any lookup or update happens.",
+      "packageJson": {
+        "name": "ridgeline-ops",
+        "version": "1.14.0",
+        "private": true,
+        "type": "module",
+        "dependencies": {
+          "encore.dev": "^1.46.13"
+        },
+        "devDependencies": {
+          "@types/node": "^22.10.5",
+          "typescript": "^5.7.3",
+          "vitest": "^3.0.5"
+        }
+      },
+      "extraFiles": {
+        "identity/db.ts": "import { SQLDatabase } from \"encore.dev/storage/sqldb\";\n\n/**\n * One Postgres database for the whole app. `identity` owns the migrations\n * because organizations and memberships are the root of every other table's\n * foreign keys. The other services attach to it with\n * `SQLDatabase.named(\"ridgeline\")` rather than declaring their own.\n */\nexport const ridgeline = new SQLDatabase(\"ridgeline\", {\n  migrations: \"./migrations\",\n});\n",
+        "identity/auth.ts": "import { APIError, Gateway, Header } from \"encore.dev/api\";\nimport { authHandler } from \"encore.dev/auth\";\nimport { createHmac, timingSafeEqual } from \"node:crypto\";\nimport { ridgeline } from \"./db\";\n\nexport type MemberRole = \"owner\" | \"dispatcher\" | \"technician\" | \"viewer\";\n\n/**\n * What every endpoint with `auth: true` gets back from `getAuthData()`.\n * `orgID` and `role` come out of the membership row the session points at,\n * never out of the request, so handlers can treat them as the tenant and the\n * privilege level of the caller.\n */\nexport interface AuthData {\n  userID: string;\n  orgID: string;\n  role: MemberRole;\n  email: string;\n}\n\ninterface AuthParams {\n  authorization: Header<\"Authorization\">;\n}\n\ninterface SessionRow {\n  membership_id: string;\n  user_id: string;\n  org_id: string;\n  role: MemberRole;\n  email: string;\n  expires_at: Date;\n}\n\nconst sessionSecret = process.env.RIDGELINE_SESSION_SECRET ?? \"\";\n\nfunction sign(sessionID: string): string {\n  return createHmac(\"sha256\", sessionSecret).update(sessionID).digest(\"hex\");\n}\n\nfunction macMatches(sessionID: string, provided: string): boolean {\n  const expected = Buffer.from(sign(sessionID), \"utf8\");\n  const actual = Buffer.from(provided, \"utf8\");\n  if (expected.length !== actual.length) return false;\n  return timingSafeEqual(expected, actual);\n}\n\nexport const auth = authHandler<AuthParams, AuthData>(async (params) => {\n  const token = params.authorization.replace(/^Bearer\\s+/i, \"\").trim();\n  const [sessionID, mac] = token.split(\".\");\n  if (!sessionID || !mac) {\n    throw APIError.unauthenticated(\"malformed session token\");\n  }\n  if (!macMatches(sessionID, mac)) {\n    throw APIError.unauthenticated(\"bad session signature\");\n  }\n\n  const session = await ridgeline.queryRow<SessionRow>`\n    select s.membership_id,\n           m.user_id,\n           m.org_id,\n           m.role,\n           u.email,\n           s.expires_at\n    from sessions s\n    join memberships m on m.id = s.membership_id\n    join users u on u.id = m.user_id\n    where s.id = ${sessionID}\n      and s.revoked_at is null\n      and m.deactivated_at is null\n  `;\n  if (!session) {\n    throw APIError.unauthenticated(\"unknown session\");\n  }\n  if (session.expires_at.getTime() <= Date.now()) {\n    throw APIError.unauthenticated(\"session expired\");\n  }\n\n  return {\n    userID: session.user_id,\n    orgID: session.org_id,\n    role: session.role,\n    email: session.email,\n  };\n});\n\nexport const gateway = new Gateway({ authHandler: auth });\n",
+        "dispatch/encore.service.ts": "import { Service } from \"encore.dev/service\";\n\n// Work orders: scheduling, crew assignment, the dispatcher console.\nexport default new Service(\"dispatch\");\n"
+      }
+    },
+    {
+      "id": "h7-encore-service-usage-rollup",
+      "family": "encore-service",
+      "architecture": "Encore.ts 1.46 application (encore.dev) split into identity, dispatch, billing and documents services, using Encore's own SQLDatabase over Postgres as the only data layer, with the caller's identity coming from Encore's authHandler and read in endpoints via getAuthData().",
+      "language": "typescript",
+      "file": "encore-service/identity/usage_rollup.ts",
+      "scanAs": "identity/usage_rollup.ts",
+      "kind": "safe",
+      "route": "GET /internal/organizations/:orgID/usage",
+      "runtimeVerifiable": true,
+      "pairedWith": "h7-encore-service-org-directory",
+      "why": "Same /internal path shape and same absence of an auth check, but expose: false keeps the endpoint off the gateway entirely: it is reachable only as a service-to-service call from inside the app, so there is no unauthenticated public caller to guard against.",
+      "packageJson": {
+        "name": "ridgeline-ops",
+        "version": "1.14.0",
+        "private": true,
+        "type": "module",
+        "dependencies": {
+          "encore.dev": "^1.46.13"
+        },
+        "devDependencies": {
+          "@types/node": "^22.10.5",
+          "typescript": "^5.7.3",
+          "vitest": "^3.0.5"
+        }
+      },
+      "extraFiles": {
+        "identity/db.ts": "import { SQLDatabase } from \"encore.dev/storage/sqldb\";\n\n/**\n * One Postgres database for the whole app. `identity` owns the migrations\n * because organizations and memberships are the root of every other table's\n * foreign keys. The other services attach to it with\n * `SQLDatabase.named(\"ridgeline\")` rather than declaring their own.\n */\nexport const ridgeline = new SQLDatabase(\"ridgeline\", {\n  migrations: \"./migrations\",\n});\n",
+        "identity/auth.ts": "import { APIError, Gateway, Header } from \"encore.dev/api\";\nimport { authHandler } from \"encore.dev/auth\";\nimport { createHmac, timingSafeEqual } from \"node:crypto\";\nimport { ridgeline } from \"./db\";\n\nexport type MemberRole = \"owner\" | \"dispatcher\" | \"technician\" | \"viewer\";\n\n/**\n * What every endpoint with `auth: true` gets back from `getAuthData()`.\n * `orgID` and `role` come out of the membership row the session points at,\n * never out of the request, so handlers can treat them as the tenant and the\n * privilege level of the caller.\n */\nexport interface AuthData {\n  userID: string;\n  orgID: string;\n  role: MemberRole;\n  email: string;\n}\n\ninterface AuthParams {\n  authorization: Header<\"Authorization\">;\n}\n\ninterface SessionRow {\n  membership_id: string;\n  user_id: string;\n  org_id: string;\n  role: MemberRole;\n  email: string;\n  expires_at: Date;\n}\n\nconst sessionSecret = process.env.RIDGELINE_SESSION_SECRET ?? \"\";\n\nfunction sign(sessionID: string): string {\n  return createHmac(\"sha256\", sessionSecret).update(sessionID).digest(\"hex\");\n}\n\nfunction macMatches(sessionID: string, provided: string): boolean {\n  const expected = Buffer.from(sign(sessionID), \"utf8\");\n  const actual = Buffer.from(provided, \"utf8\");\n  if (expected.length !== actual.length) return false;\n  return timingSafeEqual(expected, actual);\n}\n\nexport const auth = authHandler<AuthParams, AuthData>(async (params) => {\n  const token = params.authorization.replace(/^Bearer\\s+/i, \"\").trim();\n  const [sessionID, mac] = token.split(\".\");\n  if (!sessionID || !mac) {\n    throw APIError.unauthenticated(\"malformed session token\");\n  }\n  if (!macMatches(sessionID, mac)) {\n    throw APIError.unauthenticated(\"bad session signature\");\n  }\n\n  const session = await ridgeline.queryRow<SessionRow>`\n    select s.membership_id,\n           m.user_id,\n           m.org_id,\n           m.role,\n           u.email,\n           s.expires_at\n    from sessions s\n    join memberships m on m.id = s.membership_id\n    join users u on u.id = m.user_id\n    where s.id = ${sessionID}\n      and s.revoked_at is null\n      and m.deactivated_at is null\n  `;\n  if (!session) {\n    throw APIError.unauthenticated(\"unknown session\");\n  }\n  if (session.expires_at.getTime() <= Date.now()) {\n    throw APIError.unauthenticated(\"session expired\");\n  }\n\n  return {\n    userID: session.user_id,\n    orgID: session.org_id,\n    role: session.role,\n    email: session.email,\n  };\n});\n\nexport const gateway = new Gateway({ authHandler: auth });\n",
+        "identity/encore.service.ts": "import { Service } from \"encore.dev/service\";\n\n// Owns organizations, users, memberships and sessions. Every other service\n// hangs off the ids this one hands out.\nexport default new Service(\"identity\");\n"
+      }
+    },
+    {
+      "id": "h7-encore-service-export-bundle",
+      "family": "encore-service",
+      "architecture": "Encore.ts 1.46 application (encore.dev) split into identity, dispatch, billing and documents services, using Encore's own SQLDatabase over Postgres as the only data layer, with the caller's identity coming from Encore's authHandler and read in endpoints via getAuthData().",
+      "language": "typescript",
+      "file": "encore-service/documents/export_bundle.ts",
+      "scanAs": "documents/export_bundle.ts",
+      "kind": "safe",
+      "route": "GET /documents/exports/:exportID/bundle",
+      "runtimeVerifiable": true,
+      "pairedWith": "h7-encore-service-attachment-content",
+      "why": "Same stat-then-readFile of a path built from a storage key, but the key is read from the export_bundles row that matches both the id and auth.orgID rather than from the request, and resolveInsideRoot rejects anything that resolves outside STORAGE_ROOT before the read.",
+      "packageJson": {
+        "name": "ridgeline-ops",
+        "version": "1.14.0",
+        "private": true,
+        "type": "module",
+        "dependencies": {
+          "encore.dev": "^1.46.13"
+        },
+        "devDependencies": {
+          "@types/node": "^22.10.5",
+          "typescript": "^5.7.3",
+          "vitest": "^3.0.5"
+        }
+      },
+      "extraFiles": {
+        "identity/db.ts": "import { SQLDatabase } from \"encore.dev/storage/sqldb\";\n\n/**\n * One Postgres database for the whole app. `identity` owns the migrations\n * because organizations and memberships are the root of every other table's\n * foreign keys. The other services attach to it with\n * `SQLDatabase.named(\"ridgeline\")` rather than declaring their own.\n */\nexport const ridgeline = new SQLDatabase(\"ridgeline\", {\n  migrations: \"./migrations\",\n});\n",
+        "identity/auth.ts": "import { APIError, Gateway, Header } from \"encore.dev/api\";\nimport { authHandler } from \"encore.dev/auth\";\nimport { createHmac, timingSafeEqual } from \"node:crypto\";\nimport { ridgeline } from \"./db\";\n\nexport type MemberRole = \"owner\" | \"dispatcher\" | \"technician\" | \"viewer\";\n\n/**\n * What every endpoint with `auth: true` gets back from `getAuthData()`.\n * `orgID` and `role` come out of the membership row the session points at,\n * never out of the request, so handlers can treat them as the tenant and the\n * privilege level of the caller.\n */\nexport interface AuthData {\n  userID: string;\n  orgID: string;\n  role: MemberRole;\n  email: string;\n}\n\ninterface AuthParams {\n  authorization: Header<\"Authorization\">;\n}\n\ninterface SessionRow {\n  membership_id: string;\n  user_id: string;\n  org_id: string;\n  role: MemberRole;\n  email: string;\n  expires_at: Date;\n}\n\nconst sessionSecret = process.env.RIDGELINE_SESSION_SECRET ?? \"\";\n\nfunction sign(sessionID: string): string {\n  return createHmac(\"sha256\", sessionSecret).update(sessionID).digest(\"hex\");\n}\n\nfunction macMatches(sessionID: string, provided: string): boolean {\n  const expected = Buffer.from(sign(sessionID), \"utf8\");\n  const actual = Buffer.from(provided, \"utf8\");\n  if (expected.length !== actual.length) return false;\n  return timingSafeEqual(expected, actual);\n}\n\nexport const auth = authHandler<AuthParams, AuthData>(async (params) => {\n  const token = params.authorization.replace(/^Bearer\\s+/i, \"\").trim();\n  const [sessionID, mac] = token.split(\".\");\n  if (!sessionID || !mac) {\n    throw APIError.unauthenticated(\"malformed session token\");\n  }\n  if (!macMatches(sessionID, mac)) {\n    throw APIError.unauthenticated(\"bad session signature\");\n  }\n\n  const session = await ridgeline.queryRow<SessionRow>`\n    select s.membership_id,\n           m.user_id,\n           m.org_id,\n           m.role,\n           u.email,\n           s.expires_at\n    from sessions s\n    join memberships m on m.id = s.membership_id\n    join users u on u.id = m.user_id\n    where s.id = ${sessionID}\n      and s.revoked_at is null\n      and m.deactivated_at is null\n  `;\n  if (!session) {\n    throw APIError.unauthenticated(\"unknown session\");\n  }\n  if (session.expires_at.getTime() <= Date.now()) {\n    throw APIError.unauthenticated(\"session expired\");\n  }\n\n  return {\n    userID: session.user_id,\n    orgID: session.org_id,\n    role: session.role,\n    email: session.email,\n  };\n});\n\nexport const gateway = new Gateway({ authHandler: auth });\n",
+        "documents/encore.service.ts": "import { Service } from \"encore.dev/service\";\n\n// Photos, signed-off worksheets and PDF export bundles.\nexport default new Service(\"documents\");\n"
+      }
+    },
+    {
+      "id": "h7-encore-service-payout-delivery",
+      "family": "encore-service",
+      "architecture": "Encore.ts 1.46 application (encore.dev) split into identity, dispatch, billing and documents services, using Encore's own SQLDatabase over Postgres as the only data layer, with the caller's identity coming from Encore's authHandler and read in endpoints via getAuthData().",
+      "language": "typescript",
+      "file": "encore-service/billing/payout_notifications.ts",
+      "scanAs": "billing/payout_notifications.ts",
+      "kind": "safe",
+      "route": "POST /billing/payout-hooks/:hookID/deliveries",
+      "runtimeVerifiable": true,
+      "pairedWith": "h7-encore-service-payout-probe",
+      "why": "Same outbound fetch of a URL held in a variable, but the URL is never supplied by the caller: it is read back from the org's own payout_hooks row, and assertPublicHttpsTarget re-checks the scheme, the port and every resolved address against the private ranges before the request is made.",
+      "packageJson": {
+        "name": "ridgeline-ops",
+        "version": "1.14.0",
+        "private": true,
+        "type": "module",
+        "dependencies": {
+          "encore.dev": "^1.46.13"
+        },
+        "devDependencies": {
+          "@types/node": "^22.10.5",
+          "typescript": "^5.7.3",
+          "vitest": "^3.0.5"
+        }
+      },
+      "extraFiles": {
+        "identity/db.ts": "import { SQLDatabase } from \"encore.dev/storage/sqldb\";\n\n/**\n * One Postgres database for the whole app. `identity` owns the migrations\n * because organizations and memberships are the root of every other table's\n * foreign keys. The other services attach to it with\n * `SQLDatabase.named(\"ridgeline\")` rather than declaring their own.\n */\nexport const ridgeline = new SQLDatabase(\"ridgeline\", {\n  migrations: \"./migrations\",\n});\n",
+        "identity/auth.ts": "import { APIError, Gateway, Header } from \"encore.dev/api\";\nimport { authHandler } from \"encore.dev/auth\";\nimport { createHmac, timingSafeEqual } from \"node:crypto\";\nimport { ridgeline } from \"./db\";\n\nexport type MemberRole = \"owner\" | \"dispatcher\" | \"technician\" | \"viewer\";\n\n/**\n * What every endpoint with `auth: true` gets back from `getAuthData()`.\n * `orgID` and `role` come out of the membership row the session points at,\n * never out of the request, so handlers can treat them as the tenant and the\n * privilege level of the caller.\n */\nexport interface AuthData {\n  userID: string;\n  orgID: string;\n  role: MemberRole;\n  email: string;\n}\n\ninterface AuthParams {\n  authorization: Header<\"Authorization\">;\n}\n\ninterface SessionRow {\n  membership_id: string;\n  user_id: string;\n  org_id: string;\n  role: MemberRole;\n  email: string;\n  expires_at: Date;\n}\n\nconst sessionSecret = process.env.RIDGELINE_SESSION_SECRET ?? \"\";\n\nfunction sign(sessionID: string): string {\n  return createHmac(\"sha256\", sessionSecret).update(sessionID).digest(\"hex\");\n}\n\nfunction macMatches(sessionID: string, provided: string): boolean {\n  const expected = Buffer.from(sign(sessionID), \"utf8\");\n  const actual = Buffer.from(provided, \"utf8\");\n  if (expected.length !== actual.length) return false;\n  return timingSafeEqual(expected, actual);\n}\n\nexport const auth = authHandler<AuthParams, AuthData>(async (params) => {\n  const token = params.authorization.replace(/^Bearer\\s+/i, \"\").trim();\n  const [sessionID, mac] = token.split(\".\");\n  if (!sessionID || !mac) {\n    throw APIError.unauthenticated(\"malformed session token\");\n  }\n  if (!macMatches(sessionID, mac)) {\n    throw APIError.unauthenticated(\"bad session signature\");\n  }\n\n  const session = await ridgeline.queryRow<SessionRow>`\n    select s.membership_id,\n           m.user_id,\n           m.org_id,\n           m.role,\n           u.email,\n           s.expires_at\n    from sessions s\n    join memberships m on m.id = s.membership_id\n    join users u on u.id = m.user_id\n    where s.id = ${sessionID}\n      and s.revoked_at is null\n      and m.deactivated_at is null\n  `;\n  if (!session) {\n    throw APIError.unauthenticated(\"unknown session\");\n  }\n  if (session.expires_at.getTime() <= Date.now()) {\n    throw APIError.unauthenticated(\"session expired\");\n  }\n\n  return {\n    userID: session.user_id,\n    orgID: session.org_id,\n    role: session.role,\n    email: session.email,\n  };\n});\n\nexport const gateway = new Gateway({ authHandler: auth });\n",
+        "billing/encore.service.ts": "import { Service } from \"encore.dev/service\";\n\n// Invoicing, monthly statements and payout webhooks.\nexport default new Service(\"billing\");\n"
+      }
+    },
+    {
+      "id": "h7-encore-service-member-role-change",
+      "family": "encore-service",
+      "architecture": "Encore.ts 1.46 application (encore.dev) split into identity, dispatch, billing and documents services, using Encore's own SQLDatabase over Postgres as the only data layer, with the caller's identity coming from Encore's authHandler and read in endpoints via getAuthData().",
+      "language": "typescript",
+      "file": "encore-service/identity/member_role.ts",
+      "scanAs": "identity/member_role.ts",
+      "kind": "safe",
+      "route": "PUT /identity/members/:memberID/role",
+      "runtimeVerifiable": true,
+      "pairedWith": "h7-encore-service-member-profile-role",
+      "why": "Same client-supplied role value written to memberships.role, but the caller's own role from the session must be owner, the target must be in the caller's organization, the value must be in ASSIGNABLE_ROLES, and self-edits are refused, so the field cannot be used to promote yourself.",
+      "packageJson": {
+        "name": "ridgeline-ops",
+        "version": "1.14.0",
+        "private": true,
+        "type": "module",
+        "dependencies": {
+          "encore.dev": "^1.46.13"
+        },
+        "devDependencies": {
+          "@types/node": "^22.10.5",
+          "typescript": "^5.7.3",
+          "vitest": "^3.0.5"
+        }
+      },
+      "extraFiles": {
+        "identity/db.ts": "import { SQLDatabase } from \"encore.dev/storage/sqldb\";\n\n/**\n * One Postgres database for the whole app. `identity` owns the migrations\n * because organizations and memberships are the root of every other table's\n * foreign keys. The other services attach to it with\n * `SQLDatabase.named(\"ridgeline\")` rather than declaring their own.\n */\nexport const ridgeline = new SQLDatabase(\"ridgeline\", {\n  migrations: \"./migrations\",\n});\n",
+        "identity/auth.ts": "import { APIError, Gateway, Header } from \"encore.dev/api\";\nimport { authHandler } from \"encore.dev/auth\";\nimport { createHmac, timingSafeEqual } from \"node:crypto\";\nimport { ridgeline } from \"./db\";\n\nexport type MemberRole = \"owner\" | \"dispatcher\" | \"technician\" | \"viewer\";\n\n/**\n * What every endpoint with `auth: true` gets back from `getAuthData()`.\n * `orgID` and `role` come out of the membership row the session points at,\n * never out of the request, so handlers can treat them as the tenant and the\n * privilege level of the caller.\n */\nexport interface AuthData {\n  userID: string;\n  orgID: string;\n  role: MemberRole;\n  email: string;\n}\n\ninterface AuthParams {\n  authorization: Header<\"Authorization\">;\n}\n\ninterface SessionRow {\n  membership_id: string;\n  user_id: string;\n  org_id: string;\n  role: MemberRole;\n  email: string;\n  expires_at: Date;\n}\n\nconst sessionSecret = process.env.RIDGELINE_SESSION_SECRET ?? \"\";\n\nfunction sign(sessionID: string): string {\n  return createHmac(\"sha256\", sessionSecret).update(sessionID).digest(\"hex\");\n}\n\nfunction macMatches(sessionID: string, provided: string): boolean {\n  const expected = Buffer.from(sign(sessionID), \"utf8\");\n  const actual = Buffer.from(provided, \"utf8\");\n  if (expected.length !== actual.length) return false;\n  return timingSafeEqual(expected, actual);\n}\n\nexport const auth = authHandler<AuthParams, AuthData>(async (params) => {\n  const token = params.authorization.replace(/^Bearer\\s+/i, \"\").trim();\n  const [sessionID, mac] = token.split(\".\");\n  if (!sessionID || !mac) {\n    throw APIError.unauthenticated(\"malformed session token\");\n  }\n  if (!macMatches(sessionID, mac)) {\n    throw APIError.unauthenticated(\"bad session signature\");\n  }\n\n  const session = await ridgeline.queryRow<SessionRow>`\n    select s.membership_id,\n           m.user_id,\n           m.org_id,\n           m.role,\n           u.email,\n           s.expires_at\n    from sessions s\n    join memberships m on m.id = s.membership_id\n    join users u on u.id = m.user_id\n    where s.id = ${sessionID}\n      and s.revoked_at is null\n      and m.deactivated_at is null\n  `;\n  if (!session) {\n    throw APIError.unauthenticated(\"unknown session\");\n  }\n  if (session.expires_at.getTime() <= Date.now()) {\n    throw APIError.unauthenticated(\"session expired\");\n  }\n\n  return {\n    userID: session.user_id,\n    orgID: session.org_id,\n    role: session.role,\n    email: session.email,\n  };\n});\n\nexport const gateway = new Gateway({ authHandler: auth });\n",
+        "identity/encore.service.ts": "import { Service } from \"encore.dev/service\";\n\n// Owns organizations, users, memberships and sessions. Every other service\n// hangs off the ids this one hands out.\nexport default new Service(\"identity\");\n"
+      }
+    }
+  ]
+}

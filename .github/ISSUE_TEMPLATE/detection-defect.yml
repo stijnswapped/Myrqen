@@ -1,0 +1,68 @@
+name: Detection defect — something missed, or something wrong
+description: Myrqen did not report a real vulnerability, or reported one that is not there.
+title: "detection: "
+labels: ["detection"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This is the most useful report this project can receive, and a reproducible
+        one becomes a permanent corpus case.
+
+        Two things worth knowing first, so you can tell whether you have found a
+        defect or a documented limit:
+
+        - **Recall is below the 0.90 gate** (current figures: https://myrqen.cc/benchmarks).
+          A miss is expected. It is still worth reporting — the gaps are how the gap closes.
+        - **Only JavaScript, TypeScript and Python (FastAPI and Flask routes) are
+          parsed**, and JavaScript data flow crosses a module boundary only where a
+          call resolves, up to four calls deep. A miss that travels through an event
+          emitter, a queue or dynamic dispatch, or that is in Java, Ruby or Go, or in
+          another Python framework, is a stated limit rather than a defect.
+          Details: https://myrqen.cc/benchmarks
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Which is it?
+      options:
+        - Missed — a real vulnerability that was not reported
+        - False positive — a finding against code that is actually correct
+        - Wrong severity, or wrong verification state
+        - Reported in the wrong place — wrong file, line, or route
+    validations:
+      required: true
+  - type: textarea
+    id: code
+    attributes:
+      label: The smallest code that shows it
+      description: >
+        A self-contained snippet is worth more than a repository link. If it is a
+        false positive, include the guard you believe should have silenced it. Do
+        not paste anything proprietary or any real secret.
+      render: javascript
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What should have happened, and what did
+      placeholder: |
+        Expected: a `broken_object_level_authorization` finding at line 12.
+        Got: nothing.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `myrqen --version`.
+      placeholder: "0.3.0"
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Platform, Node version, and framework
+      placeholder: "macOS 15, Node 22.11.0, Express 5"
+    validations:
+      required: true

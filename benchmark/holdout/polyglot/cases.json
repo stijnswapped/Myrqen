@@ -1,0 +1,89 @@
+{
+  "family": "polyglot",
+  "architecture": "The service tier that predates the Node rewrite: Rails controllers behind Devise, Laravel controllers behind Sanctum, and Go net/http handlers over database/sql, all fronted by the same gateway",
+  "cases": [
+    {
+      "id": "holdout-rails-statement-show",
+      "family": "polyglot",
+      "architecture": "Rails 7 controller with before_action authentication and ActiveRecord associations",
+      "language": "ruby",
+      "file": "polyglot/statements_controller.rb",
+      "kind": "vulnerable",
+      "category": "broken_object_level_authorization",
+      "severityBand": ["high", "critical"],
+      "route": "GET /billing/statements/:id",
+      "line": 19,
+      "lineRange": [19, 23],
+      "runtimeVerifiable": true,
+      "why": "index and export both read through current_user.organization.statements, so the association that scopes a query is right there in the file. show calls Statement.find on the raw path parameter, returning any organisation's statement and its line items to any signed-in user."
+    },
+    {
+      "id": "holdout-rails-remittance-show",
+      "family": "polyglot",
+      "architecture": "Rails 7 controller with before_action authentication and ActiveRecord associations",
+      "language": "ruby",
+      "file": "polyglot/remittances_controller.rb",
+      "kind": "safe",
+      "pairedWith": "holdout-rails-statement-show",
+      "runtimeVerifiable": true,
+      "why": "The same controller shape, the same find on a path parameter and the same serialisation, but the find runs on the current user's organisation association, so an id from another organisation raises RecordNotFound."
+    },
+    {
+      "id": "holdout-laravel-invoice-store",
+      "family": "polyglot",
+      "architecture": "Laravel 10 controller behind the auth:sanctum middleware with Eloquent models",
+      "language": "php",
+      "file": "polyglot/InvoiceController.php",
+      "kind": "vulnerable",
+      "category": "mass_assignment",
+      "severityBand": ["high", "medium"],
+      "route": "POST /invoices",
+      "line": 29,
+      "lineRange": [27, 31],
+      "runtimeVerifiable": true,
+      "extraFiles": {
+        "app/Models/Invoice.php": "<?php\n\nnamespace App\\Models;\n\nuse Illuminate\\Database\\Eloquent\\Model;\n\nclass Invoice extends Model\n{\n    protected $guarded = [];\n\n    public function lines()\n    {\n        return $this->hasMany(InvoiceLine::class);\n    }\n}\n"
+      },
+      "why": "update in the same controller validates an explicit two-field rule set before filling the model, so the habit exists. store hands the entire request to Invoice::create on a model whose $guarded is empty, so the caller chooses tenant_id, total_cents and paid_at — a cross-tenant write and a free invoice in one request."
+    },
+    {
+      "id": "holdout-laravel-credit-note-store",
+      "family": "polyglot",
+      "architecture": "Laravel 10 controller behind the auth:sanctum middleware with Eloquent models",
+      "language": "php",
+      "file": "polyglot/CreditNoteController.php",
+      "kind": "safe",
+      "pairedWith": "holdout-laravel-invoice-store",
+      "runtimeVerifiable": true,
+      "extraFiles": {
+        "app/Models/CreditNote.php": "<?php\n\nnamespace App\\Models;\n\nuse Illuminate\\Database\\Eloquent\\Model;\n\nclass CreditNote extends Model\n{\n    protected $fillable = ['tenant_id', 'reference', 'notes', 'total_cents', 'issued_at'];\n\n    public function lines()\n    {\n        return $this->hasMany(CreditNoteLine::class);\n    }\n}\n"
+      },
+      "why": "store still calls create with an array assembled from the request, but the array is the validated subset and the tenant id and issue date are overwritten from the authenticated user and the clock afterwards."
+    },
+    {
+      "id": "holdout-go-document-filter",
+      "family": "polyglot",
+      "architecture": "Go net/http handler over database/sql with tenant identity from the request context",
+      "language": "go",
+      "file": "polyglot/documents.go",
+      "kind": "vulnerable",
+      "category": "sql_injection",
+      "severityBand": ["critical", "high"],
+      "line": 43,
+      "lineRange": [42, 47],
+      "runtimeVerifiable": true,
+      "why": "The tenant scope is a bound parameter and the limit is parsed and range-checked before it is formatted, which is what makes the third value easy to read past: the kind query parameter is formatted into a quoted SQL literal, so a value containing a quote closes it and appends chosen SQL to the statement QueryContext executes."
+    },
+    {
+      "id": "holdout-go-attachment-filter",
+      "family": "polyglot",
+      "architecture": "Go net/http handler over database/sql with tenant identity from the request context",
+      "language": "go",
+      "file": "polyglot/attachments.go",
+      "kind": "safe",
+      "pairedWith": "holdout-go-document-filter",
+      "runtimeVerifiable": true,
+      "why": "The query is still built with fmt.Sprintf and still ends with an interpolated limit, but the only interpolated value is the integer the handler parsed and bounded itself; the kind filter is bound as $2."
+    }
+  ]
+}

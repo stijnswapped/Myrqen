@@ -1,7 +1,7 @@
 import ts from "typescript";
 import { calleeTail, collect, enclosingFunction, functionName, literalTextOf, walk } from "../ast/helpers.js";
 import { routeFromFilePath } from "../ast/routes.js";
-import { routeHintFor, type RuleContext } from "./context.js";
+import { formatRoute, routeHintFor, type RuleContext } from "./context.js";
 
 /* ------------------------------------------------------------------ *
  * Route attribution
@@ -64,10 +64,10 @@ export function attributedRoute(context: RuleContext, node: ts.Node): string | u
   // Dispatch entries first: an `if` chain testing the method as well as the path
   // knows the verb, where route discovery records the same branch as `ANY`.
   for (const entry of entries) {
-    if (entry.node && contains(entry.node, node)) return format(entry.method, entry.path);
+    if (entry.node && contains(entry.node, node)) return formatRoute(entry.method, entry.path);
   }
   for (const hint of context.routes) {
-    if (hint.node && contains(hint.node, node)) return format(hint.method, hint.path);
+    if (hint.node && contains(hint.node, node)) return formatRoute(hint.method, hint.path);
   }
 
   const handler = enclosingNamed(node);
@@ -75,16 +75,16 @@ export function attributedRoute(context: RuleContext, node: ts.Node): string | u
   if (name) {
     for (const entry of entries) {
       if (!entry.handlers.has(name)) continue;
-      return format(entry.method, nameParameters(entry.path, handler));
+      return formatRoute(entry.method, nameParameters(entry.path, handler));
     }
     for (const hint of context.routes) {
       if (!hint.node || !calledByName(hint.node).has(name)) continue;
-      return format(hint.method, nameParameters(hint.path, handler));
+      return formatRoute(hint.method, nameParameters(hint.path, handler));
     }
   }
 
   const nearest = routeHintFor(context, node);
-  if (nearest) return format(nearest.method, nearest.path);
+  if (nearest) return formatRoute(nearest.method, nearest.path);
 
   // `app/listings/[slug]/page.tsx` is one endpoint: a GET of its own path. The
   // component that implements it is a default export rather than a named `GET`,
@@ -97,21 +97,6 @@ export function attributedRoute(context: RuleContext, node: ts.Node): string | u
 export function routeOf(context: RuleContext, node: ts.Node): { route?: string } {
   const route = attributedRoute(context, node);
   return route ? { route } : {};
-}
-
-/**
- * How a reader addresses this endpoint.
- *
- * A tRPC procedure is addressed by its dotted path and has no HTTP method, so
- * prefixing one with a verb names an endpoint that does not exist. A `/graphql`
- * mount is registered with `app.use` — no method — but every operation reaches
- * it by POST, and telling a reader to probe "/graphql" without the verb is
- * telling them half of what they need.
- */
-function format(method: string, path: string): string {
-  if (!path.startsWith("/")) return path;
-  if (method === "ANY") return /\/graphql$/i.test(path) ? `POST ${path}` : path;
-  return `${method} ${path}`;
 }
 
 function contains(container: ts.Node, node: ts.Node): boolean {

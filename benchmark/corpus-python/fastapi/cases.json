@@ -1,0 +1,456 @@
+{
+  "family": "fastapi",
+  "architecture": "FastAPI APIRouter modules with Depends() session and current-user injection, Pydantic v2 request models, SQLAlchemy 2.0 or psycopg for persistence, httpx for outbound calls and Starlette response classes",
+  "cases": [
+    {
+      "id": "py-dev-fastapi-invoice-search-percent",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter modules with Depends() session and current-user injection, Pydantic v2 request models, SQLAlchemy 2.0 or psycopg for persistence, httpx for outbound calls and Starlette response classes",
+      "language": "python",
+      "file": "fastapi/invoice_search.py",
+      "kind": "vulnerable",
+      "category": "sql_injection",
+      "cwe": "CWE-89",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "GET /invoices/search",
+      "line": 25,
+      "lineRange": [
+        21,
+        25
+      ],
+      "runtimeVerifiable": true,
+      "why": "The customer name from the query string is %-formatted into the ILIKE literal before cursor.execute runs the string, so a quote in the name rewrites the WHERE clause."
+    },
+    {
+      "id": "py-dev-fastapi-invoice-search-bound",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter modules with Depends() session and current-user injection, Pydantic v2 request models, SQLAlchemy 2.0 or psycopg for persistence, httpx for outbound calls and Starlette response classes",
+      "language": "python",
+      "file": "fastapi/invoice_lookup.py",
+      "kind": "safe",
+      "pairedWith": "py-dev-fastapi-invoice-search-percent",
+      "why": "The customer name is passed as a bound parameter in the params tuple; only placeholders appear in the statement text."
+    },
+    {
+      "id": "py-dev-fastapi-ticket-filter-helper",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter modules with Depends() session and current-user injection, Pydantic v2 request models, SQLAlchemy 2.0 or psycopg for persistence, httpx for outbound calls and Starlette response classes",
+      "language": "python",
+      "file": "fastapi/ticket_queue.py",
+      "kind": "vulnerable",
+      "category": "sql_injection",
+      "cwe": "CWE-89",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "GET /support/tickets",
+      "line": 26,
+      "lineRange": [
+        16,
+        26
+      ],
+      "runtimeVerifiable": true,
+      "why": "A module helper formats the priority query parameter into a SQL fragment, and the handler concatenates that fragment into the text() statement it executes."
+    },
+    {
+      "id": "py-dev-fastapi-ticket-filter-bound",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter modules with Depends() session and current-user injection, Pydantic v2 request models, SQLAlchemy 2.0 or psycopg for persistence, httpx for outbound calls and Starlette response classes",
+      "language": "python",
+      "file": "fastapi/ticket_board.py",
+      "kind": "safe",
+      "pairedWith": "py-dev-fastapi-ticket-filter-helper",
+      "why": "The helper returns a clause with a named placeholder and the priority value travels in the params dict."
+    },
+    {
+      "id": "py-dev-fastapi-backup-shell",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter modules with Depends() session and current-user injection, Pydantic v2 request models, SQLAlchemy 2.0 or psycopg for persistence, httpx for outbound calls and Starlette response classes",
+      "language": "python",
+      "file": "fastapi/backups.py",
+      "kind": "vulnerable",
+      "category": "command_injection",
+      "cwe": "CWE-78",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "POST /admin/backups",
+      "line": 26,
+      "lineRange": [
+        22,
+        26
+      ],
+      "runtimeVerifiable": true,
+      "why": "The database name from the request body is interpolated into a pg_dump command line that Popen runs through a shell."
+    },
+    {
+      "id": "py-dev-fastapi-backup-argv",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter modules with Depends() session and current-user injection, Pydantic v2 request models, SQLAlchemy 2.0 or psycopg for persistence, httpx for outbound calls and Starlette response classes",
+      "language": "python",
+      "file": "fastapi/snapshots.py",
+      "kind": "safe",
+      "pairedWith": "py-dev-fastapi-backup-shell",
+      "why": "The database must be one of a fixed set of names, and pg_dump is started with an argument list and no shell."
+    },
+    {
+      "id": "py-dev-fastapi-invoice-pdf-join",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter modules with Depends() session and current-user injection, Pydantic v2 request models, SQLAlchemy 2.0 or psycopg for persistence, httpx for outbound calls and Starlette response classes",
+      "language": "python",
+      "file": "fastapi/invoice_documents.py",
+      "kind": "vulnerable",
+      "category": "path_traversal",
+      "cwe": "CWE-22",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "GET /invoices/:invoice_number/pdf",
+      "line": 19,
+      "lineRange": [
+        16,
+        19
+      ],
+      "runtimeVerifiable": true,
+      "why": "The invoice number path parameter is a free string joined onto the PDF directory and streamed with no containment check, so encoded ../ segments read other .pdf files on the host."
+    },
+    {
+      "id": "py-dev-fastapi-invoice-pdf-contained",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter modules with Depends() session and current-user injection, Pydantic v2 request models, SQLAlchemy 2.0 or psycopg for persistence, httpx for outbound calls and Starlette response classes",
+      "language": "python",
+      "file": "fastapi/invoice_archive.py",
+      "kind": "safe",
+      "pairedWith": "py-dev-fastapi-invoice-pdf-join",
+      "why": "The joined path is resolved and refused unless it is still inside the account's resolved PDF directory."
+    },
+    {
+      "id": "py-dev-fastapi-webhook-test-any-url",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter modules with Depends() session and current-user injection, Pydantic v2 request models, SQLAlchemy 2.0 or psycopg for persistence, httpx for outbound calls and Starlette response classes",
+      "language": "python",
+      "file": "fastapi/webhook_settings.py",
+      "kind": "vulnerable",
+      "category": "server_side_request_forgery",
+      "cwe": "CWE-918",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "POST /integrations/webhooks/test",
+      "line": 21,
+      "lineRange": [
+        21,
+        21
+      ],
+      "runtimeVerifiable": true,
+      "why": "The endpoint posts a test event to whatever callback URL the caller supplies, from inside the network, with no host check."
+    },
+    {
+      "id": "py-dev-fastapi-webhook-test-allowlisted",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter modules with Depends() session and current-user injection, Pydantic v2 request models, SQLAlchemy 2.0 or psycopg for persistence, httpx for outbound calls and Starlette response classes",
+      "language": "python",
+      "file": "fastapi/webhook_checks.py",
+      "kind": "safe",
+      "pairedWith": "py-dev-fastapi-webhook-test-any-url",
+      "why": "The callback host must be one of the partner hosts in a fixed allow-list before the request is sent."
+    },
+    {
+      "id": "py-dev-fastapi-email-template-from-string",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter modules with Depends() session and current-user injection, Pydantic v2 request models, SQLAlchemy 2.0 or psycopg for persistence, httpx for outbound calls and Starlette response classes",
+      "language": "python",
+      "file": "fastapi/email_preview.py",
+      "kind": "vulnerable",
+      "category": "template_injection",
+      "cwe": "CWE-1336",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "POST /campaigns/preview",
+      "line": 21,
+      "lineRange": [
+        21,
+        21
+      ],
+      "runtimeVerifiable": true,
+      "why": "The campaign body submitted by the caller is compiled as a Jinja2 template by a regular Environment, so template expressions in it run on the server."
+    },
+    {
+      "id": "py-dev-fastapi-email-template-fixed",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter modules with Depends() session and current-user injection, Pydantic v2 request models, SQLAlchemy 2.0 or psycopg for persistence, httpx for outbound calls and Starlette response classes",
+      "language": "python",
+      "file": "fastapi/email_render.py",
+      "kind": "safe",
+      "pairedWith": "py-dev-fastapi-email-template-from-string",
+      "why": "The template is a fixed file and the caller's text is passed as an autoescaped context variable."
+    },
+    {
+      "id": "py-dev-fastapi-session-restore-pickle",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter modules with Depends() session and current-user injection, Pydantic v2 request models, SQLAlchemy 2.0 or psycopg for persistence, httpx for outbound calls and Starlette response classes",
+      "language": "python",
+      "file": "fastapi/session_state.py",
+      "kind": "vulnerable",
+      "category": "unsafe_deserialization",
+      "cwe": "CWE-502",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "POST /workspace/restore",
+      "line": 13,
+      "lineRange": [
+        13,
+        13
+      ],
+      "runtimeVerifiable": true,
+      "why": "A base64 header value supplied by the client is unpickled, which constructs arbitrary objects and can run code."
+    },
+    {
+      "id": "py-dev-fastapi-session-restore-json",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter modules with Depends() session and current-user injection, Pydantic v2 request models, SQLAlchemy 2.0 or psycopg for persistence, httpx for outbound calls and Starlette response classes",
+      "language": "python",
+      "file": "fastapi/layout_state.py",
+      "kind": "safe",
+      "pairedWith": "py-dev-fastapi-session-restore-pickle",
+      "why": "The same header is decoded as JSON, which builds only plain data."
+    },
+    {
+      "id": "py-dev-fastapi-settings-webhook-secret",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter modules with Depends() session and current-user injection, Pydantic v2 request models, SQLAlchemy 2.0 or psycopg for persistence, httpx for outbound calls and Starlette response classes",
+      "language": "python",
+      "file": "fastapi/settings.py",
+      "kind": "vulnerable",
+      "category": "hardcoded_secret",
+      "cwe": "CWE-798",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "line": 10,
+      "lineRange": [
+        10,
+        10
+      ],
+      "runtimeVerifiable": false,
+      "why": "The webhook signing secret has a committed high-entropy default, so it is live wherever the environment does not override it."
+    },
+    {
+      "id": "py-dev-fastapi-settings-webhook-secret-required",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter modules with Depends() session and current-user injection, Pydantic v2 request models, SQLAlchemy 2.0 or psycopg for persistence, httpx for outbound calls and Starlette response classes",
+      "language": "python",
+      "file": "fastapi/configuration.py",
+      "kind": "safe",
+      "pairedWith": "py-dev-fastapi-settings-webhook-secret",
+      "why": "The signing secret has no default, so the application refuses to start until the environment supplies it."
+    },
+    {
+      "id": "py-dev-fastapi-main-debug",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter modules with Depends() session and current-user injection, Pydantic v2 request models, SQLAlchemy 2.0 or psycopg for persistence, httpx for outbound calls and Starlette response classes",
+      "language": "python",
+      "file": "fastapi/main.py",
+      "kind": "vulnerable",
+      "category": "debug_endpoint_exposure",
+      "cwe": "CWE-489",
+      "severityBand": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "line": 8,
+      "lineRange": [
+        8,
+        8
+      ],
+      "runtimeVerifiable": true,
+      "why": "The production application object is constructed with debug=True, so unhandled errors return full tracebacks to callers."
+    },
+    {
+      "id": "py-dev-fastapi-main-debug-from-settings",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter modules with Depends() session and current-user injection, Pydantic v2 request models, SQLAlchemy 2.0 or psycopg for persistence, httpx for outbound calls and Starlette response classes",
+      "language": "python",
+      "file": "fastapi/asgi.py",
+      "kind": "safe",
+      "pairedWith": "py-dev-fastapi-main-debug",
+      "why": "Debug is read from settings whose default is False."
+    },
+    {
+      "id": "py-dev-fastapi-member-removal-open",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter modules with Depends() session and current-user injection, Pydantic v2 request models, SQLAlchemy 2.0 or psycopg for persistence, httpx for outbound calls and Starlette response classes",
+      "language": "python",
+      "file": "fastapi/project_members.py",
+      "kind": "vulnerable",
+      "category": "missing_authentication",
+      "cwe": "CWE-306",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "route": "DELETE /projects/:project_id/members/:member_id",
+      "line": 32,
+      "lineRange": [
+        32,
+        33
+      ],
+      "runtimeVerifiable": true,
+      "why": "Every other route in the module requires get_current_user; the member-removal route has no dependency at all and deletes rows."
+    },
+    {
+      "id": "py-dev-fastapi-member-removal-guarded",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter modules with Depends() session and current-user injection, Pydantic v2 request models, SQLAlchemy 2.0 or psycopg for persistence, httpx for outbound calls and Starlette response classes",
+      "language": "python",
+      "file": "fastapi/project_access.py",
+      "kind": "safe",
+      "pairedWith": "py-dev-fastapi-member-removal-open",
+      "why": "The removal route takes the same current-user dependency and checks project ownership like its siblings."
+    },
+    {
+      "id": "py-dev-fastapi-document-unscoped",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter modules with Depends() session and current-user injection, Pydantic v2 request models, SQLAlchemy 2.0 or psycopg for persistence, httpx for outbound calls and Starlette response classes",
+      "language": "python",
+      "file": "fastapi/documents.py",
+      "kind": "vulnerable",
+      "category": "broken_object_level_authorization",
+      "cwe": "CWE-639",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "GET /documents/:document_id",
+      "line": 23,
+      "lineRange": [
+        23,
+        23
+      ],
+      "runtimeVerifiable": true,
+      "why": "The document is selected by the path id alone; the authenticated user is injected but never used to scope or check the record."
+    },
+    {
+      "id": "py-dev-fastapi-document-owner-scoped",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter modules with Depends() session and current-user injection, Pydantic v2 request models, SQLAlchemy 2.0 or psycopg for persistence, httpx for outbound calls and Starlette response classes",
+      "language": "python",
+      "file": "fastapi/vault.py",
+      "kind": "safe",
+      "pairedWith": "py-dev-fastapi-document-unscoped",
+      "why": "The select includes the owner column bound to the authenticated user's id, so another user's document is simply not found."
+    },
+    {
+      "id": "py-dev-fastapi-refresh-cookie-flags",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter modules with Depends() session and current-user injection, Pydantic v2 request models, SQLAlchemy 2.0 or psycopg for persistence, httpx for outbound calls and Starlette response classes",
+      "language": "python",
+      "file": "fastapi/auth_tokens.py",
+      "kind": "vulnerable",
+      "category": "insecure_cookie_configuration",
+      "cwe": "CWE-614",
+      "severityBand": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "route": "POST /auth/token",
+      "line": 17,
+      "lineRange": [
+        17,
+        17
+      ],
+      "runtimeVerifiable": true,
+      "why": "The refresh token cookie is HttpOnly but not Secure, so it is sent over plain HTTP."
+    },
+    {
+      "id": "py-dev-fastapi-refresh-cookie-hardened",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter modules with Depends() session and current-user injection, Pydantic v2 request models, SQLAlchemy 2.0 or psycopg for persistence, httpx for outbound calls and Starlette response classes",
+      "language": "python",
+      "file": "fastapi/auth_sessions.py",
+      "kind": "safe",
+      "pairedWith": "py-dev-fastapi-refresh-cookie-flags",
+      "why": "The refresh cookie is HttpOnly, Secure and SameSite=strict."
+    },
+    {
+      "id": "py-dev-fastapi-oauth-return-to",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter modules with Depends() session and current-user injection, Pydantic v2 request models, SQLAlchemy 2.0 or psycopg for persistence, httpx for outbound calls and Starlette response classes",
+      "language": "python",
+      "file": "fastapi/oauth_return.py",
+      "kind": "vulnerable",
+      "category": "open_redirect",
+      "cwe": "CWE-601",
+      "severityBand": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "route": "GET /oauth/complete",
+      "line": 14,
+      "lineRange": [
+        14,
+        14
+      ],
+      "runtimeVerifiable": true,
+      "why": "After sign-in the user is redirected to the return_to query parameter as given, which can name any external site."
+    },
+    {
+      "id": "py-dev-fastapi-oauth-return-local",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter modules with Depends() session and current-user injection, Pydantic v2 request models, SQLAlchemy 2.0 or psycopg for persistence, httpx for outbound calls and Starlette response classes",
+      "language": "python",
+      "file": "fastapi/oauth_finish.py",
+      "kind": "safe",
+      "pairedWith": "py-dev-fastapi-oauth-return-to",
+      "why": "The return target is used only when it is a local path with no network location and no leading double slash."
+    },
+    {
+      "id": "py-dev-fastapi-search-echo-html",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter modules with Depends() session and current-user injection, Pydantic v2 request models, SQLAlchemy 2.0 or psycopg for persistence, httpx for outbound calls and Starlette response classes",
+      "language": "python",
+      "file": "fastapi/help_search.py",
+      "kind": "vulnerable",
+      "category": "reflected_cross_site_scripting",
+      "cwe": "CWE-79",
+      "severityBand": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "route": "GET /help/search",
+      "line": 16,
+      "lineRange": [
+        14,
+        16
+      ],
+      "runtimeVerifiable": true,
+      "why": "The search term is placed into an HTML response built by string formatting, with no escaping."
+    },
+    {
+      "id": "py-dev-fastapi-search-echo-escaped",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter modules with Depends() session and current-user injection, Pydantic v2 request models, SQLAlchemy 2.0 or psycopg for persistence, httpx for outbound calls and Starlette response classes",
+      "language": "python",
+      "file": "fastapi/help_index.py",
+      "kind": "safe",
+      "pairedWith": "py-dev-fastapi-search-echo-html",
+      "why": "The search term is passed through html.escape before it is placed in the markup."
+    }
+  ]
+}

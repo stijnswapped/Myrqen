@@ -1,0 +1,25 @@
+{
+  "name": "verdant-storefront",
+  "version": "0.9.3",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "qwik build",
+    "dev": "vite --mode ssr",
+    "preview": "qwik build preview && vite preview --open"
+  },
+  "dependencies": {
+    "@builder.io/qwik": "1.12.0",
+    "@builder.io/qwik-city": "1.12.0",
+    "pg": "8.12.0",
+    "sanitize-html": "2.13.1",
+    "zod": "3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "20.14.10",
+    "@types/pg": "8.11.6",
+    "@types/sanitize-html": "2.13.0",
+    "typescript": "5.5.4",
+    "vite": "5.3.5"
+  }
+}

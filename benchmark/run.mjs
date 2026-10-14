@@ -24,16 +24,37 @@
 import { spawn } from "node:child_process";
 import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { validate } from "./validator.mjs";
+import { discover, validate } from "./validator.mjs";
 import { UNSAFE_PROBES } from "./unsafe-probes.mjs";
 
 const run = promisify(execFile);
+
+/**
+ * A throwaway config directory for the whole benchmark.
+ *
+ * Without this the benchmark reads and writes the *operator's* real Myrqen config — the CLI
+ * defaults `MYRQEN_CONFIG_DIR` to the user's config root, and every `cli()` call here
+ * inherited it. So a benchmark run mutated the state of the installed product on the machine
+ * running it, and a stale entry from a previous run could change what the next run measured.
+ *
+ * Created once per process rather than per fixture, because the session state the CLI keeps
+ * between `scan` and `finding submit` has to survive across calls within one fixture.
+ */
+const CONFIG_DIR = await fs.mkdtemp(path.join(os.tmpdir(), "myrqen-benchmark-cfg-"));
 const ROOT = path.resolve(import.meta.dirname, "..");
 const CLI = path.join(ROOT, "apps", "cli", "dist", "myrqen.mjs");
 
 const argv = process.argv.slice(2);
+/*
+ * Removes the agent's discovery stage, leaving only the settling of static candidates.
+ * It exists so `tests/harness-e2e.test.mjs` can prove the static and whole-product
+ * figures move independently — if they do not, the harness is measuring the static
+ * pass twice and calling one of them the product.
+ */
+const SKIP_DISCOVERY = argv.includes("--no-discovery");
 function flag(name, fallback) {
   const index = argv.indexOf(`--${name}`);
   if (index === -1) return fallback;
@@ -43,8 +64,33 @@ function flag(name, fallback) {
 
 const FIXTURES = [
   { id: "vuln-shop", port: 4010 },
-  { id: "safe-app", port: 4020 }
+  { id: "safe-app", port: 4020 },
+  /*
+   * Python fixtures (ADR 020). They need a Python interpreter with the packages in
+   * each fixture's requirements.txt; Myrqen itself does not. Where those are
+   * missing the fixture is skipped and the run says so — a skipped fixture is
+   * not compared with the baseline, so it can neither pass nor fail a gate.
+   */
+  {
+    id: "vuln-fastapi",
+    port: 5030,
+    python: { args: ["-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "{port}"], imports: ["fastapi", "uvicorn", "jinja2"] }
+  },
+  { id: "vuln-flask", port: 5040, python: { args: ["run.py"], imports: ["flask"] } }
 ];
+
+const PYTHON = process.env.MYRQEN_BENCHMARK_PYTHON ?? "python3";
+
+/** Why a Python fixture cannot run here, or null when it can. */
+async function pythonUnavailable(fixture) {
+  if (!fixture.python) return null;
+  try {
+    await run(PYTHON, ["-c", `import ${fixture.python.imports.join(", ")}`], { timeout: 20_000 });
+    return null;
+  } catch {
+    return `${PYTHON} cannot import ${fixture.python.imports.join(", ")} (pip install -r fixtures/${fixture.id}/requirements.txt)`;
+  }
+}
 
 /**
  * Release gates, from docs/12-release. These are computed from real ground truth
@@ -74,9 +120,13 @@ async function waitForHealth(baseUrl, timeoutMs = 10_000) {
   return false;
 }
 
-function startFixture(fixtureRoot, port) {
-  const child = spawn(process.execPath, [path.join(fixtureRoot, "src", "server.js")], {
-    env: { ...process.env, PORT: String(port) },
+function startFixture(fixtureRoot, port, fixture = {}) {
+  const [command, args] = fixture.python
+    ? [PYTHON, fixture.python.args.map((arg) => arg.replace("{port}", String(port)))]
+    : [process.execPath, [path.join(fixtureRoot, "src", "server.js")]];
+  const child = spawn(command, args, {
+    cwd: fixtureRoot,
+    env: { ...process.env, PORT: String(port), PYTHONDONTWRITEBYTECODE: "1" },
     stdio: ["ignore", "pipe", "pipe"]
   });
   child.stdout.on("data", () => undefined);
@@ -87,8 +137,18 @@ function startFixture(fixtureRoot, port) {
 async function cli(args, options = {}) {
   const { stdout } = await run(process.execPath, [CLI, ...args], {
     cwd: options.cwd ?? ROOT,
-    env: { ...process.env, MYRQEN_NON_INTERACTIVE: "1", MYRQEN_NO_COLOR: "1", ...(options.env ?? {}) },
-    ...(options.input !== undefined ? { input: options.input } : {}),
+    env: {
+      ...process.env,
+      MYRQEN_CONFIG_DIR: CONFIG_DIR,
+      MYRQEN_NON_INTERACTIVE: "1",
+      MYRQEN_NO_COLOR: "1",
+      ...(options.env ?? {})
+    },
+    /*
+     * No stdin plumbing here on purpose. Async `execFile` has no `input` option — that
+     * is `execFileSync` — so passing one silently does nothing and leaves the child
+     * waiting on a stdin that never closes. Anything needing stdin uses `cliSubmit`.
+     */
     maxBuffer: 32 * 1024 * 1024
   });
   return stdout;
@@ -157,7 +217,7 @@ async function scoreFixture(fixture) {
   const groundTruth = JSON.parse(await fs.readFile(path.join(fixtureRoot, "ground-truth.json"), "utf8"));
   const baseUrl = `http://127.0.0.1:${fixture.port}`;
 
-  const server = startFixture(fixtureRoot, fixture.port);
+  const server = startFixture(fixtureRoot, fixture.port, fixture);
   const healthy = await waitForHealth(baseUrl);
   if (!healthy) {
     server.kill("SIGTERM");
@@ -222,27 +282,31 @@ async function scoreFixture(fixture) {
       await cli(["phase", "start", phase], { cwd: fixtureRoot });
     }
 
+    // One gate for both stages: a discovery probe is checked exactly as a settling
+    // probe is, so nothing reaches the application that the policy would refuse.
+    const actionCheck = async (plan) => {
+      const decision = await cliJsonTolerant(
+        [
+          "action",
+          "check",
+          "--intent",
+          plan.intent,
+          ...(plan.description ? ["--description", plan.description] : []),
+          ...(plan.method ? ["--method", plan.method] : []),
+          ...(plan.target ? ["--target", plan.target] : [])
+        ],
+        { cwd: fixtureRoot },
+        { allowed: false }
+      );
+      return Boolean(decision.allowed);
+    };
+
     const beforeValidation = await readSession(fixtureRoot);
     const validation = await validate({
       baseUrl,
       findings: beforeValidation.findings,
       identities: groundTruth.identities,
-      check: async (plan) => {
-        const decision = await cliJsonTolerant(
-          [
-            "action",
-            "check",
-            "--intent",
-            plan.intent,
-            ...(plan.description ? ["--description", plan.description] : []),
-            ...(plan.method ? ["--method", plan.method] : []),
-            ...(plan.target ? ["--target", plan.target] : [])
-          ],
-          { cwd: fixtureRoot },
-          { allowed: false }
-        );
-        return Boolean(decision.allowed);
-      }
+      check: actionCheck
     });
 
     for (const outcome of validation.outcomes) {
@@ -299,6 +363,54 @@ async function scoreFixture(fixture) {
       await cli(["phase", "complete", phase], { cwd: fixtureRoot });
     }
 
+    /* ---------- the agent's other part: find what the static pass did not ---------- */
+
+    /*
+     * This is the half the harness could not measure. Until the fixture carried
+     * defects the static pass cannot see, `validate` only ever settled candidates the
+     * static pass had already produced — so recall shared its numerator and its
+     * denominator with `staticPass.candidatesRecorded` and could not move.
+     *
+     * Skippable, because the harness test needs a run with the agent's contribution
+     * removed in order to prove that these two numbers are independent.
+     */
+    const discovery = SKIP_DISCOVERY
+      ? { found: [], failures: ["discovery skipped by --no-discovery"], identitiesUsed: [] }
+      : await discover({ baseUrl, identities: groundTruth.identities, check: actionCheck });
+
+    for (const found of discovery.found) {
+      const submission = {
+        title: found.title,
+        category: found.category,
+        severity: found.severity,
+        verification: "verified",
+        summary: found.summary,
+        impact: found.summary,
+        remediation: found.remediation,
+        verificationPlan: found.verificationPlan,
+        affected: { component: found.route ?? found.file, file: found.file, route: found.route },
+        evidence: [{ kind: found.kind, description: found.evidence }],
+        reproduction: found.evidence
+      };
+      // `cliSubmit` rather than `cli`: async `execFile` has no `input` option, so a
+      // submission piped that way leaves the child waiting on stdin for ever.
+      // A refusal from intake is information, not a crash.
+      try {
+        // `cliSubmit` resolves on close whatever the exit code, so a refusal looks
+        // like a success unless `accepted` is read. Recording the reason is the whole
+        // value of this stage: a discovery the intake rejects is a harness defect, not
+        // a detection result.
+        const outcome = await cliSubmit(submission, fixtureRoot);
+        if (outcome?.accepted === false) {
+          discovery.failures.push(
+            `intake refused ${found.category}: ${(outcome.problems ?? outcome.errors ?? [outcome.reason ?? "no reason given"]).join?.("; ") ?? JSON.stringify(outcome)}`
+          );
+        }
+      } catch (error) {
+        discovery.failures.push(`submitting ${found.category}: ${error instanceof Error ? error.message : "unknown"}`);
+      }
+    }
+
     const finish = await cliJson(["session", "finish"], { cwd: fixtureRoot });
     const report = JSON.parse(await fs.readFile(finish.files.json, "utf8"));
     const html = await fs.readFile(finish.files.html, "utf8");
@@ -311,6 +423,15 @@ async function scoreFixture(fixture) {
     // reward deleting inconvenient findings. It is counted separately.
     const reported = report.findings.filter((finding) => finding.status !== "false_positive");
     const refuted = report.findings.filter((finding) => finding.status === "false_positive");
+
+    /*
+     * A case is `staticVisible` when the static pass could reach it at all. Three of
+     * this fixture's cases are not: one crosses a module boundary, one is a pair of
+     * responses no rule models, and one is an operation that reads correctly and is
+     * only wrong when repeated. They exist so the whole-product figure can lose.
+     */
+    const staticVisible = groundTruth.expected.filter((entry) => entry.staticVisible !== false);
+    const agentOnly = groundTruth.expected.filter((entry) => entry.staticVisible === false);
 
     const matched = new Map();
     const unmatched = [];
@@ -385,6 +506,32 @@ async function scoreFixture(fixture) {
       unmatched,
       missed: missed.map((entry) => entry.id),
       recall: expectedCount === 0 ? null : Number((truePositives / expectedCount).toFixed(3)),
+      /*
+       * The two halves of the product, reported separately, because a single figure
+       * cannot say which of them found anything.
+       *
+       * `staticRecall` counts ground-truth cases the static pass could see at all —
+       * the cases marked `staticVisible`. `endToEndRecall` counts what the finished
+       * report contains, over every case including the ones no static rule can reach.
+       * A gap between them is the agent's contribution; no gap means the harness is
+       * measuring the static pass twice and calling one of them the product.
+       */
+      staticVisibleExpected: staticVisible.length,
+      staticRecall:
+        staticVisible.length === 0
+          ? null
+          : Number((staticVisible.filter((entry) => matched.has(entry.id)).length / staticVisible.length).toFixed(3)),
+      agentOnlyExpected: agentOnly.length,
+      agentOnlyRecall:
+        agentOnly.length === 0
+          ? null
+          : Number((agentOnly.filter((entry) => matched.has(entry.id)).length / agentOnly.length).toFixed(3)),
+      endToEndRecall: expectedCount === 0 ? null : Number((truePositives / expectedCount).toFixed(3)),
+      discovery: {
+        found: discovery.found.length,
+        failures: discovery.failures,
+        categories: discovery.found.map((entry) => entry.category)
+      },
       criticalHighRecall:
         criticalHigh.length === 0 ? null : Number((criticalHighFound / criticalHigh.length).toFixed(3)),
       precision: reported.length === 0 ? null : Number((truePositives / reported.length).toFixed(3)),
@@ -424,7 +571,12 @@ async function cliSubmit(finding, cwd) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [CLI, "--json", "finding", "submit"], {
       cwd,
-      env: { ...process.env, MYRQEN_NON_INTERACTIVE: "1", MYRQEN_NO_COLOR: "1" },
+      env: {
+        ...process.env,
+        MYRQEN_CONFIG_DIR: CONFIG_DIR,
+        MYRQEN_NON_INTERACTIVE: "1",
+        MYRQEN_NO_COLOR: "1"
+      },
       stdio: ["pipe", "pipe", "pipe"]
     });
     let stdout = "";
@@ -526,6 +678,11 @@ async function main() {
 
   for (const fixture of selected) {
     process.stdout.write(`\n=== ${fixture.id} ===\n`);
+    const unavailable = await pythonUnavailable(fixture);
+    if (unavailable) {
+      process.stdout.write(`skipped           ${unavailable}\n`);
+      continue;
+    }
     const result = await scoreFixture(fixture);
     results.push(result);
     process.stdout.write(`recall            ${result.recall ?? "n/a"} (critical/high ${result.criticalHighRecall ?? "n/a"})\n`);

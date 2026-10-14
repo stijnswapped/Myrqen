@@ -1,0 +1,125 @@
+{
+  "family": "nuxt-nitro",
+  "architecture": "Nuxt 3 server routes on Nitro: defineEventHandler modules under server/api with method suffixes, server/middleware for cross-cutting authentication, the MongoDB driver for collection queries and a pg pool for relational reads",
+  "cases": [
+    {
+      "id": "holdout-nuxt-member-search",
+      "family": "nuxt-nitro",
+      "architecture": "Nitro server route over a MongoDB collection, session resolved by a shared util",
+      "language": "typescript",
+      "file": "nuxt-nitro/server/api/members/search.post.ts",
+      "scanAs": "server/api/members/search.post.ts",
+      "kind": "vulnerable",
+      "category": "nosql_injection",
+      "severityBand": ["critical", "high"],
+      "route": "POST /api/members/search",
+      "line": 24,
+      "lineRange": [22, 32],
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-nuxt",
+        "version": "1.0.0",
+        "type": "module",
+        "dependencies": { "nuxt": "^3.11.2", "h3": "^1.11.1", "mongodb": "^6.5.0", "pg": "^8.11.5" }
+      },
+      "why": "The team filter is coerced with String and the sort field is checked against an allow list, so the handler looks careful. The credit floor is interpolated into a $where clause, which Mongo evaluates as JavaScript on the server, so a crafted minCredits value rewrites the predicate and returns or enumerates records the tenant filter was meant to exclude."
+    },
+    {
+      "id": "holdout-nuxt-contact-search",
+      "family": "nuxt-nitro",
+      "architecture": "Nitro server route over a MongoDB collection, session resolved by a shared util",
+      "language": "typescript",
+      "file": "nuxt-nitro/server/api/contacts/search.post.ts",
+      "scanAs": "server/api/contacts/search.post.ts",
+      "kind": "safe",
+      "pairedWith": "holdout-nuxt-member-search",
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-nuxt",
+        "version": "1.0.0",
+        "type": "module",
+        "dependencies": { "nuxt": "^3.11.2", "h3": "^1.11.1", "mongodb": "^6.5.0", "pg": "^8.11.5" }
+      },
+      "why": "The same collection, the same incrementally built filter object and the same request body, but the credit floor is coerced to a finite number and expressed as a $gte comparison, so no part of the request reaches the query as an expression or an operator."
+    },
+    {
+      "id": "holdout-nuxt-service-token",
+      "family": "nuxt-nitro",
+      "architecture": "Nitro server middleware guarding internal and callback route prefixes",
+      "language": "typescript",
+      "file": "nuxt-nitro/server/middleware/service-auth.ts",
+      "scanAs": "server/middleware/service-auth.ts",
+      "kind": "vulnerable",
+      "category": "timing_unsafe_comparison",
+      "severityBand": ["medium", "low", "high"],
+      "line": 31,
+      "lineRange": [29, 34],
+      "runtimeVerifiable": false,
+      "packageJson": {
+        "name": "acme-suite-nuxt",
+        "version": "1.0.0",
+        "type": "module",
+        "dependencies": { "nuxt": "^3.11.2", "h3": "^1.11.1" }
+      },
+      "why": "The callback branch in the same middleware compares its HMAC digest with timingSafeEqual after a length check, so the correct primitive is imported and used ten lines above. The internal service token is compared with a plain !== against the secret, which short-circuits on the first differing byte and leaks the shared secret to an attacker who can measure enough requests."
+    },
+    {
+      "id": "holdout-nuxt-partner-token",
+      "family": "nuxt-nitro",
+      "architecture": "Nitro server middleware guarding internal and callback route prefixes",
+      "language": "typescript",
+      "file": "nuxt-nitro/server/middleware/partner-auth.ts",
+      "scanAs": "server/middleware/partner-auth.ts",
+      "kind": "safe",
+      "pairedWith": "holdout-nuxt-service-token",
+      "runtimeVerifiable": false,
+      "packageJson": {
+        "name": "acme-suite-nuxt",
+        "version": "1.0.0",
+        "type": "module",
+        "dependencies": { "nuxt": "^3.11.2", "h3": "^1.11.1" }
+      },
+      "why": "The same middleware still compares a header against a process-held secret and still rejects with a 401, but both the token check and the digest check route through one constant-time helper that compares lengths before calling timingSafeEqual."
+    },
+    {
+      "id": "holdout-nuxt-import-status",
+      "family": "nuxt-nitro",
+      "architecture": "Nitro server route reading a tenant-scoped row from Postgres and signing an object-store URL",
+      "language": "typescript",
+      "file": "nuxt-nitro/server/api/imports/[id]/status.get.ts",
+      "scanAs": "server/api/imports/[id]/status.get.ts",
+      "kind": "vulnerable",
+      "category": "verbose_error_response",
+      "severityBand": ["low", "medium"],
+      "route": "GET /api/imports/[id]/status",
+      "line": 48,
+      "lineRange": [40, 52],
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-nuxt",
+        "version": "1.0.0",
+        "type": "module",
+        "dependencies": { "nuxt": "^3.11.2", "h3": "^1.11.1", "pg": "^8.11.5" }
+      },
+      "why": "The inner catch around the object-store call degrades quietly, which is the shape a reader expects from the whole handler. The outer catch attaches the driver message, the driver error code, the detail line, the stack, the SQL text and the bound parameters to the 500 response, handing a caller the schema, the query shape and the tenant identifier of the failing request."
+    },
+    {
+      "id": "holdout-nuxt-upload-status",
+      "family": "nuxt-nitro",
+      "architecture": "Nitro server route reading a tenant-scoped row from Postgres and signing an object-store URL",
+      "language": "typescript",
+      "file": "nuxt-nitro/server/api/uploads/[id]/status.get.ts",
+      "scanAs": "server/api/uploads/[id]/status.get.ts",
+      "kind": "safe",
+      "pairedWith": "holdout-nuxt-import-status",
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-nuxt",
+        "version": "1.0.0",
+        "type": "module",
+        "dependencies": { "nuxt": "^3.11.2", "h3": "^1.11.1", "pg": "^8.11.5" }
+      },
+      "why": "The handler still inspects the driver error and still passes a data object to createError, but everything diagnostic goes to the server logger and the response carries only a correlation reference the support team can look up."
+    }
+  ]
+}

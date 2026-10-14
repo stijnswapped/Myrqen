@@ -1,0 +1,252 @@
+{
+  "family": "nestjs",
+  "architecture": "NestJS 10 HTTP controllers with decorator routing, JwtAuthGuard/RolesGuard middleware chains, TypeORM repositories and a Prisma service for persistence, and injectable services for credential handling",
+  "cases": [
+    {
+      "id": "holdout-nestjs-invoice-document",
+      "family": "nestjs",
+      "architecture": "NestJS 10 controller behind JwtAuthGuard, TypeORM repository, PDF rendering service",
+      "language": "typescript",
+      "file": "nestjs/invoices.controller.ts",
+      "kind": "vulnerable",
+      "category": "broken_object_level_authorization",
+      "severityBand": ["high", "critical"],
+      "route": "GET /billing/invoices/:id/document",
+      "line": 45,
+      "lineRange": [42, 48],
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-api",
+        "version": "1.0.0",
+        "dependencies": {
+          "@nestjs/common": "^10.3.7",
+          "@nestjs/core": "^10.3.7",
+          "@nestjs/typeorm": "^10.0.2",
+          "typeorm": "^0.3.20",
+          "@prisma/client": "^5.11.0",
+          "argon2": "^0.40.1",
+          "reflect-metadata": "^0.2.2",
+          "rxjs": "^7.8.1"
+        }
+      },
+      "why": "The two sibling handlers in the same controller scope their repository lookups to req.user.organizationId; the document handler resolves the invoice from the path parameter alone. It does read the caller's role, but only to decide on a watermark, so any authenticated user of any organization can fetch another tenant's invoice PDF including its bank details."
+    },
+    {
+      "id": "holdout-nestjs-statement-document",
+      "family": "nestjs",
+      "architecture": "NestJS 10 controller behind JwtAuthGuard, TypeORM repository, PDF rendering service",
+      "language": "typescript",
+      "file": "nestjs/statements.controller.ts",
+      "kind": "safe",
+      "pairedWith": "holdout-nestjs-invoice-document",
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-api",
+        "version": "1.0.0",
+        "dependencies": {
+          "@nestjs/common": "^10.3.7",
+          "@nestjs/core": "^10.3.7",
+          "@nestjs/typeorm": "^10.0.2",
+          "typeorm": "^0.3.20",
+          "@prisma/client": "^5.11.0",
+          "reflect-metadata": "^0.2.2",
+          "rxjs": "^7.8.1"
+        }
+      },
+      "why": "Identical controller shape, guard, repository and role-driven watermark, but every lookup including the document handler carries organizationId from the authenticated subject, so the path parameter alone cannot reach another tenant's record."
+    },
+    {
+      "id": "holdout-nestjs-report-conversion",
+      "family": "nestjs",
+      "architecture": "NestJS 10 controller behind role guards, child_process conversion of generated CSV files",
+      "language": "typescript",
+      "file": "nestjs/report-export.controller.ts",
+      "kind": "vulnerable",
+      "category": "command_injection",
+      "severityBand": ["critical", "high"],
+      "route": "POST /reports/export",
+      "line": 56,
+      "lineRange": [54, 58],
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-api",
+        "version": "1.0.0",
+        "dependencies": {
+          "@nestjs/common": "^10.3.7",
+          "@nestjs/core": "^10.3.7",
+          "reflect-metadata": "^0.2.2",
+          "rxjs": "^7.8.1"
+        }
+      },
+      "why": "The output format is checked against an allow list and the sibling archive handler uses execFile with an argument array, but the export handler joins body.filename into a destination path and interpolates that path into a shell pipeline that exec then runs, so a filename containing a shell metacharacter executes as the API process."
+    },
+    {
+      "id": "holdout-nestjs-ledger-conversion",
+      "family": "nestjs",
+      "architecture": "NestJS 10 controller behind role guards, child_process conversion of generated CSV files",
+      "language": "typescript",
+      "file": "nestjs/ledger-export.controller.ts",
+      "kind": "safe",
+      "pairedWith": "holdout-nestjs-report-conversion",
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-api",
+        "version": "1.0.0",
+        "dependencies": {
+          "@nestjs/common": "^10.3.7",
+          "@nestjs/core": "^10.3.7",
+          "reflect-metadata": "^0.2.2",
+          "rxjs": "^7.8.1"
+        }
+      },
+      "why": "The same converter, the same request-supplied filename and the same promisified exec import remain, but the conversion runs through execFile with an argument array and the filename is reduced to its basename before being joined onto a temporary directory; the one exec call left takes a fixed command over a path the process generated itself."
+    },
+    {
+      "id": "holdout-nestjs-member-role-change",
+      "family": "nestjs",
+      "architecture": "NestJS 10 controller with JwtAuthGuard plus RolesGuard and a Prisma membership model",
+      "language": "typescript",
+      "file": "nestjs/organization-members.controller.ts",
+      "kind": "vulnerable",
+      "category": "broken_function_level_authorization",
+      "severityBand": ["high", "critical"],
+      "route": "PATCH /organizations/:orgId/members/:memberId/role",
+      "line": 72,
+      "lineRange": [52, 75],
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-api",
+        "version": "1.0.0",
+        "dependencies": {
+          "@nestjs/common": "^10.3.7",
+          "@nestjs/core": "^10.3.7",
+          "@prisma/client": "^5.11.0",
+          "reflect-metadata": "^0.2.2",
+          "rxjs": "^7.8.1"
+        }
+      },
+      "why": "The delete handler one method above carries @Roles(\"admin\", \"owner\") and compares the requester's rank against the target's before acting. The role-change handler carries no @Roles decorator and never consults RANK: it resolves the requester's membership and only checks that it exists, so any member of the organization can promote themselves or anyone else to owner."
+    },
+    {
+      "id": "holdout-nestjs-collaborator-role-change",
+      "family": "nestjs",
+      "architecture": "NestJS 10 controller with JwtAuthGuard plus RolesGuard and a Prisma membership model",
+      "language": "typescript",
+      "file": "nestjs/project-collaborators.controller.ts",
+      "kind": "safe",
+      "pairedWith": "holdout-nestjs-member-role-change",
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-api",
+        "version": "1.0.0",
+        "dependencies": {
+          "@nestjs/common": "^10.3.7",
+          "@nestjs/core": "^10.3.7",
+          "@prisma/client": "^5.11.0",
+          "reflect-metadata": "^0.2.2",
+          "rxjs": "^7.8.1"
+        }
+      },
+      "why": "Same controller, same guards, same Prisma model and the same rank table, but the role-change route carries the @Roles decorator and compares the requester's rank against both the target's current role and the role being granted, so privilege cannot be raised sideways or upwards."
+    },
+    {
+      "id": "holdout-nestjs-profile-patch",
+      "family": "nestjs",
+      "architecture": "NestJS 10 controller behind JwtAuthGuard writing through a TypeORM entity",
+      "language": "typescript",
+      "file": "nestjs/profile.controller.ts",
+      "kind": "vulnerable",
+      "category": "mass_assignment",
+      "severityBand": ["high", "medium"],
+      "route": "PATCH /me",
+      "line": 42,
+      "lineRange": [40, 45],
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-api",
+        "version": "1.0.0",
+        "dependencies": {
+          "@nestjs/common": "^10.3.7",
+          "@nestjs/core": "^10.3.7",
+          "@nestjs/typeorm": "^10.0.2",
+          "typeorm": "^0.3.20",
+          "reflect-metadata": "^0.2.2",
+          "rxjs": "^7.8.1"
+        }
+      },
+      "why": "The controller owns an allow list of writable fields and uses it when serialising the account on the way out, and the notifications handler assigns its two fields explicitly. The bare PATCH copies the whole request body onto the loaded entity with Object.assign and saves it, so a request can set columns the API never meant to expose, such as the account's plan, seat entitlement or verified flag."
+    },
+    {
+      "id": "holdout-nestjs-workspace-profile-patch",
+      "family": "nestjs",
+      "architecture": "NestJS 10 controller behind JwtAuthGuard writing through a TypeORM entity",
+      "language": "typescript",
+      "file": "nestjs/workspace-profile.controller.ts",
+      "kind": "safe",
+      "pairedWith": "holdout-nestjs-profile-patch",
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-api",
+        "version": "1.0.0",
+        "dependencies": {
+          "@nestjs/common": "^10.3.7",
+          "@nestjs/core": "^10.3.7",
+          "@nestjs/typeorm": "^10.0.2",
+          "typeorm": "^0.3.20",
+          "reflect-metadata": "^0.2.2",
+          "rxjs": "^7.8.1"
+        }
+      },
+      "why": "The handler still takes a Partial entity as its body and still writes through Object.assign and save, but it iterates the allow list rather than the body, so only the four presentation fields can reach the entity no matter what the request contains."
+    },
+    {
+      "id": "holdout-nestjs-password-digest",
+      "family": "nestjs",
+      "architecture": "NestJS 10 injectable credential service over Prisma, with argon2 available in the same module",
+      "language": "typescript",
+      "file": "nestjs/credentials.service.ts",
+      "kind": "vulnerable",
+      "category": "weak_password_hashing",
+      "severityBand": ["high", "medium"],
+      "line": 39,
+      "lineRange": [37, 48],
+      "runtimeVerifiable": false,
+      "packageJson": {
+        "name": "acme-suite-api",
+        "version": "1.0.0",
+        "dependencies": {
+          "@nestjs/common": "^10.3.7",
+          "@nestjs/core": "^10.3.7",
+          "@prisma/client": "^5.11.0",
+          "argon2": "^0.40.1",
+          "reflect-metadata": "^0.2.2",
+          "rxjs": "^7.8.1"
+        }
+      },
+      "why": "Recovery codes in the same service are hashed with argon2, so the dependency and the habit are both present, yet account passwords are stored as a single salted SHA-256 digest. A fast unsalted-speed hash over a per-user salt gives no work factor at all, so a stolen users table is bulk-crackable at GPU rates."
+    },
+    {
+      "id": "holdout-nestjs-operator-password-digest",
+      "family": "nestjs",
+      "architecture": "NestJS 10 injectable credential service over Prisma, with argon2 available in the same module",
+      "language": "typescript",
+      "file": "nestjs/operator-credentials.service.ts",
+      "kind": "safe",
+      "pairedWith": "holdout-nestjs-password-digest",
+      "runtimeVerifiable": false,
+      "packageJson": {
+        "name": "acme-suite-api",
+        "version": "1.0.0",
+        "dependencies": {
+          "@nestjs/common": "^10.3.7",
+          "@nestjs/core": "^10.3.7",
+          "@prisma/client": "^5.11.0",
+          "argon2": "^0.40.1",
+          "reflect-metadata": "^0.2.2",
+          "rxjs": "^7.8.1"
+        }
+      },
+      "why": "The same service still calls createHash(\"sha256\"), but only to derive a non-secret avatar key from an email address; passwords go through argon2id with an explicit memory and time cost, and verification uses argon2.verify."
+    }
+  ]
+}

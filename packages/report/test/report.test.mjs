@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildFixPrompt, buildReport, formatDuration, formatTokenUsage, renderMarkdown, renderSarif, renderStandaloneHtml, sortFindings } from "../dist/index.js";
+import { buildFixAllPrompt, buildFixPrompt, buildReport, formatDuration, formatTokenUsage, renderMarkdown, renderSarif, renderStandaloneHtml, sortFindings } from "../dist/index.js";
 import { projectReport } from "../../policy/dist/index.js";
 import { validateReport } from "../../contracts/dist/index.js";
 
@@ -199,4 +199,91 @@ test("HTML surfaces reduced capability calmly rather than as an error", () => {
   const html = renderStandaloneHtml(report());
   assert.match(html, /not available on this machine/);
   assert.ok(!/Docker is missing/i.test(html));
+});
+
+/* ------------------------------------------------------- the whole-report prompt */
+
+/*
+ * `buildFixAllPrompt` exists because the useful unit of remediation is the report, and
+ * the tests below pin the three things it says that a per-finding prompt cannot:
+ * rotate a committed secret rather than deleting it, confirm an unsettled finding
+ * before editing on its strength, and work each file once.
+ */
+const fixAll = (findings, context) => buildFixAllPrompt(findings, context);
+
+test("the whole-report prompt orders files once and by severity", async () => {
+  const prompt = fixAll([
+    finding({ id: "MYR-010", severity: "low", affected: { component: "a", file: "src/a.ts", lineStart: 5 } }),
+    finding({ id: "MYR-011", severity: "critical", affected: { component: "b", file: "src/b.ts", lineStart: 9 } }),
+    finding({ id: "MYR-012", severity: "medium", affected: { component: "a", file: "src/a.ts", lineStart: 60 } })
+  ]);
+  // Each file heading appears exactly once.
+  assert.equal(prompt.match(/### src\/a\.ts/g).length, 1);
+  assert.equal(prompt.match(/### src\/b\.ts/g).length, 1);
+  // The critical file comes first, and within the shared file the medium precedes the low.
+  assert.ok(prompt.indexOf("### src/b.ts") < prompt.indexOf("### src/a.ts"));
+  assert.ok(prompt.indexOf("MYR-012") < prompt.indexOf("MYR-010"));
+});
+
+test("a committed secret is told to be rotated, not deleted", async () => {
+  const prompt = fixAll([finding({ id: "MYR-020", category: "hardcoded_secret" })]);
+  assert.match(prompt, /Removing the literal is not the fix/);
+  assert.match(prompt, /Rotate it at the issuer first/);
+  assert.match(prompt, /git history/);
+});
+
+test("a report with no committed secret does not mention rotation", async () => {
+  const prompt = fixAll([finding({ id: "MYR-021" })]);
+  assert.doesNotMatch(prompt, /Rotate it at the issuer/);
+});
+
+test("an unsettled finding is flagged for confirmation before editing", async () => {
+  const prompt = fixAll([finding({ id: "MYR-030", verification: "needs_review" })]);
+  assert.match(prompt, /needs review/);
+  assert.match(prompt, /Confirm each one is real before changing code/);
+});
+
+test("a verified finding of the same severity is placed before an unsettled one", async () => {
+  const prompt = fixAll([
+    finding({ id: "MYR-041", verification: "needs_review", affected: { component: "z", file: "src/z.ts" } }),
+    finding({ id: "MYR-040", verification: "verified", affected: { component: "y", file: "src/y.ts" } })
+  ]);
+  assert.ok(prompt.indexOf("MYR-040") < prompt.indexOf("MYR-041"));
+});
+
+test("findings already settled are left out", async () => {
+  const prompt = fixAll([
+    finding({ id: "MYR-050", status: "fixed_verified" }),
+    finding({ id: "MYR-051", status: "false_positive" }),
+    finding({ id: "MYR-052", status: "accepted_risk" }),
+    finding({ id: "MYR-053", status: "open" })
+  ]);
+  assert.match(prompt, /MYR-053/);
+  for (const settled of ["MYR-050", "MYR-051", "MYR-052"]) assert.doesNotMatch(prompt, new RegExp(settled));
+});
+
+test("a report with nothing open says so instead of printing an empty plan", async () => {
+  const prompt = fixAll([finding({ id: "MYR-060", status: "fixed_verified" })]);
+  assert.match(prompt, /Nothing to fix/);
+  assert.doesNotMatch(prompt, /## Findings/);
+});
+
+test("the prompt refuses to let a fix be marked verified without its check", async () => {
+  const prompt = fixAll([finding({ id: "MYR-070" })], { localReportId: "rpt_1" });
+  assert.match(prompt, /only if the confirmation actually passed/);
+  assert.match(prompt, /Marking a finding verified without running its confirmation step/);
+  assert.match(prompt, /--session rpt_1 fix record \S+ --verified/);
+});
+
+test("no secret value reaches the whole-report prompt", async () => {
+  const prompt = fixAll([
+    finding({
+      id: "MYR-080",
+      category: "hardcoded_secret",
+      evidence: [{ kind: "source", description: "A key is committed.", snippet: `const k = "${CANARY}";` }]
+    })
+  ]);
+  // Evidence snippets are deliberately omitted from this prompt; this asserts the
+  // consequence, which is that a canary in one cannot leak through it.
+  assert.doesNotMatch(prompt, new RegExp(CANARY));
 });

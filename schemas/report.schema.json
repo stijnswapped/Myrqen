@@ -197,6 +197,76 @@
       }
     },
     "limitations": { "type": "array", "items": { "type": "string", "maxLength": 1000 }, "maxItems": 200 },
-    "methodologyVersion": { "type": "string", "maxLength": 40 }
+    "methodologyVersion": { "type": "string", "maxLength": 40 },
+    "verdict": {
+      "description": "Verdict-first summary computed from the findings when the report was built. Renderers recompute it from the findings they are given and never trust this copy.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tone","headline","runMode","caveat","fixFirst"],
+      "properties": {
+        "tone": { "enum": ["verified_risk","unverified_risk","clear","settled","withheld"] },
+        "headline": { "type": "string", "minLength": 1, "maxLength": 400 },
+        "detail": { "type": "string", "maxLength": 1000 },
+        "runMode": { "enum": ["agent","static_only","unattributed"] },
+        "nextStep": { "type": "string", "maxLength": 1000 },
+        "caveat": { "type": "string", "minLength": 1, "maxLength": 400 },
+        "fixFirst": {
+          "type": "array",
+          "maxItems": 3,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["findingId","title","severity","verification","location","why","fixPrompt"],
+            "properties": {
+              "findingId": { "type": "string", "minLength": 1, "maxLength": 128 },
+              "title": { "type": "string", "maxLength": 240 },
+              "severity": { "enum": ["critical","high","medium","low","info"] },
+              "verification": { "enum": ["verified","strong_evidence","needs_review"] },
+              "location": { "type": "string", "maxLength": 1200 },
+              "route": { "type": "string", "maxLength": 1000 },
+              "why": { "type": "string", "maxLength": 400 },
+              "fixPrompt": { "type": "string", "maxLength": 40000 }
+            }
+          }
+        }
+      }
+    },
+    "baseline": {
+      "description": "Comparison against .myrqen/baseline.json, when one was present for this scan.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["createdAt","counts","fixed"],
+      "properties": {
+        "createdAt": { "type": "string", "format": "date-time" },
+        "fromReportId": { "type": "string", "maxLength": 128 },
+        "counts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["new","unchanged","fixed"],
+          "properties": {
+            "new": { "type": "integer", "minimum": 0 },
+            "unchanged": { "type": "integer", "minimum": 0 },
+            "fixed": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "fixed": {
+          "type": "array",
+          "maxItems": 5000,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["fingerprint","category","title","severity"],
+            "properties": {
+              "fingerprint": { "type": "string", "pattern": "^bl_[0-9a-f]{32}$" },
+              "category": { "type": "string", "maxLength": 120 },
+              "title": { "type": "string", "maxLength": 240 },
+              "severity": { "enum": ["critical","high","medium","low","info"] },
+              "file": { "type": "string", "maxLength": 1000 },
+              "route": { "type": "string", "maxLength": 1000 }
+            }
+          }
+        }
+      }
+    }
   }
 }

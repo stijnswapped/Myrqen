@@ -33,6 +33,12 @@ export interface BrandIdentity {
   readonly sourceRepoUrl: string;
   /** The deployed application's own repository, which is not published. */
   readonly applicationRepoUrl: string;
+  /**
+   * Where the CLI talks to the hosted service. A separate hostname from the
+   * dashboard so the API can be moved, rate-limited, or fronted differently
+   * without every installed CLI needing a new configuration.
+   */
+  readonly apiBaseUrl: string;
 }
 
 export const BRAND: BrandIdentity = Object.freeze({
@@ -54,7 +60,8 @@ export const BRAND: BrandIdentity = Object.freeze({
   domain: "myrqen.cc",
   docsUrl: "https://docs.myrqen.cc",
   sourceRepoUrl: "https://github.com/stijnswapped/Myrqen",
-  applicationRepoUrl: "https://github.com/stijnswapped/Myrqen.cc"
+  applicationRepoUrl: "https://github.com/stijnswapped/Myrqen.cc",
+  apiBaseUrl: "https://api.myrqen.cc"
 });
 
 /**
@@ -66,5 +73,5 @@ export function makeBrand(overrides: Partial<BrandIdentity>): BrandIdentity {
   return Object.freeze({ ...BRAND, ...overrides });
 }
 
-export const CLI_VERSION = "0.1.0";
-export const SKILL_BUNDLE_VERSION = "0.1.0";
+export const CLI_VERSION = "0.3.0";
+export const SKILL_BUNDLE_VERSION = "0.2.0";

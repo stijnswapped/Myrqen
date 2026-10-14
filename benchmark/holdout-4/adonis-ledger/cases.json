@@ -1,0 +1,546 @@
+{
+  "family": "adonis-ledger",
+  "cases": [
+    {
+      "id": "h4-adonis-ledger-supplier-statement-window",
+      "family": "adonis-ledger",
+      "architecture": "AdonisJS v6 accounts-payable ledger service: HttpContext controller classes under app/controllers, routes declared in start/routes.ts, Lucid ORM models over PostgreSQL as the data layer, VineJS validators for request payloads, and the authenticated actor lifted off the Adonis session auth guard (ctx.auth.user) by app/lib/tenancy.ts.",
+      "language": "typescript",
+      "file": "adonis-ledger/app/controllers/statements_controller.ts",
+      "scanAs": "app/controllers/statements_controller.ts",
+      "kind": "vulnerable",
+      "category": "sql_injection_via_interpolated_raw_query",
+      "severityBand": ["high", "critical"],
+      "line": 47,
+      "lineRange": [29, 52],
+      "route": "GET /api/suppliers/:reference/statement",
+      "runtimeVerifiable": true,
+      "why": "The :reference route parameter and the sort query input are string-interpolated straight into the raw statement SQL passed to db.rawQuery, so a crafted reference or sort value executes attacker-chosen SQL under the service's database role. The comment claiming both are already constrained is wrong: start/routes.ts declares no matcher for :reference, and sort is never checked against a column list.",
+      "packageJson": {
+        "name": "adonis-ledger",
+        "version": "1.4.0",
+        "private": true,
+        "type": "module",
+        "imports": {
+          "#controllers/*": "./app/controllers/*.js",
+          "#models/*": "./app/models/*.js",
+          "#services/*": "./app/services/*.js",
+          "#validators/*": "./app/validators/*.js",
+          "#lib/*": "./app/lib/*.js",
+          "#middleware/*": "./app/middleware/*.js",
+          "#config/*": "./config/*.js",
+          "#start/*": "./start/*.js"
+        },
+        "dependencies": {
+          "@adonisjs/auth": "^9.2.4",
+          "@adonisjs/core": "^6.14.1",
+          "@adonisjs/lucid": "^21.3.0",
+          "@adonisjs/session": "^7.5.0",
+          "@vinejs/vine": "^2.1.0",
+          "luxon": "^3.5.0",
+          "pg": "^8.13.1",
+          "reflect-metadata": "^0.2.2"
+        },
+        "devDependencies": {
+          "@adonisjs/assembler": "^7.8.2",
+          "@japa/api-client": "^2.0.4",
+          "@japa/runner": "^3.1.4",
+          "typescript": "~5.6.3"
+        }
+      },
+      "extraFiles": {
+        "app/lib/tenancy.ts": "import type { HttpContext } from '@adonisjs/core/http'\n\nexport type LedgerRole = 'clerk' | 'approver' | 'controller' | 'admin'\n\nexport type LedgerActor = {\n  id: number\n  organisationId: number\n  role: LedgerRole\n  approvalLimitCents: number\n}\n\n/**\n * Lifts the authenticated actor off the Adonis session guard into a plain\n * object, so controllers never have to touch the guard directly.\n *\n * Every route that calls this sits behind `middleware.auth()`, so the throw\n * below is a wiring bug rather than something a client can reach.\n */\nexport async function requireActor(ctx: HttpContext): Promise<LedgerActor> {\n  const user = ctx.auth.user\n\n  if (!user) {\n    throw new Error('E_NO_ACTOR: handler reached without an authenticated session')\n  }\n\n  return {\n    id: user.id,\n    organisationId: user.organisationId,\n    role: user.role as LedgerRole,\n    approvalLimitCents: user.approvalLimitCents,\n  }\n}\n\n/**\n * Controllers and admins may stage imports, close payment runs and edit the\n * chart of accounts. Clerks and approvers may not.\n */\nexport function isController(actor: LedgerActor): boolean {\n  return actor.role === 'controller' || actor.role === 'admin'\n}\n\nexport function canApprove(actor: LedgerActor, grossCents: number): boolean {\n  if (actor.role === 'clerk') {\n    return false\n  }\n\n  return grossCents <= actor.approvalLimitCents\n}\n",
+        "start/routes.ts": "/*\n|--------------------------------------------------------------------------\n| Ledger service HTTP surface\n|--------------------------------------------------------------------------\n|\n| Everything an operator touches sits behind the session auth guard. The two\n| bank callbacks are unauthenticated by design and verify their own payload\n| signatures instead.\n|\n*/\nimport router from '@adonisjs/core/services/router'\nimport { middleware } from '#start/kernel'\n\nconst StatementsController = () => import('#controllers/statements_controller')\nconst LedgerExportsController = () => import('#controllers/ledger_exports_controller')\nconst InvoicesController = () => import('#controllers/invoices_controller')\nconst CreditNotesController = () => import('#controllers/credit_notes_controller')\nconst RemittancesController = () => import('#controllers/remittances_controller')\nconst SupplierDocumentsController = () => import('#controllers/supplier_documents_controller')\nconst TeamMemberSettingsController = () => import('#controllers/team_member_settings_controller')\nconst MemberProfileController = () => import('#controllers/member_profile_controller')\nconst StatementImportsController = () => import('#controllers/statement_imports_controller')\nconst BankFeedImportsController = () => import('#controllers/bank_feed_imports_controller')\nconst BankCallbacksController = () => import('#controllers/bank_callbacks_controller')\nconst CardSettlementCallbacksController = () => import('#controllers/card_settlement_callbacks_controller')\n\nrouter\n  .group(() => {\n    router.get('/api/suppliers/:reference/statement', [StatementsController, 'show'])\n    router.get('/api/suppliers/:reference/ledger-export', [LedgerExportsController, 'show'])\n    router.get('/api/invoices', [InvoicesController, 'index'])\n    router.get('/api/invoices/:id', [InvoicesController, 'show'])\n    router.get('/api/credit-notes/:id', [CreditNotesController, 'show'])\n    router.get('/api/remittances/:reference/document', [RemittancesController, 'document'])\n    router.get('/api/supplier-documents/:id/download', [SupplierDocumentsController, 'download'])\n    router.patch('/api/team-members/me/settings', [TeamMemberSettingsController, 'update'])\n    router.patch('/api/team-members/me/profile', [MemberProfileController, 'update'])\n    router.post('/api/statement-imports', [StatementImportsController, 'store'])\n    router.post('/api/bank-feed-imports', [BankFeedImportsController, 'store'])\n  })\n  .use(middleware.auth())\n\nrouter.post('/api/bank-callbacks/northbank', [BankCallbacksController, 'store'])\nrouter.post('/api/card-callbacks/settlement', [CardSettlementCallbacksController, 'store'])\n"
+      }
+    },
+    {
+      "id": "h4-adonis-ledger-supplier-ledger-export",
+      "family": "adonis-ledger",
+      "architecture": "AdonisJS v6 accounts-payable ledger service: HttpContext controller classes under app/controllers, routes declared in start/routes.ts, Lucid ORM models over PostgreSQL as the data layer, VineJS validators for request payloads, and the authenticated actor lifted off the Adonis session auth guard (ctx.auth.user) by app/lib/tenancy.ts.",
+      "language": "typescript",
+      "file": "adonis-ledger/app/controllers/ledger_exports_controller.ts",
+      "scanAs": "app/controllers/ledger_exports_controller.ts",
+      "kind": "safe",
+      "route": "GET /api/suppliers/:reference/ledger-export",
+      "runtimeVerifiable": true,
+      "pairedWith": "h4-adonis-ledger-supplier-statement-window",
+      "why": "Same raw statement query over the same read model, but the supplier reference, organisation id, month window and row cap all travel as positional bindings, and the one interpolated fragment (sort) is resolved through the SORTABLE_COLUMNS allow list before it reaches the SQL. No request value can change the statement's structure.",
+      "packageJson": {
+        "name": "adonis-ledger",
+        "version": "1.4.0",
+        "private": true,
+        "type": "module",
+        "imports": {
+          "#controllers/*": "./app/controllers/*.js",
+          "#models/*": "./app/models/*.js",
+          "#services/*": "./app/services/*.js",
+          "#validators/*": "./app/validators/*.js",
+          "#lib/*": "./app/lib/*.js",
+          "#config/*": "./config/*.js",
+          "#start/*": "./start/*.js"
+        },
+        "dependencies": {
+          "@adonisjs/auth": "^9.2.4",
+          "@adonisjs/core": "^6.14.1",
+          "@adonisjs/lucid": "^21.3.0",
+          "@adonisjs/session": "^7.5.0",
+          "@vinejs/vine": "^2.1.0",
+          "luxon": "^3.5.0",
+          "pg": "^8.13.1",
+          "reflect-metadata": "^0.2.2"
+        }
+      },
+      "extraFiles": {
+        "app/lib/tenancy.ts": "import type { HttpContext } from '@adonisjs/core/http'\n\nexport type LedgerRole = 'clerk' | 'approver' | 'controller' | 'admin'\n\nexport type LedgerActor = {\n  id: number\n  organisationId: number\n  role: LedgerRole\n  approvalLimitCents: number\n}\n\n/**\n * Lifts the authenticated actor off the Adonis session guard into a plain\n * object, so controllers never have to touch the guard directly.\n *\n * Every route that calls this sits behind `middleware.auth()`, so the throw\n * below is a wiring bug rather than something a client can reach.\n */\nexport async function requireActor(ctx: HttpContext): Promise<LedgerActor> {\n  const user = ctx.auth.user\n\n  if (!user) {\n    throw new Error('E_NO_ACTOR: handler reached without an authenticated session')\n  }\n\n  return {\n    id: user.id,\n    organisationId: user.organisationId,\n    role: user.role as LedgerRole,\n    approvalLimitCents: user.approvalLimitCents,\n  }\n}\n\n/**\n * Controllers and admins may stage imports, close payment runs and edit the\n * chart of accounts. Clerks and approvers may not.\n */\nexport function isController(actor: LedgerActor): boolean {\n  return actor.role === 'controller' || actor.role === 'admin'\n}\n\nexport function canApprove(actor: LedgerActor, grossCents: number): boolean {\n  if (actor.role === 'clerk') {\n    return false\n  }\n\n  return grossCents <= actor.approvalLimitCents\n}\n",
+        "start/routes.ts": "/*\n|--------------------------------------------------------------------------\n| Ledger service HTTP surface\n|--------------------------------------------------------------------------\n|\n| Everything an operator touches sits behind the session auth guard. The two\n| bank callbacks are unauthenticated by design and verify their own payload\n| signatures instead.\n|\n*/\nimport router from '@adonisjs/core/services/router'\nimport { middleware } from '#start/kernel'\n\nconst StatementsController = () => import('#controllers/statements_controller')\nconst LedgerExportsController = () => import('#controllers/ledger_exports_controller')\nconst InvoicesController = () => import('#controllers/invoices_controller')\nconst CreditNotesController = () => import('#controllers/credit_notes_controller')\nconst RemittancesController = () => import('#controllers/remittances_controller')\nconst SupplierDocumentsController = () => import('#controllers/supplier_documents_controller')\nconst TeamMemberSettingsController = () => import('#controllers/team_member_settings_controller')\nconst MemberProfileController = () => import('#controllers/member_profile_controller')\nconst StatementImportsController = () => import('#controllers/statement_imports_controller')\nconst BankFeedImportsController = () => import('#controllers/bank_feed_imports_controller')\nconst BankCallbacksController = () => import('#controllers/bank_callbacks_controller')\nconst CardSettlementCallbacksController = () => import('#controllers/card_settlement_callbacks_controller')\n\nrouter\n  .group(() => {\n    router.get('/api/suppliers/:reference/statement', [StatementsController, 'show'])\n    router.get('/api/suppliers/:reference/ledger-export', [LedgerExportsController, 'show'])\n    router.get('/api/invoices', [InvoicesController, 'index'])\n    router.get('/api/invoices/:id', [InvoicesController, 'show'])\n    router.get('/api/credit-notes/:id', [CreditNotesController, 'show'])\n    router.get('/api/remittances/:reference/document', [RemittancesController, 'document'])\n    router.get('/api/supplier-documents/:id/download', [SupplierDocumentsController, 'download'])\n    router.patch('/api/team-members/me/settings', [TeamMemberSettingsController, 'update'])\n    router.patch('/api/team-members/me/profile', [MemberProfileController, 'update'])\n    router.post('/api/statement-imports', [StatementImportsController, 'store'])\n    router.post('/api/bank-feed-imports', [BankFeedImportsController, 'store'])\n  })\n  .use(middleware.auth())\n\nrouter.post('/api/bank-callbacks/northbank', [BankCallbacksController, 'store'])\nrouter.post('/api/card-callbacks/settlement', [CardSettlementCallbacksController, 'store'])\n"
+      }
+    },
+    {
+      "id": "h4-adonis-ledger-invoice-detail-lookup",
+      "family": "adonis-ledger",
+      "architecture": "AdonisJS v6 accounts-payable ledger service: HttpContext controller classes under app/controllers, routes declared in start/routes.ts, Lucid ORM models over PostgreSQL as the data layer, VineJS validators for request payloads, and the authenticated actor lifted off the Adonis session auth guard (ctx.auth.user) by app/lib/tenancy.ts.",
+      "language": "typescript",
+      "file": "adonis-ledger/app/controllers/invoices_controller.ts",
+      "scanAs": "app/controllers/invoices_controller.ts",
+      "kind": "vulnerable",
+      "category": "missing_tenant_scope_on_primary_key_lookup",
+      "severityBand": ["high", "critical"],
+      "line": 45,
+      "lineRange": [41, 63],
+      "route": "GET /api/invoices/:id",
+      "runtimeVerifiable": true,
+      "why": "show() resolves the invoice with Invoice.findOrFail(params.id) and never constrains organisationId, so any authenticated clerk can read another tenant's invoice — supplier, gross amount and bankAccountIban — by walking ids. The sibling index() action shows the intended scoping, and the doc comment is wrong: the auth middleware authenticates the session, it does not filter rows.",
+      "packageJson": {
+        "name": "adonis-ledger",
+        "version": "1.4.0",
+        "private": true,
+        "type": "module",
+        "imports": {
+          "#controllers/*": "./app/controllers/*.js",
+          "#models/*": "./app/models/*.js",
+          "#lib/*": "./app/lib/*.js",
+          "#config/*": "./config/*.js",
+          "#start/*": "./start/*.js"
+        },
+        "dependencies": {
+          "@adonisjs/auth": "^9.2.4",
+          "@adonisjs/core": "^6.14.1",
+          "@adonisjs/lucid": "^21.3.0",
+          "@adonisjs/session": "^7.5.0",
+          "luxon": "^3.5.0",
+          "pg": "^8.13.1",
+          "reflect-metadata": "^0.2.2"
+        }
+      },
+      "extraFiles": {
+        "app/lib/tenancy.ts": "import type { HttpContext } from '@adonisjs/core/http'\n\nexport type LedgerRole = 'clerk' | 'approver' | 'controller' | 'admin'\n\nexport type LedgerActor = {\n  id: number\n  organisationId: number\n  role: LedgerRole\n  approvalLimitCents: number\n}\n\n/**\n * Lifts the authenticated actor off the Adonis session guard into a plain\n * object, so controllers never have to touch the guard directly.\n */\nexport async function requireActor(ctx: HttpContext): Promise<LedgerActor> {\n  const user = ctx.auth.user\n\n  if (!user) {\n    throw new Error('E_NO_ACTOR: handler reached without an authenticated session')\n  }\n\n  return {\n    id: user.id,\n    organisationId: user.organisationId,\n    role: user.role as LedgerRole,\n    approvalLimitCents: user.approvalLimitCents,\n  }\n}\n\nexport function isController(actor: LedgerActor): boolean {\n  return actor.role === 'controller' || actor.role === 'admin'\n}\n",
+        "app/models/supplier.ts": "import { BaseModel, column } from '@adonisjs/lucid/orm'\n\nexport default class Supplier extends BaseModel {\n  @column({ isPrimary: true })\n  declare id: number\n\n  @column()\n  declare organisationId: number\n\n  @column()\n  declare reference: string\n\n  @column()\n  declare name: string\n\n  @column()\n  declare remittanceEmail: string\n\n  @column()\n  declare vatNumber: string | null\n}\n",
+        "app/models/invoice.ts": "import { DateTime } from 'luxon'\nimport { BaseModel, belongsTo, column } from '@adonisjs/lucid/orm'\nimport type { BelongsTo } from '@adonisjs/lucid/types/relations'\nimport Supplier from '#models/supplier'\n\nexport type ApprovalStep = {\n  approvedByName: string\n  approvedAt: string\n}\n\nexport default class Invoice extends BaseModel {\n  @column({ isPrimary: true })\n  declare id: number\n\n  @column()\n  declare organisationId: number\n\n  @column()\n  declare supplierId: number\n\n  @column()\n  declare reference: string\n\n  @column()\n  declare grossCents: number\n\n  @column()\n  declare currency: string\n\n  /**\n   * The account the payment run will credit. Treated as payment instruction\n   * data, not as reference data, so it is only ever shown to the tenant that\n   * owns the invoice.\n   */\n  @column()\n  declare bankAccountIban: string\n\n  @column()\n  declare status: 'draft' | 'awaiting_approval' | 'approved' | 'paid'\n\n  @column.date()\n  declare dueOn: DateTime\n\n  @column({\n    prepare: (value: ApprovalStep[]) => JSON.stringify(value ?? []),\n  })\n  declare approvalTrail: ApprovalStep[]\n\n  @belongsTo(() => Supplier)\n  declare supplier: BelongsTo<typeof Supplier>\n}\n",
+        "start/routes.ts": "/*\n|--------------------------------------------------------------------------\n| Ledger service HTTP surface\n|--------------------------------------------------------------------------\n|\n| Everything an operator touches sits behind the session auth guard. The two\n| bank callbacks are unauthenticated by design and verify their own payload\n| signatures instead.\n|\n*/\nimport router from '@adonisjs/core/services/router'\nimport { middleware } from '#start/kernel'\n\nconst StatementsController = () => import('#controllers/statements_controller')\nconst LedgerExportsController = () => import('#controllers/ledger_exports_controller')\nconst InvoicesController = () => import('#controllers/invoices_controller')\nconst CreditNotesController = () => import('#controllers/credit_notes_controller')\nconst RemittancesController = () => import('#controllers/remittances_controller')\nconst SupplierDocumentsController = () => import('#controllers/supplier_documents_controller')\nconst TeamMemberSettingsController = () => import('#controllers/team_member_settings_controller')\nconst MemberProfileController = () => import('#controllers/member_profile_controller')\nconst StatementImportsController = () => import('#controllers/statement_imports_controller')\nconst BankFeedImportsController = () => import('#controllers/bank_feed_imports_controller')\nconst BankCallbacksController = () => import('#controllers/bank_callbacks_controller')\nconst CardSettlementCallbacksController = () => import('#controllers/card_settlement_callbacks_controller')\n\nrouter\n  .group(() => {\n    router.get('/api/suppliers/:reference/statement', [StatementsController, 'show'])\n    router.get('/api/suppliers/:reference/ledger-export', [LedgerExportsController, 'show'])\n    router.get('/api/invoices', [InvoicesController, 'index'])\n    router.get('/api/invoices/:id', [InvoicesController, 'show'])\n    router.get('/api/credit-notes/:id', [CreditNotesController, 'show'])\n    router.get('/api/remittances/:reference/document', [RemittancesController, 'document'])\n    router.get('/api/supplier-documents/:id/download', [SupplierDocumentsController, 'download'])\n    router.patch('/api/team-members/me/settings', [TeamMemberSettingsController, 'update'])\n    router.patch('/api/team-members/me/profile', [MemberProfileController, 'update'])\n    router.post('/api/statement-imports', [StatementImportsController, 'store'])\n    router.post('/api/bank-feed-imports', [BankFeedImportsController, 'store'])\n  })\n  .use(middleware.auth())\n\nrouter.post('/api/bank-callbacks/northbank', [BankCallbacksController, 'store'])\nrouter.post('/api/card-callbacks/settlement', [CardSettlementCallbacksController, 'store'])\n"
+      }
+    },
+    {
+      "id": "h4-adonis-ledger-credit-note-detail-lookup",
+      "family": "adonis-ledger",
+      "architecture": "AdonisJS v6 accounts-payable ledger service: HttpContext controller classes under app/controllers, routes declared in start/routes.ts, Lucid ORM models over PostgreSQL as the data layer, VineJS validators for request payloads, and the authenticated actor lifted off the Adonis session auth guard (ctx.auth.user) by app/lib/tenancy.ts.",
+      "language": "typescript",
+      "file": "adonis-ledger/app/controllers/credit_notes_controller.ts",
+      "scanAs": "app/controllers/credit_notes_controller.ts",
+      "kind": "safe",
+      "route": "GET /api/credit-notes/:id",
+      "runtimeVerifiable": true,
+      "pairedWith": "h4-adonis-ledger-invoice-detail-lookup",
+      "why": "The same detail-drawer lookup on the mirror document, but expressed as a query that requires both id and organisationId to match before firstOrFail(), so a credit note belonging to another organisation raises a 404 instead of being serialised back.",
+      "packageJson": {
+        "name": "adonis-ledger",
+        "version": "1.4.0",
+        "private": true,
+        "type": "module",
+        "imports": {
+          "#controllers/*": "./app/controllers/*.js",
+          "#models/*": "./app/models/*.js",
+          "#services/*": "./app/services/*.js",
+          "#validators/*": "./app/validators/*.js",
+          "#lib/*": "./app/lib/*.js",
+          "#config/*": "./config/*.js",
+          "#start/*": "./start/*.js"
+        },
+        "dependencies": {
+          "@adonisjs/auth": "^9.2.4",
+          "@adonisjs/core": "^6.14.1",
+          "@adonisjs/lucid": "^21.3.0",
+          "@adonisjs/session": "^7.5.0",
+          "@vinejs/vine": "^2.1.0",
+          "luxon": "^3.5.0",
+          "pg": "^8.13.1",
+          "reflect-metadata": "^0.2.2"
+        }
+      },
+      "extraFiles": {
+        "app/lib/tenancy.ts": "import type { HttpContext } from '@adonisjs/core/http'\n\nexport type LedgerRole = 'clerk' | 'approver' | 'controller' | 'admin'\n\nexport type LedgerActor = {\n  id: number\n  organisationId: number\n  role: LedgerRole\n  approvalLimitCents: number\n}\n\n/**\n * Lifts the authenticated actor off the Adonis session guard into a plain\n * object, so controllers never have to touch the guard directly.\n */\nexport async function requireActor(ctx: HttpContext): Promise<LedgerActor> {\n  const user = ctx.auth.user\n\n  if (!user) {\n    throw new Error('E_NO_ACTOR: handler reached without an authenticated session')\n  }\n\n  return {\n    id: user.id,\n    organisationId: user.organisationId,\n    role: user.role as LedgerRole,\n    approvalLimitCents: user.approvalLimitCents,\n  }\n}\n\nexport function isController(actor: LedgerActor): boolean {\n  return actor.role === 'controller' || actor.role === 'admin'\n}\n",
+        "app/models/supplier.ts": "import { BaseModel, column } from '@adonisjs/lucid/orm'\n\nexport default class Supplier extends BaseModel {\n  @column({ isPrimary: true })\n  declare id: number\n\n  @column()\n  declare organisationId: number\n\n  @column()\n  declare reference: string\n\n  @column()\n  declare name: string\n\n  @column()\n  declare remittanceEmail: string\n\n  @column()\n  declare vatNumber: string | null\n}\n",
+        "app/models/credit_note.ts": "import { DateTime } from 'luxon'\nimport { BaseModel, belongsTo, column } from '@adonisjs/lucid/orm'\nimport type { BelongsTo } from '@adonisjs/lucid/types/relations'\nimport Supplier from '#models/supplier'\n\nexport default class CreditNote extends BaseModel {\n  @column({ isPrimary: true })\n  declare id: number\n\n  @column()\n  declare organisationId: number\n\n  @column()\n  declare supplierId: number\n\n  @column()\n  declare reference: string\n\n  @column()\n  declare grossCents: number\n\n  @column()\n  declare currency: string\n\n  @column()\n  declare offsetsInvoiceReference: string | null\n\n  @column()\n  declare status: 'open' | 'applied' | 'written_off'\n\n  @column.date()\n  declare issuedOn: DateTime\n\n  @belongsTo(() => Supplier)\n  declare supplier: BelongsTo<typeof Supplier>\n}\n",
+        "start/routes.ts": "/*\n|--------------------------------------------------------------------------\n| Ledger service HTTP surface\n|--------------------------------------------------------------------------\n|\n| Everything an operator touches sits behind the session auth guard. The two\n| bank callbacks are unauthenticated by design and verify their own payload\n| signatures instead.\n|\n*/\nimport router from '@adonisjs/core/services/router'\nimport { middleware } from '#start/kernel'\n\nconst StatementsController = () => import('#controllers/statements_controller')\nconst LedgerExportsController = () => import('#controllers/ledger_exports_controller')\nconst InvoicesController = () => import('#controllers/invoices_controller')\nconst CreditNotesController = () => import('#controllers/credit_notes_controller')\nconst RemittancesController = () => import('#controllers/remittances_controller')\nconst SupplierDocumentsController = () => import('#controllers/supplier_documents_controller')\nconst TeamMemberSettingsController = () => import('#controllers/team_member_settings_controller')\nconst MemberProfileController = () => import('#controllers/member_profile_controller')\nconst StatementImportsController = () => import('#controllers/statement_imports_controller')\nconst BankFeedImportsController = () => import('#controllers/bank_feed_imports_controller')\nconst BankCallbacksController = () => import('#controllers/bank_callbacks_controller')\nconst CardSettlementCallbacksController = () => import('#controllers/card_settlement_callbacks_controller')\n\nrouter\n  .group(() => {\n    router.get('/api/suppliers/:reference/statement', [StatementsController, 'show'])\n    router.get('/api/suppliers/:reference/ledger-export', [LedgerExportsController, 'show'])\n    router.get('/api/invoices', [InvoicesController, 'index'])\n    router.get('/api/invoices/:id', [InvoicesController, 'show'])\n    router.get('/api/credit-notes/:id', [CreditNotesController, 'show'])\n    router.get('/api/remittances/:reference/document', [RemittancesController, 'document'])\n    router.get('/api/supplier-documents/:id/download', [SupplierDocumentsController, 'download'])\n    router.patch('/api/team-members/me/settings', [TeamMemberSettingsController, 'update'])\n    router.patch('/api/team-members/me/profile', [MemberProfileController, 'update'])\n    router.post('/api/statement-imports', [StatementImportsController, 'store'])\n    router.post('/api/bank-feed-imports', [BankFeedImportsController, 'store'])\n  })\n  .use(middleware.auth())\n\nrouter.post('/api/bank-callbacks/northbank', [BankCallbacksController, 'store'])\nrouter.post('/api/card-callbacks/settlement', [CardSettlementCallbacksController, 'store'])\n"
+      }
+    },
+    {
+      "id": "h4-adonis-ledger-remittance-advice-download",
+      "family": "adonis-ledger",
+      "architecture": "AdonisJS v6 accounts-payable ledger service: HttpContext controller classes under app/controllers, routes declared in start/routes.ts, Lucid ORM models over PostgreSQL as the data layer, VineJS validators for request payloads, and the authenticated actor lifted off the Adonis session auth guard (ctx.auth.user) by app/lib/tenancy.ts.",
+      "language": "typescript",
+      "file": "adonis-ledger/app/controllers/remittances_controller.ts",
+      "scanAs": "app/controllers/remittances_controller.ts",
+      "kind": "vulnerable",
+      "category": "path_traversal_via_client_supplied_document_filename",
+      "severityBand": ["high", "critical"],
+      "line": 29,
+      "lineRange": [24, 43],
+      "route": "GET /api/remittances/:reference/document",
+      "runtimeVerifiable": true,
+      "why": "The ?file= query input is joined onto the per-organisation document root and handed straight to response.download, so ?file=../../7/remittance-0091.pdf reads another tenant's advice and ?file=../../../../etc/passwd leaves the document tree entirely. The tenant-scoped Remittance lookup above guards the record, not the path, and the comment claiming the join cannot escape the folder is wrong.",
+      "packageJson": {
+        "name": "adonis-ledger",
+        "version": "1.4.0",
+        "private": true,
+        "type": "module",
+        "imports": {
+          "#controllers/*": "./app/controllers/*.js",
+          "#models/*": "./app/models/*.js",
+          "#lib/*": "./app/lib/*.js",
+          "#config/*": "./config/*.js",
+          "#start/*": "./start/*.js"
+        },
+        "dependencies": {
+          "@adonisjs/auth": "^9.2.4",
+          "@adonisjs/core": "^6.14.1",
+          "@adonisjs/lucid": "^21.3.0",
+          "@adonisjs/session": "^7.5.0",
+          "luxon": "^3.5.0",
+          "pg": "^8.13.1",
+          "reflect-metadata": "^0.2.2"
+        }
+      },
+      "extraFiles": {
+        "app/lib/tenancy.ts": "import type { HttpContext } from '@adonisjs/core/http'\n\nexport type LedgerRole = 'clerk' | 'approver' | 'controller' | 'admin'\n\nexport type LedgerActor = {\n  id: number\n  organisationId: number\n  role: LedgerRole\n  approvalLimitCents: number\n}\n\n/**\n * Lifts the authenticated actor off the Adonis session guard into a plain\n * object, so controllers never have to touch the guard directly.\n */\nexport async function requireActor(ctx: HttpContext): Promise<LedgerActor> {\n  const user = ctx.auth.user\n\n  if (!user) {\n    throw new Error('E_NO_ACTOR: handler reached without an authenticated session')\n  }\n\n  return {\n    id: user.id,\n    organisationId: user.organisationId,\n    role: user.role as LedgerRole,\n    approvalLimitCents: user.approvalLimitCents,\n  }\n}\n\nexport function isController(actor: LedgerActor): boolean {\n  return actor.role === 'controller' || actor.role === 'admin'\n}\n",
+        "app/models/remittance.ts": "import { DateTime } from 'luxon'\nimport { BaseModel, column } from '@adonisjs/lucid/orm'\n\nexport default class Remittance extends BaseModel {\n  @column({ isPrimary: true })\n  declare id: number\n\n  @column()\n  declare organisationId: number\n\n  @column()\n  declare supplierId: number\n\n  @column()\n  declare reference: string\n\n  /**\n   * Base name of the current render, relative to the organisation's folder\n   * under the document root. Written by the mailer, never by a client.\n   */\n  @column()\n  declare pdfFileName: string\n\n  @column()\n  declare totalCents: number\n\n  @column.dateTime()\n  declare sentAt: DateTime | null\n}\n",
+        "config/ledger.ts": "import env from '#start/env'\n\nconst ledgerConfig = {\n  /**\n   * Root of the document tree. One folder per organisation id lives directly\n   * underneath it.\n   */\n  documentRoot: env.get('LEDGER_DOCUMENT_ROOT', '/srv/ledger/documents'),\n  paymentRunCutoffHour: 15,\n  maxOpenPaymentRuns: 3,\n  defaultCurrency: 'EUR',\n}\n\nexport default ledgerConfig\n",
+        "start/env.ts": "import { Env } from '@adonisjs/core/env'\n\nexport default await Env.create(new URL('../', import.meta.url), {\n  NODE_ENV: Env.schema.enum(['development', 'production', 'test'] as const),\n  PORT: Env.schema.number(),\n  APP_KEY: Env.schema.string(),\n  DB_HOST: Env.schema.string({ format: 'host' }),\n  DB_USER: Env.schema.string(),\n  DB_PASSWORD: Env.schema.string.optional(),\n  DB_DATABASE: Env.schema.string(),\n  LEDGER_DOCUMENT_ROOT: Env.schema.string(),\n  NORTHBANK_WEBHOOK_SECRET: Env.schema.string(),\n  CARDHUB_WEBHOOK_SECRET: Env.schema.string(),\n})\n",
+        "start/routes.ts": "/*\n|--------------------------------------------------------------------------\n| Ledger service HTTP surface\n|--------------------------------------------------------------------------\n|\n| Everything an operator touches sits behind the session auth guard. The two\n| bank callbacks are unauthenticated by design and verify their own payload\n| signatures instead.\n|\n*/\nimport router from '@adonisjs/core/services/router'\nimport { middleware } from '#start/kernel'\n\nconst StatementsController = () => import('#controllers/statements_controller')\nconst LedgerExportsController = () => import('#controllers/ledger_exports_controller')\nconst InvoicesController = () => import('#controllers/invoices_controller')\nconst CreditNotesController = () => import('#controllers/credit_notes_controller')\nconst RemittancesController = () => import('#controllers/remittances_controller')\nconst SupplierDocumentsController = () => import('#controllers/supplier_documents_controller')\nconst TeamMemberSettingsController = () => import('#controllers/team_member_settings_controller')\nconst MemberProfileController = () => import('#controllers/member_profile_controller')\nconst StatementImportsController = () => import('#controllers/statement_imports_controller')\nconst BankFeedImportsController = () => import('#controllers/bank_feed_imports_controller')\nconst BankCallbacksController = () => import('#controllers/bank_callbacks_controller')\nconst CardSettlementCallbacksController = () => import('#controllers/card_settlement_callbacks_controller')\n\nrouter\n  .group(() => {\n    router.get('/api/suppliers/:reference/statement', [StatementsController, 'show'])\n    router.get('/api/suppliers/:reference/ledger-export', [LedgerExportsController, 'show'])\n    router.get('/api/invoices', [InvoicesController, 'index'])\n    router.get('/api/invoices/:id', [InvoicesController, 'show'])\n    router.get('/api/credit-notes/:id', [CreditNotesController, 'show'])\n    router.get('/api/remittances/:reference/document', [RemittancesController, 'document'])\n    router.get('/api/supplier-documents/:id/download', [SupplierDocumentsController, 'download'])\n    router.patch('/api/team-members/me/settings', [TeamMemberSettingsController, 'update'])\n    router.patch('/api/team-members/me/profile', [MemberProfileController, 'update'])\n    router.post('/api/statement-imports', [StatementImportsController, 'store'])\n    router.post('/api/bank-feed-imports', [BankFeedImportsController, 'store'])\n  })\n  .use(middleware.auth())\n\nrouter.post('/api/bank-callbacks/northbank', [BankCallbacksController, 'store'])\nrouter.post('/api/card-callbacks/settlement', [CardSettlementCallbacksController, 'store'])\n"
+      }
+    },
+    {
+      "id": "h4-adonis-ledger-supplier-paperwork-download",
+      "family": "adonis-ledger",
+      "architecture": "AdonisJS v6 accounts-payable ledger service: HttpContext controller classes under app/controllers, routes declared in start/routes.ts, Lucid ORM models over PostgreSQL as the data layer, VineJS validators for request payloads, and the authenticated actor lifted off the Adonis session auth guard (ctx.auth.user) by app/lib/tenancy.ts.",
+      "language": "typescript",
+      "file": "adonis-ledger/app/controllers/supplier_documents_controller.ts",
+      "scanAs": "app/controllers/supplier_documents_controller.ts",
+      "kind": "safe",
+      "route": "GET /api/supplier-documents/:id/download",
+      "runtimeVerifiable": true,
+      "pairedWith": "h4-adonis-ledger-remittance-advice-download",
+      "why": "Same storage tree and the same response.download sink, but the relative path comes from document.storageKey on a row already scoped to the caller's organisation, and the resolved absolute path is rejected unless it still begins with the tenant root plus a separator. Nothing a client sends selects the file.",
+      "packageJson": {
+        "name": "adonis-ledger",
+        "version": "1.4.0",
+        "private": true,
+        "type": "module",
+        "imports": {
+          "#controllers/*": "./app/controllers/*.js",
+          "#models/*": "./app/models/*.js",
+          "#services/*": "./app/services/*.js",
+          "#validators/*": "./app/validators/*.js",
+          "#lib/*": "./app/lib/*.js",
+          "#config/*": "./config/*.js",
+          "#start/*": "./start/*.js"
+        },
+        "dependencies": {
+          "@adonisjs/auth": "^9.2.4",
+          "@adonisjs/core": "^6.14.1",
+          "@adonisjs/lucid": "^21.3.0",
+          "@adonisjs/session": "^7.5.0",
+          "@vinejs/vine": "^2.1.0",
+          "luxon": "^3.5.0",
+          "pg": "^8.13.1",
+          "reflect-metadata": "^0.2.2"
+        }
+      },
+      "extraFiles": {
+        "app/lib/tenancy.ts": "import type { HttpContext } from '@adonisjs/core/http'\n\nexport type LedgerRole = 'clerk' | 'approver' | 'controller' | 'admin'\n\nexport type LedgerActor = {\n  id: number\n  organisationId: number\n  role: LedgerRole\n  approvalLimitCents: number\n}\n\n/**\n * Lifts the authenticated actor off the Adonis session guard into a plain\n * object, so controllers never have to touch the guard directly.\n */\nexport async function requireActor(ctx: HttpContext): Promise<LedgerActor> {\n  const user = ctx.auth.user\n\n  if (!user) {\n    throw new Error('E_NO_ACTOR: handler reached without an authenticated session')\n  }\n\n  return {\n    id: user.id,\n    organisationId: user.organisationId,\n    role: user.role as LedgerRole,\n    approvalLimitCents: user.approvalLimitCents,\n  }\n}\n\nexport function isController(actor: LedgerActor): boolean {\n  return actor.role === 'controller' || actor.role === 'admin'\n}\n",
+        "app/models/supplier_document.ts": "import { DateTime } from 'luxon'\nimport { BaseModel, column } from '@adonisjs/lucid/orm'\n\nexport default class SupplierDocument extends BaseModel {\n  @column({ isPrimary: true })\n  declare id: number\n\n  @column()\n  declare organisationId: number\n\n  @column()\n  declare supplierId: number\n\n  /**\n   * Storage-relative key minted by the upload pipeline, of the shape\n   * `suppliers/<supplierId>/<uuid>.pdf`. Never client text.\n   */\n  @column()\n  declare storageKey: string\n\n  @column()\n  declare displayName: string\n\n  @column()\n  declare mimeType: string\n\n  @column()\n  declare sizeBytes: number\n\n  @column.dateTime({ autoCreate: true })\n  declare createdAt: DateTime\n}\n",
+        "config/ledger.ts": "import env from '#start/env'\n\nconst ledgerConfig = {\n  /**\n   * Root of the document tree. One folder per organisation id lives directly\n   * underneath it.\n   */\n  documentRoot: env.get('LEDGER_DOCUMENT_ROOT', '/srv/ledger/documents'),\n  paymentRunCutoffHour: 15,\n  maxOpenPaymentRuns: 3,\n  defaultCurrency: 'EUR',\n}\n\nexport default ledgerConfig\n",
+        "start/env.ts": "import { Env } from '@adonisjs/core/env'\n\nexport default await Env.create(new URL('../', import.meta.url), {\n  NODE_ENV: Env.schema.enum(['development', 'production', 'test'] as const),\n  PORT: Env.schema.number(),\n  APP_KEY: Env.schema.string(),\n  DB_HOST: Env.schema.string({ format: 'host' }),\n  DB_USER: Env.schema.string(),\n  DB_PASSWORD: Env.schema.string.optional(),\n  DB_DATABASE: Env.schema.string(),\n  LEDGER_DOCUMENT_ROOT: Env.schema.string(),\n  NORTHBANK_WEBHOOK_SECRET: Env.schema.string(),\n  CARDHUB_WEBHOOK_SECRET: Env.schema.string(),\n})\n",
+        "start/routes.ts": "/*\n|--------------------------------------------------------------------------\n| Ledger service HTTP surface\n|--------------------------------------------------------------------------\n|\n| Everything an operator touches sits behind the session auth guard. The two\n| bank callbacks are unauthenticated by design and verify their own payload\n| signatures instead.\n|\n*/\nimport router from '@adonisjs/core/services/router'\nimport { middleware } from '#start/kernel'\n\nconst StatementsController = () => import('#controllers/statements_controller')\nconst LedgerExportsController = () => import('#controllers/ledger_exports_controller')\nconst InvoicesController = () => import('#controllers/invoices_controller')\nconst CreditNotesController = () => import('#controllers/credit_notes_controller')\nconst RemittancesController = () => import('#controllers/remittances_controller')\nconst SupplierDocumentsController = () => import('#controllers/supplier_documents_controller')\nconst TeamMemberSettingsController = () => import('#controllers/team_member_settings_controller')\nconst MemberProfileController = () => import('#controllers/member_profile_controller')\nconst StatementImportsController = () => import('#controllers/statement_imports_controller')\nconst BankFeedImportsController = () => import('#controllers/bank_feed_imports_controller')\nconst BankCallbacksController = () => import('#controllers/bank_callbacks_controller')\nconst CardSettlementCallbacksController = () => import('#controllers/card_settlement_callbacks_controller')\n\nrouter\n  .group(() => {\n    router.get('/api/suppliers/:reference/statement', [StatementsController, 'show'])\n    router.get('/api/suppliers/:reference/ledger-export', [LedgerExportsController, 'show'])\n    router.get('/api/invoices', [InvoicesController, 'index'])\n    router.get('/api/invoices/:id', [InvoicesController, 'show'])\n    router.get('/api/credit-notes/:id', [CreditNotesController, 'show'])\n    router.get('/api/remittances/:reference/document', [RemittancesController, 'document'])\n    router.get('/api/supplier-documents/:id/download', [SupplierDocumentsController, 'download'])\n    router.patch('/api/team-members/me/settings', [TeamMemberSettingsController, 'update'])\n    router.patch('/api/team-members/me/profile', [MemberProfileController, 'update'])\n    router.post('/api/statement-imports', [StatementImportsController, 'store'])\n    router.post('/api/bank-feed-imports', [BankFeedImportsController, 'store'])\n  })\n  .use(middleware.auth())\n\nrouter.post('/api/bank-callbacks/northbank', [BankCallbacksController, 'store'])\nrouter.post('/api/card-callbacks/settlement', [CardSettlementCallbacksController, 'store'])\n"
+      }
+    },
+    {
+      "id": "h4-adonis-ledger-member-settings-update",
+      "family": "adonis-ledger",
+      "architecture": "AdonisJS v6 accounts-payable ledger service: HttpContext controller classes under app/controllers, routes declared in start/routes.ts, Lucid ORM models over PostgreSQL as the data layer, VineJS validators for request payloads, and the authenticated actor lifted off the Adonis session auth guard (ctx.auth.user) by app/lib/tenancy.ts.",
+      "language": "typescript",
+      "file": "adonis-ledger/app/controllers/team_member_settings_controller.ts",
+      "scanAs": "app/controllers/team_member_settings_controller.ts",
+      "kind": "vulnerable",
+      "category": "mass_assignment_privilege_escalation",
+      "severityBand": ["high", "critical"],
+      "line": 26,
+      "lineRange": [21, 27],
+      "route": "PATCH /api/team-members/me/settings",
+      "runtimeVerifiable": true,
+      "why": "member.merge(request.all()) copies every submitted key onto the Lucid row before save(), and the row carries role and approvalLimitCents, so a clerk patching their own settings can send role: 'admin' or approvalLimitCents: 99999999 and grant themselves payment-approval authority. The self/tenant scoping in the query above is real but constrains which row is written, not which columns.",
+      "packageJson": {
+        "name": "adonis-ledger",
+        "version": "1.4.0",
+        "private": true,
+        "type": "module",
+        "imports": {
+          "#controllers/*": "./app/controllers/*.js",
+          "#models/*": "./app/models/*.js",
+          "#services/*": "./app/services/*.js",
+          "#validators/*": "./app/validators/*.js",
+          "#lib/*": "./app/lib/*.js",
+          "#config/*": "./config/*.js",
+          "#start/*": "./start/*.js"
+        },
+        "dependencies": {
+          "@adonisjs/auth": "^9.2.4",
+          "@adonisjs/core": "^6.14.1",
+          "@adonisjs/lucid": "^21.3.0",
+          "@adonisjs/session": "^7.5.0",
+          "@vinejs/vine": "^2.1.0",
+          "luxon": "^3.5.0",
+          "pg": "^8.13.1",
+          "reflect-metadata": "^0.2.2"
+        }
+      },
+      "extraFiles": {
+        "app/lib/tenancy.ts": "import type { HttpContext } from '@adonisjs/core/http'\n\nexport type LedgerRole = 'clerk' | 'approver' | 'controller' | 'admin'\n\nexport type LedgerActor = {\n  id: number\n  organisationId: number\n  role: LedgerRole\n  approvalLimitCents: number\n}\n\n/**\n * Lifts the authenticated actor off the Adonis session guard into a plain\n * object, so controllers never have to touch the guard directly.\n */\nexport async function requireActor(ctx: HttpContext): Promise<LedgerActor> {\n  const user = ctx.auth.user\n\n  if (!user) {\n    throw new Error('E_NO_ACTOR: handler reached without an authenticated session')\n  }\n\n  return {\n    id: user.id,\n    organisationId: user.organisationId,\n    role: user.role as LedgerRole,\n    approvalLimitCents: user.approvalLimitCents,\n  }\n}\n\nexport function isController(actor: LedgerActor): boolean {\n  return actor.role === 'controller' || actor.role === 'admin'\n}\n\nexport function canApprove(actor: LedgerActor, grossCents: number): boolean {\n  if (actor.role === 'clerk') {\n    return false\n  }\n\n  return grossCents <= actor.approvalLimitCents\n}\n",
+        "app/models/team_member.ts": "import { DateTime } from 'luxon'\nimport { BaseModel, column } from '@adonisjs/lucid/orm'\n\nexport default class TeamMember extends BaseModel {\n  @column({ isPrimary: true })\n  declare id: number\n\n  @column()\n  declare organisationId: number\n\n  @column()\n  declare fullName: string\n\n  @column()\n  declare email: string\n\n  @column()\n  declare phone: string | null\n\n  @column()\n  declare locale: string\n\n  /**\n   * Granted by a controller through the admin screens. Together with\n   * approvalLimitCents it decides who may release a payment run, so neither\n   * belongs to any self-service form.\n   */\n  @column()\n  declare role: 'clerk' | 'approver' | 'controller' | 'admin'\n\n  @column()\n  declare approvalLimitCents: number\n\n  @column()\n  declare notifyOnPaymentRun: boolean\n\n  @column()\n  declare defaultCostCentre: string | null\n\n  @column.dateTime({ autoUpdate: true })\n  declare updatedAt: DateTime\n}\n",
+        "start/routes.ts": "/*\n|--------------------------------------------------------------------------\n| Ledger service HTTP surface\n|--------------------------------------------------------------------------\n|\n| Everything an operator touches sits behind the session auth guard. The two\n| bank callbacks are unauthenticated by design and verify their own payload\n| signatures instead.\n|\n*/\nimport router from '@adonisjs/core/services/router'\nimport { middleware } from '#start/kernel'\n\nconst StatementsController = () => import('#controllers/statements_controller')\nconst LedgerExportsController = () => import('#controllers/ledger_exports_controller')\nconst InvoicesController = () => import('#controllers/invoices_controller')\nconst CreditNotesController = () => import('#controllers/credit_notes_controller')\nconst RemittancesController = () => import('#controllers/remittances_controller')\nconst SupplierDocumentsController = () => import('#controllers/supplier_documents_controller')\nconst TeamMemberSettingsController = () => import('#controllers/team_member_settings_controller')\nconst MemberProfileController = () => import('#controllers/member_profile_controller')\nconst StatementImportsController = () => import('#controllers/statement_imports_controller')\nconst BankFeedImportsController = () => import('#controllers/bank_feed_imports_controller')\nconst BankCallbacksController = () => import('#controllers/bank_callbacks_controller')\nconst CardSettlementCallbacksController = () => import('#controllers/card_settlement_callbacks_controller')\n\nrouter\n  .group(() => {\n    router.get('/api/suppliers/:reference/statement', [StatementsController, 'show'])\n    router.get('/api/suppliers/:reference/ledger-export', [LedgerExportsController, 'show'])\n    router.get('/api/invoices', [InvoicesController, 'index'])\n    router.get('/api/invoices/:id', [InvoicesController, 'show'])\n    router.get('/api/credit-notes/:id', [CreditNotesController, 'show'])\n    router.get('/api/remittances/:reference/document', [RemittancesController, 'document'])\n    router.get('/api/supplier-documents/:id/download', [SupplierDocumentsController, 'download'])\n    router.patch('/api/team-members/me/settings', [TeamMemberSettingsController, 'update'])\n    router.patch('/api/team-members/me/profile', [MemberProfileController, 'update'])\n    router.post('/api/statement-imports', [StatementImportsController, 'store'])\n    router.post('/api/bank-feed-imports', [BankFeedImportsController, 'store'])\n  })\n  .use(middleware.auth())\n\nrouter.post('/api/bank-callbacks/northbank', [BankCallbacksController, 'store'])\nrouter.post('/api/card-callbacks/settlement', [CardSettlementCallbacksController, 'store'])\n"
+      }
+    },
+    {
+      "id": "h4-adonis-ledger-member-profile-update",
+      "family": "adonis-ledger",
+      "architecture": "AdonisJS v6 accounts-payable ledger service: HttpContext controller classes under app/controllers, routes declared in start/routes.ts, Lucid ORM models over PostgreSQL as the data layer, VineJS validators for request payloads, and the authenticated actor lifted off the Adonis session auth guard (ctx.auth.user) by app/lib/tenancy.ts.",
+      "language": "typescript",
+      "file": "adonis-ledger/app/controllers/member_profile_controller.ts",
+      "scanAs": "app/controllers/member_profile_controller.ts",
+      "kind": "safe",
+      "route": "PATCH /api/team-members/me/profile",
+      "runtimeVerifiable": true,
+      "pairedWith": "h4-adonis-ledger-member-settings-update",
+      "why": "The same self-service merge onto the same TeamMember row, but the merged object is the output of request.validateUsing(memberProfileValidator), and VineJS returns only the four keys its schema declares. role and approvalLimitCents sent by a client are dropped before the merge, so the write cannot change authority.",
+      "packageJson": {
+        "name": "adonis-ledger",
+        "version": "1.4.0",
+        "private": true,
+        "type": "module",
+        "imports": {
+          "#controllers/*": "./app/controllers/*.js",
+          "#models/*": "./app/models/*.js",
+          "#services/*": "./app/services/*.js",
+          "#validators/*": "./app/validators/*.js",
+          "#lib/*": "./app/lib/*.js",
+          "#config/*": "./config/*.js",
+          "#start/*": "./start/*.js"
+        },
+        "dependencies": {
+          "@adonisjs/auth": "^9.2.4",
+          "@adonisjs/core": "^6.14.1",
+          "@adonisjs/lucid": "^21.3.0",
+          "@adonisjs/session": "^7.5.0",
+          "@vinejs/vine": "^2.1.0",
+          "luxon": "^3.5.0",
+          "pg": "^8.13.1",
+          "reflect-metadata": "^0.2.2"
+        }
+      },
+      "extraFiles": {
+        "app/lib/tenancy.ts": "import type { HttpContext } from '@adonisjs/core/http'\n\nexport type LedgerRole = 'clerk' | 'approver' | 'controller' | 'admin'\n\nexport type LedgerActor = {\n  id: number\n  organisationId: number\n  role: LedgerRole\n  approvalLimitCents: number\n}\n\n/**\n * Lifts the authenticated actor off the Adonis session guard into a plain\n * object, so controllers never have to touch the guard directly.\n */\nexport async function requireActor(ctx: HttpContext): Promise<LedgerActor> {\n  const user = ctx.auth.user\n\n  if (!user) {\n    throw new Error('E_NO_ACTOR: handler reached without an authenticated session')\n  }\n\n  return {\n    id: user.id,\n    organisationId: user.organisationId,\n    role: user.role as LedgerRole,\n    approvalLimitCents: user.approvalLimitCents,\n  }\n}\n\nexport function isController(actor: LedgerActor): boolean {\n  return actor.role === 'controller' || actor.role === 'admin'\n}\n",
+        "app/models/team_member.ts": "import { DateTime } from 'luxon'\nimport { BaseModel, column } from '@adonisjs/lucid/orm'\n\nexport default class TeamMember extends BaseModel {\n  @column({ isPrimary: true })\n  declare id: number\n\n  @column()\n  declare organisationId: number\n\n  @column()\n  declare fullName: string\n\n  @column()\n  declare email: string\n\n  @column()\n  declare phone: string | null\n\n  @column()\n  declare locale: string\n\n  /**\n   * Granted by a controller through the admin screens. Together with\n   * approvalLimitCents it decides who may release a payment run, so neither\n   * belongs to any self-service form.\n   */\n  @column()\n  declare role: 'clerk' | 'approver' | 'controller' | 'admin'\n\n  @column()\n  declare approvalLimitCents: number\n\n  @column()\n  declare notifyOnPaymentRun: boolean\n\n  @column()\n  declare defaultCostCentre: string | null\n\n  @column.dateTime({ autoUpdate: true })\n  declare updatedAt: DateTime\n}\n",
+        "app/validators/member_profile.ts": "import vine from '@vinejs/vine'\n\n/**\n * The profile drawer owns exactly these four fields. Role, approval limit,\n * cost centre and organisation are set by a controller through the admin\n * screens, so they are deliberately absent from this schema and VineJS strips\n * them out of the payload.\n */\nexport const memberProfileValidator = vine.compile(\n  vine.object({\n    fullName: vine.string().trim().minLength(2).maxLength(120),\n    phone: vine\n      .string()\n      .trim()\n      .regex(/^\\+?[0-9 ()-]{6,20}$/)\n      .optional(),\n    locale: vine.enum(['en', 'nl', 'de'] as const).optional(),\n    notifyOnPaymentRun: vine.boolean().optional(),\n  })\n)\n",
+        "start/routes.ts": "/*\n|--------------------------------------------------------------------------\n| Ledger service HTTP surface\n|--------------------------------------------------------------------------\n|\n| Everything an operator touches sits behind the session auth guard. The two\n| bank callbacks are unauthenticated by design and verify their own payload\n| signatures instead.\n|\n*/\nimport router from '@adonisjs/core/services/router'\nimport { middleware } from '#start/kernel'\n\nconst StatementsController = () => import('#controllers/statements_controller')\nconst LedgerExportsController = () => import('#controllers/ledger_exports_controller')\nconst InvoicesController = () => import('#controllers/invoices_controller')\nconst CreditNotesController = () => import('#controllers/credit_notes_controller')\nconst RemittancesController = () => import('#controllers/remittances_controller')\nconst SupplierDocumentsController = () => import('#controllers/supplier_documents_controller')\nconst TeamMemberSettingsController = () => import('#controllers/team_member_settings_controller')\nconst MemberProfileController = () => import('#controllers/member_profile_controller')\nconst StatementImportsController = () => import('#controllers/statement_imports_controller')\nconst BankFeedImportsController = () => import('#controllers/bank_feed_imports_controller')\nconst BankCallbacksController = () => import('#controllers/bank_callbacks_controller')\nconst CardSettlementCallbacksController = () => import('#controllers/card_settlement_callbacks_controller')\n\nrouter\n  .group(() => {\n    router.get('/api/suppliers/:reference/statement', [StatementsController, 'show'])\n    router.get('/api/suppliers/:reference/ledger-export', [LedgerExportsController, 'show'])\n    router.get('/api/invoices', [InvoicesController, 'index'])\n    router.get('/api/invoices/:id', [InvoicesController, 'show'])\n    router.get('/api/credit-notes/:id', [CreditNotesController, 'show'])\n    router.get('/api/remittances/:reference/document', [RemittancesController, 'document'])\n    router.get('/api/supplier-documents/:id/download', [SupplierDocumentsController, 'download'])\n    router.patch('/api/team-members/me/settings', [TeamMemberSettingsController, 'update'])\n    router.patch('/api/team-members/me/profile', [MemberProfileController, 'update'])\n    router.post('/api/statement-imports', [StatementImportsController, 'store'])\n    router.post('/api/bank-feed-imports', [BankFeedImportsController, 'store'])\n  })\n  .use(middleware.auth())\n\nrouter.post('/api/bank-callbacks/northbank', [BankCallbacksController, 'store'])\nrouter.post('/api/card-callbacks/settlement', [CardSettlementCallbacksController, 'store'])\n"
+      }
+    },
+    {
+      "id": "h4-adonis-ledger-supplier-statement-pull",
+      "family": "adonis-ledger",
+      "architecture": "AdonisJS v6 accounts-payable ledger service: HttpContext controller classes under app/controllers, routes declared in start/routes.ts, Lucid ORM models over PostgreSQL as the data layer, VineJS validators for request payloads, and the authenticated actor lifted off the Adonis session auth guard (ctx.auth.user) by app/lib/tenancy.ts.",
+      "language": "typescript",
+      "file": "adonis-ledger/app/controllers/statement_imports_controller.ts",
+      "scanAs": "app/controllers/statement_imports_controller.ts",
+      "kind": "vulnerable",
+      "category": "server_side_request_forgery_via_operator_supplied_url",
+      "severityBand": ["medium", "high"],
+      "line": 42,
+      "lineRange": [32, 45],
+      "route": "POST /api/statement-imports",
+      "runtimeVerifiable": true,
+      "why": "sourceUrl arrives in the request body and, after only a VineJS URL-shape check, is handed straight to fetch, so an operator can make the ledger service issue requests to addresses it alone can reach — http://169.254.169.254/latest/meta-data/, http://127.0.0.1:9200 — and read the response back through the staged import lines. The comment's claim that the value comes from the supplier's onboarding record is wrong; it is whatever was posted.",
+      "packageJson": {
+        "name": "adonis-ledger",
+        "version": "1.4.0",
+        "private": true,
+        "type": "module",
+        "imports": {
+          "#controllers/*": "./app/controllers/*.js",
+          "#models/*": "./app/models/*.js",
+          "#services/*": "./app/services/*.js",
+          "#validators/*": "./app/validators/*.js",
+          "#lib/*": "./app/lib/*.js",
+          "#config/*": "./config/*.js",
+          "#start/*": "./start/*.js"
+        },
+        "dependencies": {
+          "@adonisjs/auth": "^9.2.4",
+          "@adonisjs/core": "^6.14.1",
+          "@adonisjs/lucid": "^21.3.0",
+          "@adonisjs/session": "^7.5.0",
+          "@vinejs/vine": "^2.1.0",
+          "luxon": "^3.5.0",
+          "pg": "^8.13.1",
+          "reflect-metadata": "^0.2.2"
+        }
+      },
+      "extraFiles": {
+        "app/lib/tenancy.ts": "import type { HttpContext } from '@adonisjs/core/http'\n\nexport type LedgerRole = 'clerk' | 'approver' | 'controller' | 'admin'\n\nexport type LedgerActor = {\n  id: number\n  organisationId: number\n  role: LedgerRole\n  approvalLimitCents: number\n}\n\n/**\n * Lifts the authenticated actor off the Adonis session guard into a plain\n * object, so controllers never have to touch the guard directly.\n */\nexport async function requireActor(ctx: HttpContext): Promise<LedgerActor> {\n  const user = ctx.auth.user\n\n  if (!user) {\n    throw new Error('E_NO_ACTOR: handler reached without an authenticated session')\n  }\n\n  return {\n    id: user.id,\n    organisationId: user.organisationId,\n    role: user.role as LedgerRole,\n    approvalLimitCents: user.approvalLimitCents,\n  }\n}\n\nexport function isController(actor: LedgerActor): boolean {\n  return actor.role === 'controller' || actor.role === 'admin'\n}\n",
+        "app/models/supplier.ts": "import { BaseModel, column } from '@adonisjs/lucid/orm'\n\nexport default class Supplier extends BaseModel {\n  @column({ isPrimary: true })\n  declare id: number\n\n  @column()\n  declare organisationId: number\n\n  @column()\n  declare reference: string\n\n  @column()\n  declare name: string\n\n  @column()\n  declare remittanceEmail: string\n\n  @column()\n  declare statementFeedUrl: string | null\n\n  @column()\n  declare vatNumber: string | null\n}\n",
+        "app/validators/statement_import.ts": "import vine from '@vinejs/vine'\n\nexport const statementImportValidator = vine.compile(\n  vine.object({\n    supplierReference: vine.string().trim().regex(/^SUP-\\d{5}$/),\n    sourceUrl: vine.string().trim().url().maxLength(2048),\n  })\n)\n",
+        "start/routes.ts": "/*\n|--------------------------------------------------------------------------\n| Ledger service HTTP surface\n|--------------------------------------------------------------------------\n|\n| Everything an operator touches sits behind the session auth guard. The two\n| bank callbacks are unauthenticated by design and verify their own payload\n| signatures instead.\n|\n*/\nimport router from '@adonisjs/core/services/router'\nimport { middleware } from '#start/kernel'\n\nconst StatementsController = () => import('#controllers/statements_controller')\nconst LedgerExportsController = () => import('#controllers/ledger_exports_controller')\nconst InvoicesController = () => import('#controllers/invoices_controller')\nconst CreditNotesController = () => import('#controllers/credit_notes_controller')\nconst RemittancesController = () => import('#controllers/remittances_controller')\nconst SupplierDocumentsController = () => import('#controllers/supplier_documents_controller')\nconst TeamMemberSettingsController = () => import('#controllers/team_member_settings_controller')\nconst MemberProfileController = () => import('#controllers/member_profile_controller')\nconst StatementImportsController = () => import('#controllers/statement_imports_controller')\nconst BankFeedImportsController = () => import('#controllers/bank_feed_imports_controller')\nconst BankCallbacksController = () => import('#controllers/bank_callbacks_controller')\nconst CardSettlementCallbacksController = () => import('#controllers/card_settlement_callbacks_controller')\n\nrouter\n  .group(() => {\n    router.get('/api/suppliers/:reference/statement', [StatementsController, 'show'])\n    router.get('/api/suppliers/:reference/ledger-export', [LedgerExportsController, 'show'])\n    router.get('/api/invoices', [InvoicesController, 'index'])\n    router.get('/api/invoices/:id', [InvoicesController, 'show'])\n    router.get('/api/credit-notes/:id', [CreditNotesController, 'show'])\n    router.get('/api/remittances/:reference/document', [RemittancesController, 'document'])\n    router.get('/api/supplier-documents/:id/download', [SupplierDocumentsController, 'download'])\n    router.patch('/api/team-members/me/settings', [TeamMemberSettingsController, 'update'])\n    router.patch('/api/team-members/me/profile', [MemberProfileController, 'update'])\n    router.post('/api/statement-imports', [StatementImportsController, 'store'])\n    router.post('/api/bank-feed-imports', [BankFeedImportsController, 'store'])\n  })\n  .use(middleware.auth())\n\nrouter.post('/api/bank-callbacks/northbank', [BankCallbacksController, 'store'])\nrouter.post('/api/card-callbacks/settlement', [CardSettlementCallbacksController, 'store'])\n"
+      }
+    },
+    {
+      "id": "h4-adonis-ledger-bank-feed-pull",
+      "family": "adonis-ledger",
+      "architecture": "AdonisJS v6 accounts-payable ledger service: HttpContext controller classes under app/controllers, routes declared in start/routes.ts, Lucid ORM models over PostgreSQL as the data layer, VineJS validators for request payloads, and the authenticated actor lifted off the Adonis session auth guard (ctx.auth.user) by app/lib/tenancy.ts.",
+      "language": "typescript",
+      "file": "adonis-ledger/app/controllers/bank_feed_imports_controller.ts",
+      "scanAs": "app/controllers/bank_feed_imports_controller.ts",
+      "kind": "safe",
+      "route": "POST /api/bank-feed-imports",
+      "runtimeVerifiable": true,
+      "pairedWith": "h4-adonis-ledger-supplier-statement-pull",
+      "why": "The same operator-pasted-link import against the same fetch sink, but the URL is parsed with new URL() and refused unless the scheme is https and the hostname is one of the two entries in ALLOWED_FEED_HOSTS, and redirect: 'error' stops an allowed host from bouncing the request onward. The allow list is what makes the target unsteerable.",
+      "packageJson": {
+        "name": "adonis-ledger",
+        "version": "1.4.0",
+        "private": true,
+        "type": "module",
+        "imports": {
+          "#controllers/*": "./app/controllers/*.js",
+          "#models/*": "./app/models/*.js",
+          "#services/*": "./app/services/*.js",
+          "#validators/*": "./app/validators/*.js",
+          "#lib/*": "./app/lib/*.js",
+          "#config/*": "./config/*.js",
+          "#start/*": "./start/*.js"
+        },
+        "dependencies": {
+          "@adonisjs/auth": "^9.2.4",
+          "@adonisjs/core": "^6.14.1",
+          "@adonisjs/lucid": "^21.3.0",
+          "@adonisjs/session": "^7.5.0",
+          "@vinejs/vine": "^2.1.0",
+          "luxon": "^3.5.0",
+          "pg": "^8.13.1",
+          "reflect-metadata": "^0.2.2"
+        }
+      },
+      "extraFiles": {
+        "app/lib/tenancy.ts": "import type { HttpContext } from '@adonisjs/core/http'\n\nexport type LedgerRole = 'clerk' | 'approver' | 'controller' | 'admin'\n\nexport type LedgerActor = {\n  id: number\n  organisationId: number\n  role: LedgerRole\n  approvalLimitCents: number\n}\n\n/**\n * Lifts the authenticated actor off the Adonis session guard into a plain\n * object, so controllers never have to touch the guard directly.\n */\nexport async function requireActor(ctx: HttpContext): Promise<LedgerActor> {\n  const user = ctx.auth.user\n\n  if (!user) {\n    throw new Error('E_NO_ACTOR: handler reached without an authenticated session')\n  }\n\n  return {\n    id: user.id,\n    organisationId: user.organisationId,\n    role: user.role as LedgerRole,\n    approvalLimitCents: user.approvalLimitCents,\n  }\n}\n\nexport function isController(actor: LedgerActor): boolean {\n  return actor.role === 'controller' || actor.role === 'admin'\n}\n",
+        "app/validators/bank_feed_import.ts": "import vine from '@vinejs/vine'\n\nexport const bankFeedImportValidator = vine.compile(\n  vine.object({\n    sourceUrl: vine.string().trim().url().maxLength(2048),\n    statementDate: vine.date({ formats: ['YYYY-MM-DD'] }),\n  })\n)\n",
+        "start/routes.ts": "/*\n|--------------------------------------------------------------------------\n| Ledger service HTTP surface\n|--------------------------------------------------------------------------\n|\n| Everything an operator touches sits behind the session auth guard. The two\n| bank callbacks are unauthenticated by design and verify their own payload\n| signatures instead.\n|\n*/\nimport router from '@adonisjs/core/services/router'\nimport { middleware } from '#start/kernel'\n\nconst StatementsController = () => import('#controllers/statements_controller')\nconst LedgerExportsController = () => import('#controllers/ledger_exports_controller')\nconst InvoicesController = () => import('#controllers/invoices_controller')\nconst CreditNotesController = () => import('#controllers/credit_notes_controller')\nconst RemittancesController = () => import('#controllers/remittances_controller')\nconst SupplierDocumentsController = () => import('#controllers/supplier_documents_controller')\nconst TeamMemberSettingsController = () => import('#controllers/team_member_settings_controller')\nconst MemberProfileController = () => import('#controllers/member_profile_controller')\nconst StatementImportsController = () => import('#controllers/statement_imports_controller')\nconst BankFeedImportsController = () => import('#controllers/bank_feed_imports_controller')\nconst BankCallbacksController = () => import('#controllers/bank_callbacks_controller')\nconst CardSettlementCallbacksController = () => import('#controllers/card_settlement_callbacks_controller')\n\nrouter\n  .group(() => {\n    router.get('/api/suppliers/:reference/statement', [StatementsController, 'show'])\n    router.get('/api/suppliers/:reference/ledger-export', [LedgerExportsController, 'show'])\n    router.get('/api/invoices', [InvoicesController, 'index'])\n    router.get('/api/invoices/:id', [InvoicesController, 'show'])\n    router.get('/api/credit-notes/:id', [CreditNotesController, 'show'])\n    router.get('/api/remittances/:reference/document', [RemittancesController, 'document'])\n    router.get('/api/supplier-documents/:id/download', [SupplierDocumentsController, 'download'])\n    router.patch('/api/team-members/me/settings', [TeamMemberSettingsController, 'update'])\n    router.patch('/api/team-members/me/profile', [MemberProfileController, 'update'])\n    router.post('/api/statement-imports', [StatementImportsController, 'store'])\n    router.post('/api/bank-feed-imports', [BankFeedImportsController, 'store'])\n  })\n  .use(middleware.auth())\n\nrouter.post('/api/bank-callbacks/northbank', [BankCallbacksController, 'store'])\nrouter.post('/api/card-callbacks/settlement', [CardSettlementCallbacksController, 'store'])\n"
+      }
+    },
+    {
+      "id": "h4-adonis-ledger-bank-settlement-callback",
+      "family": "adonis-ledger",
+      "architecture": "AdonisJS v6 accounts-payable ledger service: HttpContext controller classes under app/controllers, routes declared in start/routes.ts, Lucid ORM models over PostgreSQL as the data layer, VineJS validators for request payloads, and the authenticated actor lifted off the Adonis session auth guard (ctx.auth.user) by app/lib/tenancy.ts.",
+      "language": "typescript",
+      "file": "adonis-ledger/app/controllers/bank_callbacks_controller.ts",
+      "scanAs": "app/controllers/bank_callbacks_controller.ts",
+      "kind": "vulnerable",
+      "category": "webhook_signature_check_skipped_when_header_absent",
+      "severityBand": ["high", "critical"],
+      "line": 28,
+      "lineRange": [17, 45],
+      "route": "POST /api/bank-callbacks/northbank",
+      "runtimeVerifiable": true,
+      "why": "The HMAC comparison is gated on the header existing — if (providedSignature && providedSignature !== expectedSignature) — so a caller who simply omits x-northbank-signature skips verification entirely and reaches applySettlement, marking a payment instruction and every invoice behind it as paid on this unauthenticated route. The comment presenting the skip as sandbox tolerance is the defect.",
+      "packageJson": {
+        "name": "adonis-ledger",
+        "version": "1.4.0",
+        "private": true,
+        "type": "module",
+        "imports": {
+          "#controllers/*": "./app/controllers/*.js",
+          "#models/*": "./app/models/*.js",
+          "#services/*": "./app/services/*.js",
+          "#validators/*": "./app/validators/*.js",
+          "#lib/*": "./app/lib/*.js",
+          "#config/*": "./config/*.js",
+          "#start/*": "./start/*.js"
+        },
+        "dependencies": {
+          "@adonisjs/auth": "^9.2.4",
+          "@adonisjs/core": "^6.14.1",
+          "@adonisjs/lucid": "^21.3.0",
+          "@adonisjs/session": "^7.5.0",
+          "@vinejs/vine": "^2.1.0",
+          "luxon": "^3.5.0",
+          "pg": "^8.13.1",
+          "reflect-metadata": "^0.2.2"
+        }
+      },
+      "extraFiles": {
+        "app/services/settlement_writer.ts": "import db from '@adonisjs/lucid/services/db'\n\nexport type SettlementInstruction = {\n  organisationId: number\n  instructionReference: string\n  settledCents: number\n  valueDate: string\n}\n\n/**\n * Marks a payment instruction, and every invoice behind it, as settled.\n * Authenticating the settlement source is the caller's job: by the time a\n * payload reaches here it is treated as the bank's own word.\n */\nexport async function applySettlement(instruction: SettlementInstruction) {\n  return db.transaction(async (trx) => {\n    const row = await trx\n      .from('payment_instructions')\n      .where('reference', instruction.instructionReference)\n      .andWhere('organisation_id', instruction.organisationId)\n      .first()\n\n    if (!row) {\n      throw new Error(`E_UNKNOWN_INSTRUCTION: ${instruction.instructionReference}`)\n    }\n\n    await trx.from('payment_instructions').where('id', row.id).update({\n      status: 'settled',\n      settled_cents: instruction.settledCents,\n      value_date: instruction.valueDate,\n    })\n\n    await trx.from('invoices').where('payment_instruction_id', row.id).update({ status: 'paid' })\n\n    return { instructionReference: instruction.instructionReference, status: 'settled' as const }\n  })\n}\n",
+        "start/env.ts": "import { Env } from '@adonisjs/core/env'\n\nexport default await Env.create(new URL('../', import.meta.url), {\n  NODE_ENV: Env.schema.enum(['development', 'production', 'test'] as const),\n  PORT: Env.schema.number(),\n  APP_KEY: Env.schema.string(),\n  DB_HOST: Env.schema.string({ format: 'host' }),\n  DB_USER: Env.schema.string(),\n  DB_PASSWORD: Env.schema.string.optional(),\n  DB_DATABASE: Env.schema.string(),\n  LEDGER_DOCUMENT_ROOT: Env.schema.string(),\n  NORTHBANK_WEBHOOK_SECRET: Env.schema.string(),\n  CARDHUB_WEBHOOK_SECRET: Env.schema.string(),\n})\n",
+        "start/routes.ts": "/*\n|--------------------------------------------------------------------------\n| Ledger service HTTP surface\n|--------------------------------------------------------------------------\n|\n| Everything an operator touches sits behind the session auth guard. The two\n| bank callbacks are unauthenticated by design and verify their own payload\n| signatures instead.\n|\n*/\nimport router from '@adonisjs/core/services/router'\nimport { middleware } from '#start/kernel'\n\nconst StatementsController = () => import('#controllers/statements_controller')\nconst LedgerExportsController = () => import('#controllers/ledger_exports_controller')\nconst InvoicesController = () => import('#controllers/invoices_controller')\nconst CreditNotesController = () => import('#controllers/credit_notes_controller')\nconst RemittancesController = () => import('#controllers/remittances_controller')\nconst SupplierDocumentsController = () => import('#controllers/supplier_documents_controller')\nconst TeamMemberSettingsController = () => import('#controllers/team_member_settings_controller')\nconst MemberProfileController = () => import('#controllers/member_profile_controller')\nconst StatementImportsController = () => import('#controllers/statement_imports_controller')\nconst BankFeedImportsController = () => import('#controllers/bank_feed_imports_controller')\nconst BankCallbacksController = () => import('#controllers/bank_callbacks_controller')\nconst CardSettlementCallbacksController = () => import('#controllers/card_settlement_callbacks_controller')\n\nrouter\n  .group(() => {\n    router.get('/api/suppliers/:reference/statement', [StatementsController, 'show'])\n    router.get('/api/suppliers/:reference/ledger-export', [LedgerExportsController, 'show'])\n    router.get('/api/invoices', [InvoicesController, 'index'])\n    router.get('/api/invoices/:id', [InvoicesController, 'show'])\n    router.get('/api/credit-notes/:id', [CreditNotesController, 'show'])\n    router.get('/api/remittances/:reference/document', [RemittancesController, 'document'])\n    router.get('/api/supplier-documents/:id/download', [SupplierDocumentsController, 'download'])\n    router.patch('/api/team-members/me/settings', [TeamMemberSettingsController, 'update'])\n    router.patch('/api/team-members/me/profile', [MemberProfileController, 'update'])\n    router.post('/api/statement-imports', [StatementImportsController, 'store'])\n    router.post('/api/bank-feed-imports', [BankFeedImportsController, 'store'])\n  })\n  .use(middleware.auth())\n\nrouter.post('/api/bank-callbacks/northbank', [BankCallbacksController, 'store'])\nrouter.post('/api/card-callbacks/settlement', [CardSettlementCallbacksController, 'store'])\n"
+      }
+    },
+    {
+      "id": "h4-adonis-ledger-card-settlement-callback",
+      "family": "adonis-ledger",
+      "architecture": "AdonisJS v6 accounts-payable ledger service: HttpContext controller classes under app/controllers, routes declared in start/routes.ts, Lucid ORM models over PostgreSQL as the data layer, VineJS validators for request payloads, and the authenticated actor lifted off the Adonis session auth guard (ctx.auth.user) by app/lib/tenancy.ts.",
+      "language": "typescript",
+      "file": "adonis-ledger/app/controllers/card_settlement_callbacks_controller.ts",
+      "scanAs": "app/controllers/card_settlement_callbacks_controller.ts",
+      "kind": "safe",
+      "route": "POST /api/card-callbacks/settlement",
+      "runtimeVerifiable": true,
+      "pairedWith": "h4-adonis-ledger-bank-settlement-callback",
+      "why": "The same unauthenticated settlement sink, but a missing x-cardhub-signature header is rejected before anything else happens, and the supplied value is then compared against the HMAC over the raw body with a length check plus timingSafeEqual. No caller reaches applySettlement without the shared secret.",
+      "packageJson": {
+        "name": "adonis-ledger",
+        "version": "1.4.0",
+        "private": true,
+        "type": "module",
+        "imports": {
+          "#controllers/*": "./app/controllers/*.js",
+          "#models/*": "./app/models/*.js",
+          "#services/*": "./app/services/*.js",
+          "#validators/*": "./app/validators/*.js",
+          "#lib/*": "./app/lib/*.js",
+          "#config/*": "./config/*.js",
+          "#start/*": "./start/*.js"
+        },
+        "dependencies": {
+          "@adonisjs/auth": "^9.2.4",
+          "@adonisjs/core": "^6.14.1",
+          "@adonisjs/lucid": "^21.3.0",
+          "@adonisjs/session": "^7.5.0",
+          "@vinejs/vine": "^2.1.0",
+          "luxon": "^3.5.0",
+          "pg": "^8.13.1",
+          "reflect-metadata": "^0.2.2"
+        }
+      },
+      "extraFiles": {
+        "app/services/settlement_writer.ts": "import db from '@adonisjs/lucid/services/db'\n\nexport type SettlementInstruction = {\n  organisationId: number\n  instructionReference: string\n  settledCents: number\n  valueDate: string\n}\n\n/**\n * Marks a payment instruction, and every invoice behind it, as settled.\n * Authenticating the settlement source is the caller's job: by the time a\n * payload reaches here it is treated as the bank's own word.\n */\nexport async function applySettlement(instruction: SettlementInstruction) {\n  return db.transaction(async (trx) => {\n    const row = await trx\n      .from('payment_instructions')\n      .where('reference', instruction.instructionReference)\n      .andWhere('organisation_id', instruction.organisationId)\n      .first()\n\n    if (!row) {\n      throw new Error(`E_UNKNOWN_INSTRUCTION: ${instruction.instructionReference}`)\n    }\n\n    await trx.from('payment_instructions').where('id', row.id).update({\n      status: 'settled',\n      settled_cents: instruction.settledCents,\n      value_date: instruction.valueDate,\n    })\n\n    await trx.from('invoices').where('payment_instruction_id', row.id).update({ status: 'paid' })\n\n    return { instructionReference: instruction.instructionReference, status: 'settled' as const }\n  })\n}\n",
+        "start/env.ts": "import { Env } from '@adonisjs/core/env'\n\nexport default await Env.create(new URL('../', import.meta.url), {\n  NODE_ENV: Env.schema.enum(['development', 'production', 'test'] as const),\n  PORT: Env.schema.number(),\n  APP_KEY: Env.schema.string(),\n  DB_HOST: Env.schema.string({ format: 'host' }),\n  DB_USER: Env.schema.string(),\n  DB_PASSWORD: Env.schema.string.optional(),\n  DB_DATABASE: Env.schema.string(),\n  LEDGER_DOCUMENT_ROOT: Env.schema.string(),\n  NORTHBANK_WEBHOOK_SECRET: Env.schema.string(),\n  CARDHUB_WEBHOOK_SECRET: Env.schema.string(),\n})\n",
+        "start/routes.ts": "/*\n|--------------------------------------------------------------------------\n| Ledger service HTTP surface\n|--------------------------------------------------------------------------\n|\n| Everything an operator touches sits behind the session auth guard. The two\n| bank callbacks are unauthenticated by design and verify their own payload\n| signatures instead.\n|\n*/\nimport router from '@adonisjs/core/services/router'\nimport { middleware } from '#start/kernel'\n\nconst StatementsController = () => import('#controllers/statements_controller')\nconst LedgerExportsController = () => import('#controllers/ledger_exports_controller')\nconst InvoicesController = () => import('#controllers/invoices_controller')\nconst CreditNotesController = () => import('#controllers/credit_notes_controller')\nconst RemittancesController = () => import('#controllers/remittances_controller')\nconst SupplierDocumentsController = () => import('#controllers/supplier_documents_controller')\nconst TeamMemberSettingsController = () => import('#controllers/team_member_settings_controller')\nconst MemberProfileController = () => import('#controllers/member_profile_controller')\nconst StatementImportsController = () => import('#controllers/statement_imports_controller')\nconst BankFeedImportsController = () => import('#controllers/bank_feed_imports_controller')\nconst BankCallbacksController = () => import('#controllers/bank_callbacks_controller')\nconst CardSettlementCallbacksController = () => import('#controllers/card_settlement_callbacks_controller')\n\nrouter\n  .group(() => {\n    router.get('/api/suppliers/:reference/statement', [StatementsController, 'show'])\n    router.get('/api/suppliers/:reference/ledger-export', [LedgerExportsController, 'show'])\n    router.get('/api/invoices', [InvoicesController, 'index'])\n    router.get('/api/invoices/:id', [InvoicesController, 'show'])\n    router.get('/api/credit-notes/:id', [CreditNotesController, 'show'])\n    router.get('/api/remittances/:reference/document', [RemittancesController, 'document'])\n    router.get('/api/supplier-documents/:id/download', [SupplierDocumentsController, 'download'])\n    router.patch('/api/team-members/me/settings', [TeamMemberSettingsController, 'update'])\n    router.patch('/api/team-members/me/profile', [MemberProfileController, 'update'])\n    router.post('/api/statement-imports', [StatementImportsController, 'store'])\n    router.post('/api/bank-feed-imports', [BankFeedImportsController, 'store'])\n  })\n  .use(middleware.auth())\n\nrouter.post('/api/bank-callbacks/northbank', [BankCallbacksController, 'store'])\nrouter.post('/api/card-callbacks/settlement', [CardSettlementCallbacksController, 'store'])\n"
+      }
+    }
+  ]
+}

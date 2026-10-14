@@ -1,0 +1,347 @@
+{
+  "family": "convex-workspace",
+  "cases": [
+    {
+      "id": "h4-convex-workspace-document-rename",
+      "family": "convex-workspace",
+      "architecture": "Convex 1.17 backend for a collaborative document workspace: all state lives in the Convex document store behind defineSchema tables and indexes, and the caller's identity comes from ctx.auth.getUserIdentity() inside each publicly callable query, mutation and action.",
+      "language": "typescript",
+      "file": "convex-workspace/convex/documents.ts",
+      "scanAs": "convex/documents.ts",
+      "kind": "vulnerable",
+      "category": "missing_object_level_authorization",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 109,
+      "lineRange": [
+        97,
+        113
+      ],
+      "runtimeVerifiable": true,
+      "why": "renameDocument calls only requireActor, which proves the caller is signed in but says nothing about the row it is about to write: args.documentId is patched with the client's title even when the fetched document belongs to a workspace the caller has no membership in, so any authenticated user can retitle any document in the deployment. Its sibling updateBody, ten lines above, shows the check that is missing.",
+      "packageJson": {
+        "name": "myrqen-workspace-backend",
+        "version": "0.6.3",
+        "private": true,
+        "type": "module",
+        "dependencies": {
+          "convex": "^1.17.4"
+        }
+      },
+      "extraFiles": {
+        "convex/_lib/identity.ts": "import type { Doc, Id } from \"../_generated/dataModel\";\nimport type { MutationCtx, QueryCtx } from \"../_generated/server\";\n\nexport type Role = Doc<\"members\">[\"role\"];\n\nexport const ROLE_RANK: Record<Role, number> = {\n  viewer: 0,\n  editor: 1,\n  admin: 2,\n  owner: 3,\n};\n\nexport type Actor = {\n  subject: string;\n  email: string;\n};\n\n/**\n * Every public query and mutation is callable by any client that knows its\n * name, so each one has to establish the caller for itself. This is the only\n * place we read ctx.auth.\n */\nexport async function requireActor(ctx: QueryCtx | MutationCtx): Promise<Actor> {\n  const identity = await ctx.auth.getUserIdentity();\n  if (identity === null) {\n    throw new Error(\"Not signed in\");\n  }\n  if (typeof identity.email !== \"string\" || identity.email.length === 0) {\n    throw new Error(\"Identity is missing a verified email\");\n  }\n  return { subject: identity.subject, email: identity.email.toLowerCase() };\n}\n\n/**\n * Resolves the caller's membership row for one workspace. Throws unless the\n * caller is an active member, so callers can treat the returned row as the\n * authority on what this request is allowed to touch.\n */\nexport async function requireMembership(\n  ctx: QueryCtx | MutationCtx,\n  workspaceId: Id<\"workspaces\">,\n): Promise<Doc<\"members\">> {\n  const actor = await requireActor(ctx);\n  const membership = await ctx.db\n    .query(\"members\")\n    .withIndex(\"by_workspace_and_subject\", (q) =>\n      q.eq(\"workspaceId\", workspaceId).eq(\"subject\", actor.subject),\n    )\n    .unique();\n  if (membership === null) {\n    throw new Error(\"Not a member of this workspace\");\n  }\n  if (membership.deactivatedAt !== undefined) {\n    throw new Error(\"Membership has been deactivated\");\n  }\n  return membership;\n}\n\nexport async function requireRole(\n  ctx: QueryCtx | MutationCtx,\n  workspaceId: Id<\"workspaces\">,\n  minimum: Role,\n): Promise<Doc<\"members\">> {\n  const membership = await requireMembership(ctx, workspaceId);\n  if (ROLE_RANK[membership.role] < ROLE_RANK[minimum]) {\n    throw new Error(`Requires ${minimum} or higher in this workspace`);\n  }\n  return membership;\n}\n\n/**\n * A member may only hand out a role strictly below their own, which keeps\n * admins from minting owners and keeps everyone from promoting themselves.\n */\nexport function canGrant(granter: Role, granted: Role): boolean {\n  return ROLE_RANK[granter] >= ROLE_RANK.admin && ROLE_RANK[granted] < ROLE_RANK[granter];\n}\n"
+      }
+    },
+    {
+      "id": "h4-convex-workspace-folder-rename",
+      "family": "convex-workspace",
+      "architecture": "Convex 1.17 backend for a collaborative document workspace: all state lives in the Convex document store behind defineSchema tables and indexes, and the caller's identity comes from ctx.auth.getUserIdentity() inside each publicly callable query, mutation and action.",
+      "language": "typescript",
+      "file": "convex-workspace/convex/folders.ts",
+      "scanAs": "convex/folders.ts",
+      "kind": "safe",
+      "runtimeVerifiable": true,
+      "pairedWith": "h4-convex-workspace-document-rename",
+      "why": "renameFolder is the same load-then-patch shape, but it derives the authorization subject from the row it loaded - requireRole(ctx, folder.workspaceId, \"editor\") - so the patch can only reach a folder in a workspace where the caller is an active editor.",
+      "packageJson": {
+        "name": "myrqen-workspace-backend",
+        "version": "0.6.3",
+        "private": true,
+        "type": "module",
+        "dependencies": {
+          "convex": "^1.17.4"
+        }
+      },
+      "extraFiles": {
+        "convex/_lib/identity.ts": "import type { Doc, Id } from \"../_generated/dataModel\";\nimport type { MutationCtx, QueryCtx } from \"../_generated/server\";\n\nexport type Role = Doc<\"members\">[\"role\"];\n\nexport const ROLE_RANK: Record<Role, number> = {\n  viewer: 0,\n  editor: 1,\n  admin: 2,\n  owner: 3,\n};\n\nexport type Actor = {\n  subject: string;\n  email: string;\n};\n\n/**\n * Every public query and mutation is callable by any client that knows its\n * name, so each one has to establish the caller for itself. This is the only\n * place we read ctx.auth.\n */\nexport async function requireActor(ctx: QueryCtx | MutationCtx): Promise<Actor> {\n  const identity = await ctx.auth.getUserIdentity();\n  if (identity === null) {\n    throw new Error(\"Not signed in\");\n  }\n  if (typeof identity.email !== \"string\" || identity.email.length === 0) {\n    throw new Error(\"Identity is missing a verified email\");\n  }\n  return { subject: identity.subject, email: identity.email.toLowerCase() };\n}\n\n/**\n * Resolves the caller's membership row for one workspace. Throws unless the\n * caller is an active member, so callers can treat the returned row as the\n * authority on what this request is allowed to touch.\n */\nexport async function requireMembership(\n  ctx: QueryCtx | MutationCtx,\n  workspaceId: Id<\"workspaces\">,\n): Promise<Doc<\"members\">> {\n  const actor = await requireActor(ctx);\n  const membership = await ctx.db\n    .query(\"members\")\n    .withIndex(\"by_workspace_and_subject\", (q) =>\n      q.eq(\"workspaceId\", workspaceId).eq(\"subject\", actor.subject),\n    )\n    .unique();\n  if (membership === null) {\n    throw new Error(\"Not a member of this workspace\");\n  }\n  if (membership.deactivatedAt !== undefined) {\n    throw new Error(\"Membership has been deactivated\");\n  }\n  return membership;\n}\n\nexport async function requireRole(\n  ctx: QueryCtx | MutationCtx,\n  workspaceId: Id<\"workspaces\">,\n  minimum: Role,\n): Promise<Doc<\"members\">> {\n  const membership = await requireMembership(ctx, workspaceId);\n  if (ROLE_RANK[membership.role] < ROLE_RANK[minimum]) {\n    throw new Error(`Requires ${minimum} or higher in this workspace`);\n  }\n  return membership;\n}\n\n/**\n * A member may only hand out a role strictly below their own, which keeps\n * admins from minting owners and keeps everyone from promoting themselves.\n */\nexport function canGrant(granter: Role, granted: Role): boolean {\n  return ROLE_RANK[granter] >= ROLE_RANK.admin && ROLE_RANK[granted] < ROLE_RANK[granter];\n}\n"
+      }
+    },
+    {
+      "id": "h4-convex-workspace-member-role-change",
+      "family": "convex-workspace",
+      "architecture": "Convex 1.17 backend for a collaborative document workspace: all state lives in the Convex document store behind defineSchema tables and indexes, and the caller's identity comes from ctx.auth.getUserIdentity() inside each publicly callable query, mutation and action.",
+      "language": "typescript",
+      "file": "convex-workspace/convex/memberships.ts",
+      "scanAs": "convex/memberships.ts",
+      "kind": "vulnerable",
+      "category": "privilege_escalation_via_unchecked_role_assignment",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 54,
+      "lineRange": [
+        43,
+        55
+      ],
+      "runtimeVerifiable": true,
+      "why": "updateMemberRole writes args.role, chosen by the client, into the members row after only requireMembership on the target's workspace; the validator constrains the value's shape but not who may grant it, so any active member - a viewer included - can promote themselves or anyone else to owner. deactivateMember in the same file shows the requireRole plus canGrant check that the role write skips.",
+      "packageJson": {
+        "name": "myrqen-workspace-backend",
+        "version": "0.6.3",
+        "private": true,
+        "type": "module",
+        "dependencies": {
+          "convex": "^1.17.4"
+        }
+      },
+      "extraFiles": {
+        "convex/_lib/identity.ts": "import type { Doc, Id } from \"../_generated/dataModel\";\nimport type { MutationCtx, QueryCtx } from \"../_generated/server\";\n\nexport type Role = Doc<\"members\">[\"role\"];\n\nexport const ROLE_RANK: Record<Role, number> = {\n  viewer: 0,\n  editor: 1,\n  admin: 2,\n  owner: 3,\n};\n\nexport type Actor = {\n  subject: string;\n  email: string;\n};\n\n/**\n * Every public query and mutation is callable by any client that knows its\n * name, so each one has to establish the caller for itself. This is the only\n * place we read ctx.auth.\n */\nexport async function requireActor(ctx: QueryCtx | MutationCtx): Promise<Actor> {\n  const identity = await ctx.auth.getUserIdentity();\n  if (identity === null) {\n    throw new Error(\"Not signed in\");\n  }\n  if (typeof identity.email !== \"string\" || identity.email.length === 0) {\n    throw new Error(\"Identity is missing a verified email\");\n  }\n  return { subject: identity.subject, email: identity.email.toLowerCase() };\n}\n\n/**\n * Resolves the caller's membership row for one workspace. Throws unless the\n * caller is an active member, so callers can treat the returned row as the\n * authority on what this request is allowed to touch.\n */\nexport async function requireMembership(\n  ctx: QueryCtx | MutationCtx,\n  workspaceId: Id<\"workspaces\">,\n): Promise<Doc<\"members\">> {\n  const actor = await requireActor(ctx);\n  const membership = await ctx.db\n    .query(\"members\")\n    .withIndex(\"by_workspace_and_subject\", (q) =>\n      q.eq(\"workspaceId\", workspaceId).eq(\"subject\", actor.subject),\n    )\n    .unique();\n  if (membership === null) {\n    throw new Error(\"Not a member of this workspace\");\n  }\n  if (membership.deactivatedAt !== undefined) {\n    throw new Error(\"Membership has been deactivated\");\n  }\n  return membership;\n}\n\nexport async function requireRole(\n  ctx: QueryCtx | MutationCtx,\n  workspaceId: Id<\"workspaces\">,\n  minimum: Role,\n): Promise<Doc<\"members\">> {\n  const membership = await requireMembership(ctx, workspaceId);\n  if (ROLE_RANK[membership.role] < ROLE_RANK[minimum]) {\n    throw new Error(`Requires ${minimum} or higher in this workspace`);\n  }\n  return membership;\n}\n\n/**\n * A member may only hand out a role strictly below their own, which keeps\n * admins from minting owners and keeps everyone from promoting themselves.\n */\nexport function canGrant(granter: Role, granted: Role): boolean {\n  return ROLE_RANK[granter] >= ROLE_RANK.admin && ROLE_RANK[granted] < ROLE_RANK[granter];\n}\n",
+        "convex/schema.ts": "import { defineSchema, defineTable } from \"convex/server\";\nimport { v } from \"convex/values\";\n\nexport const roleValidator = v.union(\n  v.literal(\"viewer\"),\n  v.literal(\"editor\"),\n  v.literal(\"admin\"),\n  v.literal(\"owner\"),\n);\n\nexport default defineSchema({\n  workspaces: defineTable({\n    name: v.string(),\n    slug: v.string(),\n    plan: v.union(v.literal(\"free\"), v.literal(\"team\"), v.literal(\"enterprise\")),\n    seatLimit: v.number(),\n    createdAt: v.number(),\n  }).index(\"by_slug\", [\"slug\"]),\n\n  members: defineTable({\n    workspaceId: v.id(\"workspaces\"),\n    // Subject of the OIDC token handed to us by ctx.auth.getUserIdentity().\n    subject: v.string(),\n    email: v.string(),\n    role: roleValidator,\n    invitedBy: v.optional(v.string()),\n    deactivatedAt: v.optional(v.number()),\n  })\n    .index(\"by_workspace_and_subject\", [\"workspaceId\", \"subject\"])\n    .index(\"by_workspace_and_email\", [\"workspaceId\", \"email\"])\n    .index(\"by_subject\", [\"subject\"]),\n\n  folders: defineTable({\n    workspaceId: v.id(\"workspaces\"),\n    name: v.string(),\n    parentId: v.optional(v.id(\"folders\")),\n    updatedAt: v.number(),\n    updatedBy: v.string(),\n  }).index(\"by_workspace\", [\"workspaceId\"]),\n\n  documents: defineTable({\n    workspaceId: v.id(\"workspaces\"),\n    folderId: v.optional(v.id(\"folders\")),\n    title: v.string(),\n    body: v.string(),\n    createdBy: v.string(),\n    updatedAt: v.number(),\n    updatedBy: v.string(),\n    archivedAt: v.optional(v.number()),\n  })\n    .index(\"by_workspace\", [\"workspaceId\"])\n    .index(\"by_workspace_and_folder\", [\"workspaceId\", \"folderId\"])\n    .searchIndex(\"by_body\", {\n      searchField: \"body\",\n      filterFields: [\"workspaceId\", \"archivedAt\"],\n    }),\n\n  comments: defineTable({\n    workspaceId: v.id(\"workspaces\"),\n    documentId: v.id(\"documents\"),\n    message: v.string(),\n    authorSubject: v.string(),\n    resolvedAt: v.optional(v.number()),\n    createdAt: v.number(),\n  })\n    .index(\"by_document\", [\"documentId\"])\n    .searchIndex(\"by_message\", {\n      searchField: \"message\",\n      filterFields: [\"workspaceId\", \"resolvedAt\"],\n    }),\n\n  invitations: defineTable({\n    workspaceId: v.id(\"workspaces\"),\n    email: v.string(),\n    role: roleValidator,\n    token: v.string(),\n    invitedBy: v.string(),\n    expiresAt: v.number(),\n    acceptedAt: v.optional(v.number()),\n  })\n    .index(\"by_token\", [\"token\"])\n    .index(\"by_workspace_and_email\", [\"workspaceId\", \"email\"]),\n\n  exportJobs: defineTable({\n    workspaceId: v.id(\"workspaces\"),\n    requestedBy: v.string(),\n    format: v.union(v.literal(\"ndjson\"), v.literal(\"zip\")),\n    status: v.union(\n      v.literal(\"queued\"),\n      v.literal(\"running\"),\n      v.literal(\"complete\"),\n      v.literal(\"failed\"),\n    ),\n    rowCount: v.optional(v.number()),\n    downloadUrl: v.optional(v.string()),\n    finishedAt: v.optional(v.number()),\n    createdAt: v.number(),\n  })\n    .index(\"by_workspace\", [\"workspaceId\"])\n    .index(\"by_status\", [\"status\"]),\n\n  usageCounters: defineTable({\n    workspaceId: v.id(\"workspaces\"),\n    period: v.string(),\n    seatsBilled: v.number(),\n    documentsExported: v.number(),\n    closedAt: v.optional(v.number()),\n  }).index(\"by_workspace_and_period\", [\"workspaceId\", \"period\"]),\n\n  shareLinks: defineTable({\n    workspaceId: v.id(\"workspaces\"),\n    documentId: v.id(\"documents\"),\n    token: v.string(),\n    createdBy: v.string(),\n    expiresAt: v.number(),\n    revokedAt: v.optional(v.number()),\n  })\n    .index(\"by_token\", [\"token\"])\n    .index(\"by_document\", [\"documentId\"]),\n\n  digestTokens: defineTable({\n    workspaceId: v.id(\"workspaces\"),\n    token: v.string(),\n    createdBy: v.string(),\n    expiresAt: v.number(),\n    revokedAt: v.optional(v.number()),\n  })\n    .index(\"by_token\", [\"token\"])\n    .index(\"by_workspace\", [\"workspaceId\"]),\n});\n"
+      }
+    },
+    {
+      "id": "h4-convex-workspace-invitation-acceptance",
+      "family": "convex-workspace",
+      "architecture": "Convex 1.17 backend for a collaborative document workspace: all state lives in the Convex document store behind defineSchema tables and indexes, and the caller's identity comes from ctx.auth.getUserIdentity() inside each publicly callable query, mutation and action.",
+      "language": "typescript",
+      "file": "convex-workspace/convex/invitations.ts",
+      "scanAs": "convex/invitations.ts",
+      "kind": "safe",
+      "runtimeVerifiable": true,
+      "pairedWith": "h4-convex-workspace-member-role-change",
+      "why": "acceptInvitation inserts the members row with invitation.role, a server-side value that invite() could only create after requireRole(..., \"admin\") and canGrant clamped it strictly below the inviter's own rank, and only for the identity whose verified email equals invitation.email; nothing the accepting client sends reaches the role field.",
+      "packageJson": {
+        "name": "myrqen-workspace-backend",
+        "version": "0.6.3",
+        "private": true,
+        "type": "module",
+        "dependencies": {
+          "convex": "^1.17.4"
+        }
+      },
+      "extraFiles": {
+        "convex/_lib/identity.ts": "import type { Doc, Id } from \"../_generated/dataModel\";\nimport type { MutationCtx, QueryCtx } from \"../_generated/server\";\n\nexport type Role = Doc<\"members\">[\"role\"];\n\nexport const ROLE_RANK: Record<Role, number> = {\n  viewer: 0,\n  editor: 1,\n  admin: 2,\n  owner: 3,\n};\n\nexport type Actor = {\n  subject: string;\n  email: string;\n};\n\n/**\n * Every public query and mutation is callable by any client that knows its\n * name, so each one has to establish the caller for itself. This is the only\n * place we read ctx.auth.\n */\nexport async function requireActor(ctx: QueryCtx | MutationCtx): Promise<Actor> {\n  const identity = await ctx.auth.getUserIdentity();\n  if (identity === null) {\n    throw new Error(\"Not signed in\");\n  }\n  if (typeof identity.email !== \"string\" || identity.email.length === 0) {\n    throw new Error(\"Identity is missing a verified email\");\n  }\n  return { subject: identity.subject, email: identity.email.toLowerCase() };\n}\n\n/**\n * Resolves the caller's membership row for one workspace. Throws unless the\n * caller is an active member, so callers can treat the returned row as the\n * authority on what this request is allowed to touch.\n */\nexport async function requireMembership(\n  ctx: QueryCtx | MutationCtx,\n  workspaceId: Id<\"workspaces\">,\n): Promise<Doc<\"members\">> {\n  const actor = await requireActor(ctx);\n  const membership = await ctx.db\n    .query(\"members\")\n    .withIndex(\"by_workspace_and_subject\", (q) =>\n      q.eq(\"workspaceId\", workspaceId).eq(\"subject\", actor.subject),\n    )\n    .unique();\n  if (membership === null) {\n    throw new Error(\"Not a member of this workspace\");\n  }\n  if (membership.deactivatedAt !== undefined) {\n    throw new Error(\"Membership has been deactivated\");\n  }\n  return membership;\n}\n\nexport async function requireRole(\n  ctx: QueryCtx | MutationCtx,\n  workspaceId: Id<\"workspaces\">,\n  minimum: Role,\n): Promise<Doc<\"members\">> {\n  const membership = await requireMembership(ctx, workspaceId);\n  if (ROLE_RANK[membership.role] < ROLE_RANK[minimum]) {\n    throw new Error(`Requires ${minimum} or higher in this workspace`);\n  }\n  return membership;\n}\n\n/**\n * A member may only hand out a role strictly below their own, which keeps\n * admins from minting owners and keeps everyone from promoting themselves.\n */\nexport function canGrant(granter: Role, granted: Role): boolean {\n  return ROLE_RANK[granter] >= ROLE_RANK.admin && ROLE_RANK[granted] < ROLE_RANK[granter];\n}\n",
+        "convex/schema.ts": "import { defineSchema, defineTable } from \"convex/server\";\nimport { v } from \"convex/values\";\n\nexport const roleValidator = v.union(\n  v.literal(\"viewer\"),\n  v.literal(\"editor\"),\n  v.literal(\"admin\"),\n  v.literal(\"owner\"),\n);\n\nexport default defineSchema({\n  workspaces: defineTable({\n    name: v.string(),\n    slug: v.string(),\n    plan: v.union(v.literal(\"free\"), v.literal(\"team\"), v.literal(\"enterprise\")),\n    seatLimit: v.number(),\n    createdAt: v.number(),\n  }).index(\"by_slug\", [\"slug\"]),\n\n  members: defineTable({\n    workspaceId: v.id(\"workspaces\"),\n    // Subject of the OIDC token handed to us by ctx.auth.getUserIdentity().\n    subject: v.string(),\n    email: v.string(),\n    role: roleValidator,\n    invitedBy: v.optional(v.string()),\n    deactivatedAt: v.optional(v.number()),\n  })\n    .index(\"by_workspace_and_subject\", [\"workspaceId\", \"subject\"])\n    .index(\"by_workspace_and_email\", [\"workspaceId\", \"email\"])\n    .index(\"by_subject\", [\"subject\"]),\n\n  folders: defineTable({\n    workspaceId: v.id(\"workspaces\"),\n    name: v.string(),\n    parentId: v.optional(v.id(\"folders\")),\n    updatedAt: v.number(),\n    updatedBy: v.string(),\n  }).index(\"by_workspace\", [\"workspaceId\"]),\n\n  documents: defineTable({\n    workspaceId: v.id(\"workspaces\"),\n    folderId: v.optional(v.id(\"folders\")),\n    title: v.string(),\n    body: v.string(),\n    createdBy: v.string(),\n    updatedAt: v.number(),\n    updatedBy: v.string(),\n    archivedAt: v.optional(v.number()),\n  })\n    .index(\"by_workspace\", [\"workspaceId\"])\n    .index(\"by_workspace_and_folder\", [\"workspaceId\", \"folderId\"])\n    .searchIndex(\"by_body\", {\n      searchField: \"body\",\n      filterFields: [\"workspaceId\", \"archivedAt\"],\n    }),\n\n  comments: defineTable({\n    workspaceId: v.id(\"workspaces\"),\n    documentId: v.id(\"documents\"),\n    message: v.string(),\n    authorSubject: v.string(),\n    resolvedAt: v.optional(v.number()),\n    createdAt: v.number(),\n  })\n    .index(\"by_document\", [\"documentId\"])\n    .searchIndex(\"by_message\", {\n      searchField: \"message\",\n      filterFields: [\"workspaceId\", \"resolvedAt\"],\n    }),\n\n  invitations: defineTable({\n    workspaceId: v.id(\"workspaces\"),\n    email: v.string(),\n    role: roleValidator,\n    token: v.string(),\n    invitedBy: v.string(),\n    expiresAt: v.number(),\n    acceptedAt: v.optional(v.number()),\n  })\n    .index(\"by_token\", [\"token\"])\n    .index(\"by_workspace_and_email\", [\"workspaceId\", \"email\"]),\n\n  exportJobs: defineTable({\n    workspaceId: v.id(\"workspaces\"),\n    requestedBy: v.string(),\n    format: v.union(v.literal(\"ndjson\"), v.literal(\"zip\")),\n    status: v.union(\n      v.literal(\"queued\"),\n      v.literal(\"running\"),\n      v.literal(\"complete\"),\n      v.literal(\"failed\"),\n    ),\n    rowCount: v.optional(v.number()),\n    downloadUrl: v.optional(v.string()),\n    finishedAt: v.optional(v.number()),\n    createdAt: v.number(),\n  })\n    .index(\"by_workspace\", [\"workspaceId\"])\n    .index(\"by_status\", [\"status\"]),\n\n  usageCounters: defineTable({\n    workspaceId: v.id(\"workspaces\"),\n    period: v.string(),\n    seatsBilled: v.number(),\n    documentsExported: v.number(),\n    closedAt: v.optional(v.number()),\n  }).index(\"by_workspace_and_period\", [\"workspaceId\", \"period\"]),\n\n  shareLinks: defineTable({\n    workspaceId: v.id(\"workspaces\"),\n    documentId: v.id(\"documents\"),\n    token: v.string(),\n    createdBy: v.string(),\n    expiresAt: v.number(),\n    revokedAt: v.optional(v.number()),\n  })\n    .index(\"by_token\", [\"token\"])\n    .index(\"by_document\", [\"documentId\"]),\n\n  digestTokens: defineTable({\n    workspaceId: v.id(\"workspaces\"),\n    token: v.string(),\n    createdBy: v.string(),\n    expiresAt: v.number(),\n    revokedAt: v.optional(v.number()),\n  })\n    .index(\"by_token\", [\"token\"])\n    .index(\"by_workspace\", [\"workspaceId\"]),\n});\n"
+      }
+    },
+    {
+      "id": "h4-convex-workspace-export-completion-callback",
+      "family": "convex-workspace",
+      "architecture": "Convex 1.17 backend for a collaborative document workspace: all state lives in the Convex document store behind defineSchema tables and indexes, and the caller's identity comes from ctx.auth.getUserIdentity() inside each publicly callable query, mutation and action.",
+      "language": "typescript",
+      "file": "convex-workspace/convex/exportJobs.ts",
+      "scanAs": "convex/exportJobs.ts",
+      "kind": "vulnerable",
+      "category": "internal_callback_exposed_as_public_mutation",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "line": 49,
+      "lineRange": [
+        44,
+        68
+      ],
+      "runtimeVerifiable": true,
+      "why": "markExportComplete is a worker callback with no ctx.auth check, but it is exported as a public mutation rather than an internalMutation, so any browser client that knows the address exportJobs:markExportComplete can flip any workspace's export job to complete and set an attacker-chosen downloadUrl that admins are then shown.",
+      "packageJson": {
+        "name": "myrqen-workspace-backend",
+        "version": "0.6.3",
+        "private": true,
+        "type": "module",
+        "dependencies": {
+          "convex": "^1.17.4"
+        }
+      },
+      "extraFiles": {
+        "convex/_lib/identity.ts": "import type { Doc, Id } from \"../_generated/dataModel\";\nimport type { MutationCtx, QueryCtx } from \"../_generated/server\";\n\nexport type Role = Doc<\"members\">[\"role\"];\n\nexport const ROLE_RANK: Record<Role, number> = {\n  viewer: 0,\n  editor: 1,\n  admin: 2,\n  owner: 3,\n};\n\nexport type Actor = {\n  subject: string;\n  email: string;\n};\n\n/**\n * Every public query and mutation is callable by any client that knows its\n * name, so each one has to establish the caller for itself. This is the only\n * place we read ctx.auth.\n */\nexport async function requireActor(ctx: QueryCtx | MutationCtx): Promise<Actor> {\n  const identity = await ctx.auth.getUserIdentity();\n  if (identity === null) {\n    throw new Error(\"Not signed in\");\n  }\n  if (typeof identity.email !== \"string\" || identity.email.length === 0) {\n    throw new Error(\"Identity is missing a verified email\");\n  }\n  return { subject: identity.subject, email: identity.email.toLowerCase() };\n}\n\n/**\n * Resolves the caller's membership row for one workspace. Throws unless the\n * caller is an active member, so callers can treat the returned row as the\n * authority on what this request is allowed to touch.\n */\nexport async function requireMembership(\n  ctx: QueryCtx | MutationCtx,\n  workspaceId: Id<\"workspaces\">,\n): Promise<Doc<\"members\">> {\n  const actor = await requireActor(ctx);\n  const membership = await ctx.db\n    .query(\"members\")\n    .withIndex(\"by_workspace_and_subject\", (q) =>\n      q.eq(\"workspaceId\", workspaceId).eq(\"subject\", actor.subject),\n    )\n    .unique();\n  if (membership === null) {\n    throw new Error(\"Not a member of this workspace\");\n  }\n  if (membership.deactivatedAt !== undefined) {\n    throw new Error(\"Membership has been deactivated\");\n  }\n  return membership;\n}\n\nexport async function requireRole(\n  ctx: QueryCtx | MutationCtx,\n  workspaceId: Id<\"workspaces\">,\n  minimum: Role,\n): Promise<Doc<\"members\">> {\n  const membership = await requireMembership(ctx, workspaceId);\n  if (ROLE_RANK[membership.role] < ROLE_RANK[minimum]) {\n    throw new Error(`Requires ${minimum} or higher in this workspace`);\n  }\n  return membership;\n}\n\n/**\n * A member may only hand out a role strictly below their own, which keeps\n * admins from minting owners and keeps everyone from promoting themselves.\n */\nexport function canGrant(granter: Role, granted: Role): boolean {\n  return ROLE_RANK[granter] >= ROLE_RANK.admin && ROLE_RANK[granted] < ROLE_RANK[granter];\n}\n"
+      }
+    },
+    {
+      "id": "h4-convex-workspace-usage-counter-callback",
+      "family": "convex-workspace",
+      "architecture": "Convex 1.17 backend for a collaborative document workspace: all state lives in the Convex document store behind defineSchema tables and indexes, and the caller's identity comes from ctx.auth.getUserIdentity() inside each publicly callable query, mutation and action.",
+      "language": "typescript",
+      "file": "convex-workspace/convex/billingCounters.ts",
+      "scanAs": "convex/billingCounters.ts",
+      "kind": "safe",
+      "runtimeVerifiable": true,
+      "pairedWith": "h4-convex-workspace-export-completion-callback",
+      "why": "recordUsage is the same unauthenticated write - it also never touches ctx.auth - but internalMutation keeps it off the public function surface, so it is reachable only through ctx.runMutation, and its one caller, reconcileSeats, requires the owner role before calling it.",
+      "packageJson": {
+        "name": "myrqen-workspace-backend",
+        "version": "0.6.3",
+        "private": true,
+        "type": "module",
+        "dependencies": {
+          "convex": "^1.17.4"
+        }
+      },
+      "extraFiles": {
+        "convex/_lib/identity.ts": "import type { Doc, Id } from \"../_generated/dataModel\";\nimport type { MutationCtx, QueryCtx } from \"../_generated/server\";\n\nexport type Role = Doc<\"members\">[\"role\"];\n\nexport const ROLE_RANK: Record<Role, number> = {\n  viewer: 0,\n  editor: 1,\n  admin: 2,\n  owner: 3,\n};\n\nexport type Actor = {\n  subject: string;\n  email: string;\n};\n\n/**\n * Every public query and mutation is callable by any client that knows its\n * name, so each one has to establish the caller for itself. This is the only\n * place we read ctx.auth.\n */\nexport async function requireActor(ctx: QueryCtx | MutationCtx): Promise<Actor> {\n  const identity = await ctx.auth.getUserIdentity();\n  if (identity === null) {\n    throw new Error(\"Not signed in\");\n  }\n  if (typeof identity.email !== \"string\" || identity.email.length === 0) {\n    throw new Error(\"Identity is missing a verified email\");\n  }\n  return { subject: identity.subject, email: identity.email.toLowerCase() };\n}\n\n/**\n * Resolves the caller's membership row for one workspace. Throws unless the\n * caller is an active member, so callers can treat the returned row as the\n * authority on what this request is allowed to touch.\n */\nexport async function requireMembership(\n  ctx: QueryCtx | MutationCtx,\n  workspaceId: Id<\"workspaces\">,\n): Promise<Doc<\"members\">> {\n  const actor = await requireActor(ctx);\n  const membership = await ctx.db\n    .query(\"members\")\n    .withIndex(\"by_workspace_and_subject\", (q) =>\n      q.eq(\"workspaceId\", workspaceId).eq(\"subject\", actor.subject),\n    )\n    .unique();\n  if (membership === null) {\n    throw new Error(\"Not a member of this workspace\");\n  }\n  if (membership.deactivatedAt !== undefined) {\n    throw new Error(\"Membership has been deactivated\");\n  }\n  return membership;\n}\n\nexport async function requireRole(\n  ctx: QueryCtx | MutationCtx,\n  workspaceId: Id<\"workspaces\">,\n  minimum: Role,\n): Promise<Doc<\"members\">> {\n  const membership = await requireMembership(ctx, workspaceId);\n  if (ROLE_RANK[membership.role] < ROLE_RANK[minimum]) {\n    throw new Error(`Requires ${minimum} or higher in this workspace`);\n  }\n  return membership;\n}\n\n/**\n * A member may only hand out a role strictly below their own, which keeps\n * admins from minting owners and keeps everyone from promoting themselves.\n */\nexport function canGrant(granter: Role, granted: Role): boolean {\n  return ROLE_RANK[granter] >= ROLE_RANK.admin && ROLE_RANK[granted] < ROLE_RANK[granter];\n}\n"
+      }
+    },
+    {
+      "id": "h4-convex-workspace-document-update-relay",
+      "family": "convex-workspace",
+      "architecture": "Convex 1.17 backend for a collaborative document workspace: all state lives in the Convex document store behind defineSchema tables and indexes, and the caller's identity comes from ctx.auth.getUserIdentity() inside each publicly callable query, mutation and action.",
+      "language": "typescript",
+      "file": "convex-workspace/convex/notifications.ts",
+      "scanAs": "convex/notifications.ts",
+      "kind": "vulnerable",
+      "category": "server_side_request_forgery",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 60,
+      "lineRange": [
+        27,
+        69
+      ],
+      "runtimeVerifiable": true,
+      "why": "The Node action POSTs to whatever host args.callbackUrl names - the only checks are that the string parses as a URL and uses https - and the request carries RELAY_SERVICE_TOKEN in its authorization header, so any workspace member can aim the deployment's outbound fetch at internal or attacker-owned hosts and hand them the service token. The comment's claim that an admin vetted the URL is false: it arrives with this call.",
+      "packageJson": {
+        "name": "myrqen-workspace-backend",
+        "version": "0.6.3",
+        "private": true,
+        "type": "module",
+        "dependencies": {
+          "convex": "^1.17.4"
+        }
+      },
+      "extraFiles": {}
+    },
+    {
+      "id": "h4-convex-workspace-comment-digest-delivery",
+      "family": "convex-workspace",
+      "architecture": "Convex 1.17 backend for a collaborative document workspace: all state lives in the Convex document store behind defineSchema tables and indexes, and the caller's identity comes from ctx.auth.getUserIdentity() inside each publicly callable query, mutation and action.",
+      "language": "typescript",
+      "file": "convex-workspace/convex/integrationDelivery.ts",
+      "scanAs": "convex/integrationDelivery.ts",
+      "kind": "safe",
+      "runtimeVerifiable": true,
+      "pairedWith": "h4-convex-workspace-document-update-relay",
+      "why": "resolveDeliveryTarget is the guard doing the work: it rejects any scheme other than https, any URL carrying credentials, and any hostname outside the ALLOWED_DELIVERY_HOSTS set, and the fetch uses redirect: \"error\", so the outbound request and its authorization header can only ever reach one of three agreed vendor hosts.",
+      "packageJson": {
+        "name": "myrqen-workspace-backend",
+        "version": "0.6.3",
+        "private": true,
+        "type": "module",
+        "dependencies": {
+          "convex": "^1.17.4"
+        }
+      },
+      "extraFiles": {}
+    },
+    {
+      "id": "h4-convex-workspace-document-search",
+      "family": "convex-workspace",
+      "architecture": "Convex 1.17 backend for a collaborative document workspace: all state lives in the Convex document store behind defineSchema tables and indexes, and the caller's identity comes from ctx.auth.getUserIdentity() inside each publicly callable query, mutation and action.",
+      "language": "typescript",
+      "file": "convex-workspace/convex/documentSearch.ts",
+      "scanAs": "convex/documentSearch.ts",
+      "kind": "vulnerable",
+      "category": "cross_tenant_data_exposure_via_unscoped_search_index",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 37,
+      "lineRange": [
+        26,
+        47
+      ],
+      "runtimeVerifiable": true,
+      "why": "requireMembership establishes only that the caller belongs to args.workspaceId; the search index range that follows never constrains workspaceId even though by_body declares it as a filter field, so searchDocuments returns titles and body snippets from every workspace in the deployment to any member of any single workspace.",
+      "packageJson": {
+        "name": "myrqen-workspace-backend",
+        "version": "0.6.3",
+        "private": true,
+        "type": "module",
+        "dependencies": {
+          "convex": "^1.17.4"
+        }
+      },
+      "extraFiles": {
+        "convex/_lib/identity.ts": "import type { Doc, Id } from \"../_generated/dataModel\";\nimport type { MutationCtx, QueryCtx } from \"../_generated/server\";\n\nexport type Role = Doc<\"members\">[\"role\"];\n\nexport const ROLE_RANK: Record<Role, number> = {\n  viewer: 0,\n  editor: 1,\n  admin: 2,\n  owner: 3,\n};\n\nexport type Actor = {\n  subject: string;\n  email: string;\n};\n\n/**\n * Every public query and mutation is callable by any client that knows its\n * name, so each one has to establish the caller for itself. This is the only\n * place we read ctx.auth.\n */\nexport async function requireActor(ctx: QueryCtx | MutationCtx): Promise<Actor> {\n  const identity = await ctx.auth.getUserIdentity();\n  if (identity === null) {\n    throw new Error(\"Not signed in\");\n  }\n  if (typeof identity.email !== \"string\" || identity.email.length === 0) {\n    throw new Error(\"Identity is missing a verified email\");\n  }\n  return { subject: identity.subject, email: identity.email.toLowerCase() };\n}\n\n/**\n * Resolves the caller's membership row for one workspace. Throws unless the\n * caller is an active member, so callers can treat the returned row as the\n * authority on what this request is allowed to touch.\n */\nexport async function requireMembership(\n  ctx: QueryCtx | MutationCtx,\n  workspaceId: Id<\"workspaces\">,\n): Promise<Doc<\"members\">> {\n  const actor = await requireActor(ctx);\n  const membership = await ctx.db\n    .query(\"members\")\n    .withIndex(\"by_workspace_and_subject\", (q) =>\n      q.eq(\"workspaceId\", workspaceId).eq(\"subject\", actor.subject),\n    )\n    .unique();\n  if (membership === null) {\n    throw new Error(\"Not a member of this workspace\");\n  }\n  if (membership.deactivatedAt !== undefined) {\n    throw new Error(\"Membership has been deactivated\");\n  }\n  return membership;\n}\n\nexport async function requireRole(\n  ctx: QueryCtx | MutationCtx,\n  workspaceId: Id<\"workspaces\">,\n  minimum: Role,\n): Promise<Doc<\"members\">> {\n  const membership = await requireMembership(ctx, workspaceId);\n  if (ROLE_RANK[membership.role] < ROLE_RANK[minimum]) {\n    throw new Error(`Requires ${minimum} or higher in this workspace`);\n  }\n  return membership;\n}\n\n/**\n * A member may only hand out a role strictly below their own, which keeps\n * admins from minting owners and keeps everyone from promoting themselves.\n */\nexport function canGrant(granter: Role, granted: Role): boolean {\n  return ROLE_RANK[granter] >= ROLE_RANK.admin && ROLE_RANK[granted] < ROLE_RANK[granter];\n}\n",
+        "convex/schema.ts": "import { defineSchema, defineTable } from \"convex/server\";\nimport { v } from \"convex/values\";\n\nexport const roleValidator = v.union(\n  v.literal(\"viewer\"),\n  v.literal(\"editor\"),\n  v.literal(\"admin\"),\n  v.literal(\"owner\"),\n);\n\nexport default defineSchema({\n  workspaces: defineTable({\n    name: v.string(),\n    slug: v.string(),\n    plan: v.union(v.literal(\"free\"), v.literal(\"team\"), v.literal(\"enterprise\")),\n    seatLimit: v.number(),\n    createdAt: v.number(),\n  }).index(\"by_slug\", [\"slug\"]),\n\n  members: defineTable({\n    workspaceId: v.id(\"workspaces\"),\n    // Subject of the OIDC token handed to us by ctx.auth.getUserIdentity().\n    subject: v.string(),\n    email: v.string(),\n    role: roleValidator,\n    invitedBy: v.optional(v.string()),\n    deactivatedAt: v.optional(v.number()),\n  })\n    .index(\"by_workspace_and_subject\", [\"workspaceId\", \"subject\"])\n    .index(\"by_workspace_and_email\", [\"workspaceId\", \"email\"])\n    .index(\"by_subject\", [\"subject\"]),\n\n  folders: defineTable({\n    workspaceId: v.id(\"workspaces\"),\n    name: v.string(),\n    parentId: v.optional(v.id(\"folders\")),\n    updatedAt: v.number(),\n    updatedBy: v.string(),\n  }).index(\"by_workspace\", [\"workspaceId\"]),\n\n  documents: defineTable({\n    workspaceId: v.id(\"workspaces\"),\n    folderId: v.optional(v.id(\"folders\")),\n    title: v.string(),\n    body: v.string(),\n    createdBy: v.string(),\n    updatedAt: v.number(),\n    updatedBy: v.string(),\n    archivedAt: v.optional(v.number()),\n  })\n    .index(\"by_workspace\", [\"workspaceId\"])\n    .index(\"by_workspace_and_folder\", [\"workspaceId\", \"folderId\"])\n    .searchIndex(\"by_body\", {\n      searchField: \"body\",\n      filterFields: [\"workspaceId\", \"archivedAt\"],\n    }),\n\n  comments: defineTable({\n    workspaceId: v.id(\"workspaces\"),\n    documentId: v.id(\"documents\"),\n    message: v.string(),\n    authorSubject: v.string(),\n    resolvedAt: v.optional(v.number()),\n    createdAt: v.number(),\n  })\n    .index(\"by_document\", [\"documentId\"])\n    .searchIndex(\"by_message\", {\n      searchField: \"message\",\n      filterFields: [\"workspaceId\", \"resolvedAt\"],\n    }),\n\n  invitations: defineTable({\n    workspaceId: v.id(\"workspaces\"),\n    email: v.string(),\n    role: roleValidator,\n    token: v.string(),\n    invitedBy: v.string(),\n    expiresAt: v.number(),\n    acceptedAt: v.optional(v.number()),\n  })\n    .index(\"by_token\", [\"token\"])\n    .index(\"by_workspace_and_email\", [\"workspaceId\", \"email\"]),\n\n  exportJobs: defineTable({\n    workspaceId: v.id(\"workspaces\"),\n    requestedBy: v.string(),\n    format: v.union(v.literal(\"ndjson\"), v.literal(\"zip\")),\n    status: v.union(\n      v.literal(\"queued\"),\n      v.literal(\"running\"),\n      v.literal(\"complete\"),\n      v.literal(\"failed\"),\n    ),\n    rowCount: v.optional(v.number()),\n    downloadUrl: v.optional(v.string()),\n    finishedAt: v.optional(v.number()),\n    createdAt: v.number(),\n  })\n    .index(\"by_workspace\", [\"workspaceId\"])\n    .index(\"by_status\", [\"status\"]),\n\n  usageCounters: defineTable({\n    workspaceId: v.id(\"workspaces\"),\n    period: v.string(),\n    seatsBilled: v.number(),\n    documentsExported: v.number(),\n    closedAt: v.optional(v.number()),\n  }).index(\"by_workspace_and_period\", [\"workspaceId\", \"period\"]),\n\n  shareLinks: defineTable({\n    workspaceId: v.id(\"workspaces\"),\n    documentId: v.id(\"documents\"),\n    token: v.string(),\n    createdBy: v.string(),\n    expiresAt: v.number(),\n    revokedAt: v.optional(v.number()),\n  })\n    .index(\"by_token\", [\"token\"])\n    .index(\"by_document\", [\"documentId\"]),\n\n  digestTokens: defineTable({\n    workspaceId: v.id(\"workspaces\"),\n    token: v.string(),\n    createdBy: v.string(),\n    expiresAt: v.number(),\n    revokedAt: v.optional(v.number()),\n  })\n    .index(\"by_token\", [\"token\"])\n    .index(\"by_workspace\", [\"workspaceId\"]),\n});\n"
+      }
+    },
+    {
+      "id": "h4-convex-workspace-comment-search",
+      "family": "convex-workspace",
+      "architecture": "Convex 1.17 backend for a collaborative document workspace: all state lives in the Convex document store behind defineSchema tables and indexes, and the caller's identity comes from ctx.auth.getUserIdentity() inside each publicly callable query, mutation and action.",
+      "language": "typescript",
+      "file": "convex-workspace/convex/commentThreads.ts",
+      "scanAs": "convex/commentThreads.ts",
+      "kind": "safe",
+      "runtimeVerifiable": true,
+      "pairedWith": "h4-convex-workspace-document-search",
+      "why": "searchComments pins the search index range with .eq(\"workspaceId\", membership.workspaceId), taking the tenant from the membership row requireMembership returned rather than from the request, so no hit outside the caller's own workspace can enter the result set.",
+      "packageJson": {
+        "name": "myrqen-workspace-backend",
+        "version": "0.6.3",
+        "private": true,
+        "type": "module",
+        "dependencies": {
+          "convex": "^1.17.4"
+        }
+      },
+      "extraFiles": {
+        "convex/_lib/identity.ts": "import type { Doc, Id } from \"../_generated/dataModel\";\nimport type { MutationCtx, QueryCtx } from \"../_generated/server\";\n\nexport type Role = Doc<\"members\">[\"role\"];\n\nexport const ROLE_RANK: Record<Role, number> = {\n  viewer: 0,\n  editor: 1,\n  admin: 2,\n  owner: 3,\n};\n\nexport type Actor = {\n  subject: string;\n  email: string;\n};\n\n/**\n * Every public query and mutation is callable by any client that knows its\n * name, so each one has to establish the caller for itself. This is the only\n * place we read ctx.auth.\n */\nexport async function requireActor(ctx: QueryCtx | MutationCtx): Promise<Actor> {\n  const identity = await ctx.auth.getUserIdentity();\n  if (identity === null) {\n    throw new Error(\"Not signed in\");\n  }\n  if (typeof identity.email !== \"string\" || identity.email.length === 0) {\n    throw new Error(\"Identity is missing a verified email\");\n  }\n  return { subject: identity.subject, email: identity.email.toLowerCase() };\n}\n\n/**\n * Resolves the caller's membership row for one workspace. Throws unless the\n * caller is an active member, so callers can treat the returned row as the\n * authority on what this request is allowed to touch.\n */\nexport async function requireMembership(\n  ctx: QueryCtx | MutationCtx,\n  workspaceId: Id<\"workspaces\">,\n): Promise<Doc<\"members\">> {\n  const actor = await requireActor(ctx);\n  const membership = await ctx.db\n    .query(\"members\")\n    .withIndex(\"by_workspace_and_subject\", (q) =>\n      q.eq(\"workspaceId\", workspaceId).eq(\"subject\", actor.subject),\n    )\n    .unique();\n  if (membership === null) {\n    throw new Error(\"Not a member of this workspace\");\n  }\n  if (membership.deactivatedAt !== undefined) {\n    throw new Error(\"Membership has been deactivated\");\n  }\n  return membership;\n}\n\nexport async function requireRole(\n  ctx: QueryCtx | MutationCtx,\n  workspaceId: Id<\"workspaces\">,\n  minimum: Role,\n): Promise<Doc<\"members\">> {\n  const membership = await requireMembership(ctx, workspaceId);\n  if (ROLE_RANK[membership.role] < ROLE_RANK[minimum]) {\n    throw new Error(`Requires ${minimum} or higher in this workspace`);\n  }\n  return membership;\n}\n\n/**\n * A member may only hand out a role strictly below their own, which keeps\n * admins from minting owners and keeps everyone from promoting themselves.\n */\nexport function canGrant(granter: Role, granted: Role): boolean {\n  return ROLE_RANK[granter] >= ROLE_RANK.admin && ROLE_RANK[granted] < ROLE_RANK[granter];\n}\n",
+        "convex/schema.ts": "import { defineSchema, defineTable } from \"convex/server\";\nimport { v } from \"convex/values\";\n\nexport const roleValidator = v.union(\n  v.literal(\"viewer\"),\n  v.literal(\"editor\"),\n  v.literal(\"admin\"),\n  v.literal(\"owner\"),\n);\n\nexport default defineSchema({\n  workspaces: defineTable({\n    name: v.string(),\n    slug: v.string(),\n    plan: v.union(v.literal(\"free\"), v.literal(\"team\"), v.literal(\"enterprise\")),\n    seatLimit: v.number(),\n    createdAt: v.number(),\n  }).index(\"by_slug\", [\"slug\"]),\n\n  members: defineTable({\n    workspaceId: v.id(\"workspaces\"),\n    // Subject of the OIDC token handed to us by ctx.auth.getUserIdentity().\n    subject: v.string(),\n    email: v.string(),\n    role: roleValidator,\n    invitedBy: v.optional(v.string()),\n    deactivatedAt: v.optional(v.number()),\n  })\n    .index(\"by_workspace_and_subject\", [\"workspaceId\", \"subject\"])\n    .index(\"by_workspace_and_email\", [\"workspaceId\", \"email\"])\n    .index(\"by_subject\", [\"subject\"]),\n\n  folders: defineTable({\n    workspaceId: v.id(\"workspaces\"),\n    name: v.string(),\n    parentId: v.optional(v.id(\"folders\")),\n    updatedAt: v.number(),\n    updatedBy: v.string(),\n  }).index(\"by_workspace\", [\"workspaceId\"]),\n\n  documents: defineTable({\n    workspaceId: v.id(\"workspaces\"),\n    folderId: v.optional(v.id(\"folders\")),\n    title: v.string(),\n    body: v.string(),\n    createdBy: v.string(),\n    updatedAt: v.number(),\n    updatedBy: v.string(),\n    archivedAt: v.optional(v.number()),\n  })\n    .index(\"by_workspace\", [\"workspaceId\"])\n    .index(\"by_workspace_and_folder\", [\"workspaceId\", \"folderId\"])\n    .searchIndex(\"by_body\", {\n      searchField: \"body\",\n      filterFields: [\"workspaceId\", \"archivedAt\"],\n    }),\n\n  comments: defineTable({\n    workspaceId: v.id(\"workspaces\"),\n    documentId: v.id(\"documents\"),\n    message: v.string(),\n    authorSubject: v.string(),\n    resolvedAt: v.optional(v.number()),\n    createdAt: v.number(),\n  })\n    .index(\"by_document\", [\"documentId\"])\n    .searchIndex(\"by_message\", {\n      searchField: \"message\",\n      filterFields: [\"workspaceId\", \"resolvedAt\"],\n    }),\n\n  invitations: defineTable({\n    workspaceId: v.id(\"workspaces\"),\n    email: v.string(),\n    role: roleValidator,\n    token: v.string(),\n    invitedBy: v.string(),\n    expiresAt: v.number(),\n    acceptedAt: v.optional(v.number()),\n  })\n    .index(\"by_token\", [\"token\"])\n    .index(\"by_workspace_and_email\", [\"workspaceId\", \"email\"]),\n\n  exportJobs: defineTable({\n    workspaceId: v.id(\"workspaces\"),\n    requestedBy: v.string(),\n    format: v.union(v.literal(\"ndjson\"), v.literal(\"zip\")),\n    status: v.union(\n      v.literal(\"queued\"),\n      v.literal(\"running\"),\n      v.literal(\"complete\"),\n      v.literal(\"failed\"),\n    ),\n    rowCount: v.optional(v.number()),\n    downloadUrl: v.optional(v.string()),\n    finishedAt: v.optional(v.number()),\n    createdAt: v.number(),\n  })\n    .index(\"by_workspace\", [\"workspaceId\"])\n    .index(\"by_status\", [\"status\"]),\n\n  usageCounters: defineTable({\n    workspaceId: v.id(\"workspaces\"),\n    period: v.string(),\n    seatsBilled: v.number(),\n    documentsExported: v.number(),\n    closedAt: v.optional(v.number()),\n  }).index(\"by_workspace_and_period\", [\"workspaceId\", \"period\"]),\n\n  shareLinks: defineTable({\n    workspaceId: v.id(\"workspaces\"),\n    documentId: v.id(\"documents\"),\n    token: v.string(),\n    createdBy: v.string(),\n    expiresAt: v.number(),\n    revokedAt: v.optional(v.number()),\n  })\n    .index(\"by_token\", [\"token\"])\n    .index(\"by_document\", [\"documentId\"]),\n\n  digestTokens: defineTable({\n    workspaceId: v.id(\"workspaces\"),\n    token: v.string(),\n    createdBy: v.string(),\n    expiresAt: v.number(),\n    revokedAt: v.optional(v.number()),\n  })\n    .index(\"by_token\", [\"token\"])\n    .index(\"by_workspace\", [\"workspaceId\"]),\n});\n"
+      }
+    },
+    {
+      "id": "h4-convex-workspace-document-share-link",
+      "family": "convex-workspace",
+      "architecture": "Convex 1.17 backend for a collaborative document workspace: all state lives in the Convex document store behind defineSchema tables and indexes, and the caller's identity comes from ctx.auth.getUserIdentity() inside each publicly callable query, mutation and action.",
+      "language": "typescript",
+      "file": "convex-workspace/convex/shareLinks.ts",
+      "scanAs": "convex/shareLinks.ts",
+      "kind": "vulnerable",
+      "category": "predictable_share_token_from_non_cryptographic_rng",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "line": 46,
+      "lineRange": [
+        42,
+        57
+      ],
+      "runtimeVerifiable": true,
+      "why": "The share token is two Math.random base-36 draws concatenated with Date.now() - a non-cryptographic generator plus a value an attacker already knows - and that token is the entire credential resolveShareLink checks before returning a document's full body to an anonymous caller, so links are guessable rather than unguessable as the comment claims.",
+      "packageJson": {
+        "name": "myrqen-workspace-backend",
+        "version": "0.6.3",
+        "private": true,
+        "type": "module",
+        "dependencies": {
+          "convex": "^1.17.4"
+        }
+      },
+      "extraFiles": {
+        "convex/_lib/identity.ts": "import type { Doc, Id } from \"../_generated/dataModel\";\nimport type { MutationCtx, QueryCtx } from \"../_generated/server\";\n\nexport type Role = Doc<\"members\">[\"role\"];\n\nexport const ROLE_RANK: Record<Role, number> = {\n  viewer: 0,\n  editor: 1,\n  admin: 2,\n  owner: 3,\n};\n\nexport type Actor = {\n  subject: string;\n  email: string;\n};\n\n/**\n * Every public query and mutation is callable by any client that knows its\n * name, so each one has to establish the caller for itself. This is the only\n * place we read ctx.auth.\n */\nexport async function requireActor(ctx: QueryCtx | MutationCtx): Promise<Actor> {\n  const identity = await ctx.auth.getUserIdentity();\n  if (identity === null) {\n    throw new Error(\"Not signed in\");\n  }\n  if (typeof identity.email !== \"string\" || identity.email.length === 0) {\n    throw new Error(\"Identity is missing a verified email\");\n  }\n  return { subject: identity.subject, email: identity.email.toLowerCase() };\n}\n\n/**\n * Resolves the caller's membership row for one workspace. Throws unless the\n * caller is an active member, so callers can treat the returned row as the\n * authority on what this request is allowed to touch.\n */\nexport async function requireMembership(\n  ctx: QueryCtx | MutationCtx,\n  workspaceId: Id<\"workspaces\">,\n): Promise<Doc<\"members\">> {\n  const actor = await requireActor(ctx);\n  const membership = await ctx.db\n    .query(\"members\")\n    .withIndex(\"by_workspace_and_subject\", (q) =>\n      q.eq(\"workspaceId\", workspaceId).eq(\"subject\", actor.subject),\n    )\n    .unique();\n  if (membership === null) {\n    throw new Error(\"Not a member of this workspace\");\n  }\n  if (membership.deactivatedAt !== undefined) {\n    throw new Error(\"Membership has been deactivated\");\n  }\n  return membership;\n}\n\nexport async function requireRole(\n  ctx: QueryCtx | MutationCtx,\n  workspaceId: Id<\"workspaces\">,\n  minimum: Role,\n): Promise<Doc<\"members\">> {\n  const membership = await requireMembership(ctx, workspaceId);\n  if (ROLE_RANK[membership.role] < ROLE_RANK[minimum]) {\n    throw new Error(`Requires ${minimum} or higher in this workspace`);\n  }\n  return membership;\n}\n\n/**\n * A member may only hand out a role strictly below their own, which keeps\n * admins from minting owners and keeps everyone from promoting themselves.\n */\nexport function canGrant(granter: Role, granted: Role): boolean {\n  return ROLE_RANK[granter] >= ROLE_RANK.admin && ROLE_RANK[granted] < ROLE_RANK[granter];\n}\n"
+      }
+    },
+    {
+      "id": "h4-convex-workspace-workspace-digest-token",
+      "family": "convex-workspace",
+      "architecture": "Convex 1.17 backend for a collaborative document workspace: all state lives in the Convex document store behind defineSchema tables and indexes, and the caller's identity comes from ctx.auth.getUserIdentity() inside each publicly callable query, mutation and action.",
+      "language": "typescript",
+      "file": "convex-workspace/convex/publicDigests.ts",
+      "scanAs": "convex/publicDigests.ts",
+      "kind": "safe",
+      "runtimeVerifiable": true,
+      "pairedWith": "h4-convex-workspace-document-share-link",
+      "why": "createDigestToken mints the same kind of anonymous-read bearer token, but mintDigestToken fills 32 bytes from crypto.getRandomValues before hex-encoding them, so the token carries real entropy; resolveDigest still enforces revocation and expiry on top.",
+      "packageJson": {
+        "name": "myrqen-workspace-backend",
+        "version": "0.6.3",
+        "private": true,
+        "type": "module",
+        "dependencies": {
+          "convex": "^1.17.4"
+        }
+      },
+      "extraFiles": {
+        "convex/_lib/identity.ts": "import type { Doc, Id } from \"../_generated/dataModel\";\nimport type { MutationCtx, QueryCtx } from \"../_generated/server\";\n\nexport type Role = Doc<\"members\">[\"role\"];\n\nexport const ROLE_RANK: Record<Role, number> = {\n  viewer: 0,\n  editor: 1,\n  admin: 2,\n  owner: 3,\n};\n\nexport type Actor = {\n  subject: string;\n  email: string;\n};\n\n/**\n * Every public query and mutation is callable by any client that knows its\n * name, so each one has to establish the caller for itself. This is the only\n * place we read ctx.auth.\n */\nexport async function requireActor(ctx: QueryCtx | MutationCtx): Promise<Actor> {\n  const identity = await ctx.auth.getUserIdentity();\n  if (identity === null) {\n    throw new Error(\"Not signed in\");\n  }\n  if (typeof identity.email !== \"string\" || identity.email.length === 0) {\n    throw new Error(\"Identity is missing a verified email\");\n  }\n  return { subject: identity.subject, email: identity.email.toLowerCase() };\n}\n\n/**\n * Resolves the caller's membership row for one workspace. Throws unless the\n * caller is an active member, so callers can treat the returned row as the\n * authority on what this request is allowed to touch.\n */\nexport async function requireMembership(\n  ctx: QueryCtx | MutationCtx,\n  workspaceId: Id<\"workspaces\">,\n): Promise<Doc<\"members\">> {\n  const actor = await requireActor(ctx);\n  const membership = await ctx.db\n    .query(\"members\")\n    .withIndex(\"by_workspace_and_subject\", (q) =>\n      q.eq(\"workspaceId\", workspaceId).eq(\"subject\", actor.subject),\n    )\n    .unique();\n  if (membership === null) {\n    throw new Error(\"Not a member of this workspace\");\n  }\n  if (membership.deactivatedAt !== undefined) {\n    throw new Error(\"Membership has been deactivated\");\n  }\n  return membership;\n}\n\nexport async function requireRole(\n  ctx: QueryCtx | MutationCtx,\n  workspaceId: Id<\"workspaces\">,\n  minimum: Role,\n): Promise<Doc<\"members\">> {\n  const membership = await requireMembership(ctx, workspaceId);\n  if (ROLE_RANK[membership.role] < ROLE_RANK[minimum]) {\n    throw new Error(`Requires ${minimum} or higher in this workspace`);\n  }\n  return membership;\n}\n\n/**\n * A member may only hand out a role strictly below their own, which keeps\n * admins from minting owners and keeps everyone from promoting themselves.\n */\nexport function canGrant(granter: Role, granted: Role): boolean {\n  return ROLE_RANK[granter] >= ROLE_RANK.admin && ROLE_RANK[granted] < ROLE_RANK[granter];\n}\n"
+      }
+    }
+  ]
+}

@@ -1,0 +1,276 @@
+{
+  "family": "spring-boot",
+  "architecture": "Spring Boot 3 REST API for an enterprise document-management product: @RestController handlers, Spring Data JPA repositories, JdbcTemplate read models for reporting, and one Spring Security filter chain with method security enabled.",
+  "cases": [
+    {
+      "family": "spring-boot",
+      "architecture": "Spring Boot 3 REST API for an enterprise document-management product: @RestController handlers, Spring Data JPA repositories, JdbcTemplate read models for reporting, and one Spring Security filter chain with method security enabled.",
+      "language": "java",
+      "runtimeVerifiable": true,
+      "id": "h2-spring-boot-retention-disposition",
+      "file": "spring-boot/src/main/java/com/cartulary/dms/retention/RetentionPolicyController.java",
+      "kind": "vulnerable",
+      "category": "broken_function_level_authorization",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "POST /api/v1/retention-policies/:policyId/dispositions",
+      "line": 99,
+      "lineRange": [
+        99,
+        107
+      ],
+      "extraFiles": {
+        "src/main/java/com/cartulary/dms/security/WorkspacePrincipal.java": "package com.cartulary.dms.security;\n\nimport java.util.Set;\nimport java.util.UUID;\n\n/**\n * The authenticated subject, resolved from the access token by {@link ApiSecurityConfiguration}.\n *\n * A principal is always scoped to exactly one workspace: Cartulary tenants never share an\n * access token, so {@code workspaceId()} is the tenant boundary that every query is expected\n * to carry. Handlers that forget it are the reason this record has no no-arg accessor.\n */\npublic record WorkspacePrincipal(UUID userId, UUID workspaceId, String email, Set<String> roles) {\n\n    public boolean hasRole(String role) {\n        return roles.contains(role);\n    }\n}\n",
+        "src/main/java/com/cartulary/dms/security/ApiSecurityConfiguration.java": "package com.cartulary.dms.security;\n\nimport org.springframework.context.annotation.Bean;\nimport org.springframework.context.annotation.Configuration;\nimport org.springframework.security.config.Customizer;\nimport org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;\nimport org.springframework.security.config.annotation.web.builders.HttpSecurity;\nimport org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;\nimport org.springframework.security.config.http.SessionCreationPolicy;\nimport org.springframework.security.web.SecurityFilterChain;\n\n/**\n * The API filter chain.\n *\n * Exactly two coarse rules live here and nowhere else: the public catalogue is anonymous,\n * and everything under /api/v1/admin is compliance-only. Anything finer than that — which\n * workspace, which document, which record class — belongs in the handler, because the URL\n * does not carry enough information to decide it.\n */\n@Configuration\n@EnableWebSecurity\n@EnableMethodSecurity\npublic class ApiSecurityConfiguration {\n\n    @Bean\n    SecurityFilterChain apiFilterChain(HttpSecurity http) throws Exception {\n        http.securityMatcher(\"/api/**\")\n                .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))\n                .authorizeHttpRequests(requests -> requests\n                        .requestMatchers(\"/api/v1/public/**\").permitAll()\n                        .requestMatchers(\"/api/v1/admin/**\").hasRole(\"COMPLIANCE_OFFICER\")\n                        .anyRequest().authenticated())\n                .oauth2ResourceServer(oauth2 -> oauth2.jwt(Customizer.withDefaults()));\n        return http.build();\n    }\n}\n"
+      },
+      "why": "Every other privileged method on this controller carries @PreAuthorize(\"hasRole('RECORDS_ADMIN')\"), but the disposition sweep added in 4.3 has none, and the controller deliberately sits on /api/v1/retention-policies rather than under the /api/v1/admin prefix that the filter chain restricts. Any authenticated workspace member can therefore POST a cutoff and permanently destroy every document the policy covers, with no undo and no recycle bin. The handler reads the policy scoped to the caller's workspace, so it will not 404 — it will run."
+    },
+    {
+      "family": "spring-boot",
+      "architecture": "Spring Boot 3 REST API for an enterprise document-management product: @RestController handlers, Spring Data JPA repositories, JdbcTemplate read models for reporting, and one Spring Security filter chain with method security enabled.",
+      "language": "java",
+      "runtimeVerifiable": true,
+      "id": "h2-spring-boot-legal-hold-admin",
+      "file": "spring-boot/src/main/java/com/cartulary/dms/legalhold/LegalHoldController.java",
+      "kind": "safe",
+      "pairedWith": "h2-spring-boot-retention-disposition",
+      "extraFiles": {
+        "src/main/java/com/cartulary/dms/security/WorkspacePrincipal.java": "package com.cartulary.dms.security;\n\nimport java.util.Set;\nimport java.util.UUID;\n\n/**\n * The authenticated subject, resolved from the access token by {@link ApiSecurityConfiguration}.\n *\n * A principal is always scoped to exactly one workspace: Cartulary tenants never share an\n * access token, so {@code workspaceId()} is the tenant boundary that every query is expected\n * to carry. Handlers that forget it are the reason this record has no no-arg accessor.\n */\npublic record WorkspacePrincipal(UUID userId, UUID workspaceId, String email, Set<String> roles) {\n\n    public boolean hasRole(String role) {\n        return roles.contains(role);\n    }\n}\n",
+        "src/main/java/com/cartulary/dms/security/ApiSecurityConfiguration.java": "package com.cartulary.dms.security;\n\nimport org.springframework.context.annotation.Bean;\nimport org.springframework.context.annotation.Configuration;\nimport org.springframework.security.config.Customizer;\nimport org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;\nimport org.springframework.security.config.annotation.web.builders.HttpSecurity;\nimport org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;\nimport org.springframework.security.config.http.SessionCreationPolicy;\nimport org.springframework.security.web.SecurityFilterChain;\n\n/**\n * The API filter chain.\n *\n * Exactly two coarse rules live here and nowhere else: the public catalogue is anonymous,\n * and everything under /api/v1/admin is compliance-only. Anything finer than that — which\n * workspace, which document, which record class — belongs in the handler, because the URL\n * does not carry enough information to decide it.\n */\n@Configuration\n@EnableWebSecurity\n@EnableMethodSecurity\npublic class ApiSecurityConfiguration {\n\n    @Bean\n    SecurityFilterChain apiFilterChain(HttpSecurity http) throws Exception {\n        http.securityMatcher(\"/api/**\")\n                .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))\n                .authorizeHttpRequests(requests -> requests\n                        .requestMatchers(\"/api/v1/public/**\").permitAll()\n                        .requestMatchers(\"/api/v1/admin/**\").hasRole(\"COMPLIANCE_OFFICER\")\n                        .anyRequest().authenticated())\n                .oauth2ResourceServer(oauth2 -> oauth2.jwt(Customizer.withDefaults()));\n        return http.build();\n    }\n}\n"
+      },
+      "why": "There is not a single @PreAuthorize in the file, which is exactly what the vulnerable sibling is missing, yet every method here is authorised. The controller is mapped under /api/v1/admin/legal-holds and ApiSecurityConfiguration#apiFilterChain binds requestMatchers(\"/api/v1/admin/**\") to hasRole(\"COMPLIANCE_OFFICER\"), so the check runs in the filter chain two files away rather than on the method. Centralising one coarse role rule at the URL prefix is a legitimate design, and the handlers still scope every lookup to the caller's workspace."
+    },
+    {
+      "family": "spring-boot",
+      "architecture": "Spring Boot 3 REST API for an enterprise document-management product: @RestController handlers, Spring Data JPA repositories, JdbcTemplate read models for reporting, and one Spring Security filter chain with method security enabled.",
+      "language": "java",
+      "runtimeVerifiable": true,
+      "id": "h2-spring-boot-version-content",
+      "file": "spring-boot/src/main/java/com/cartulary/dms/versions/DocumentVersionController.java",
+      "kind": "vulnerable",
+      "category": "broken_object_level_authorization",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "GET /api/v1/documents/:documentId/versions/:versionId/content",
+      "line": 66,
+      "lineRange": [
+        66,
+        75
+      ],
+      "extraFiles": {
+        "src/main/java/com/cartulary/dms/security/WorkspacePrincipal.java": "package com.cartulary.dms.security;\n\nimport java.util.Set;\nimport java.util.UUID;\n\n/**\n * The authenticated subject, resolved from the access token by {@link ApiSecurityConfiguration}.\n *\n * A principal is always scoped to exactly one workspace: Cartulary tenants never share an\n * access token, so {@code workspaceId()} is the tenant boundary that every query is expected\n * to carry. Handlers that forget it are the reason this record has no no-arg accessor.\n */\npublic record WorkspacePrincipal(UUID userId, UUID workspaceId, String email, Set<String> roles) {\n\n    public boolean hasRole(String role) {\n        return roles.contains(role);\n    }\n}\n"
+      },
+      "why": "The list method above resolves versions with findByDocumentIdAndDocumentWorkspaceId..., but the content method resolves the revision with a bare findById(versionId) and never compares the result to the documentId in the path or to principal.workspaceId(). @PreAuthorize(\"hasAuthority('SCOPE_documents.read')\") only proves the caller is an authenticated Cartulary user, not that this revision is theirs. Any tenant holding a version id can stream another tenant's document bytes, and the id travels in the URL of the diff view."
+    },
+    {
+      "family": "spring-boot",
+      "architecture": "Spring Boot 3 REST API for an enterprise document-management product: @RestController handlers, Spring Data JPA repositories, JdbcTemplate read models for reporting, and one Spring Security filter chain with method security enabled.",
+      "language": "java",
+      "runtimeVerifiable": true,
+      "id": "h2-spring-boot-annotation-thread",
+      "file": "spring-boot/src/main/java/com/cartulary/dms/annotations/AnnotationController.java",
+      "kind": "safe",
+      "pairedWith": "h2-spring-boot-version-content",
+      "extraFiles": {
+        "src/main/java/com/cartulary/dms/security/WorkspacePrincipal.java": "package com.cartulary.dms.security;\n\nimport java.util.Set;\nimport java.util.UUID;\n\n/**\n * The authenticated subject, resolved from the access token by {@link ApiSecurityConfiguration}.\n *\n * A principal is always scoped to exactly one workspace: Cartulary tenants never share an\n * access token, so {@code workspaceId()} is the tenant boundary that every query is expected\n * to carry. Handlers that forget it are the reason this record has no no-arg accessor.\n */\npublic record WorkspacePrincipal(UUID userId, UUID workspaceId, String email, Set<String> roles) {\n\n    public boolean hasRole(String role) {\n        return roles.contains(role);\n    }\n}\n",
+        "src/main/java/com/cartulary/dms/access/DocumentAccessPolicy.java": "package com.cartulary.dms.access;\n\nimport org.springframework.security.access.AccessDeniedException;\nimport org.springframework.stereotype.Component;\n\nimport com.cartulary.dms.documents.Document;\nimport com.cartulary.dms.security.WorkspacePrincipal;\n\n/**\n * The single place that decides whether a subject may read a document.\n *\n * Folder grants are inherited down the tree, so this cannot be collapsed into a repository\n * predicate without duplicating the inheritance walk in SQL. Handlers therefore resolve the\n * entity first and ask here second; the ordering is deliberate and is covered by\n * DocumentAccessPolicyTest.\n */\n@Component\npublic class DocumentAccessPolicy {\n\n    private final FolderGrantReader grants;\n\n    public DocumentAccessPolicy(FolderGrantReader grants) {\n        this.grants = grants;\n    }\n\n    /** Throws unless the principal may read the document, including inherited folder grants. */\n    public void requireViewer(WorkspacePrincipal principal, Document document) {\n        if (!document.getWorkspaceId().equals(principal.workspaceId())) {\n            throw new AccessDeniedException(\"document belongs to another workspace\");\n        }\n        if (document.getOwnerId().equals(principal.userId())) {\n            return;\n        }\n        if (!grants.canRead(principal.userId(), document.getFolderId())) {\n            throw new AccessDeniedException(\"no read grant on the containing folder\");\n        }\n    }\n}\n"
+      },
+      "why": "The handler starts from the same tempting shape — annotations.findById(annotationId) straight off a path variable, with no scope in the query. It is safe because the two statements after it settle ownership: the resolved annotation's document must match the documentId in the path, and DocumentAccessPolicy#requireViewer throws AccessDeniedException unless the document is in the caller's workspace and the caller owns it or holds an inherited folder grant. The check cannot be folded into the repository predicate without reimplementing the folder-grant walk in JPQL, which is why it is a separate call."
+    },
+    {
+      "family": "spring-boot",
+      "architecture": "Spring Boot 3 REST API for an enterprise document-management product: @RestController handlers, Spring Data JPA repositories, JdbcTemplate read models for reporting, and one Spring Security filter chain with method security enabled.",
+      "language": "java",
+      "runtimeVerifiable": true,
+      "id": "h2-spring-boot-audit-trail-filter",
+      "file": "spring-boot/src/main/java/com/cartulary/dms/reporting/AuditTrailReportController.java",
+      "kind": "vulnerable",
+      "category": "sql_injection",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "GET /api/v1/reports/audit-trail",
+      "line": 79,
+      "lineRange": [
+        78,
+        97
+      ],
+      "extraFiles": {
+        "src/main/java/com/cartulary/dms/security/WorkspacePrincipal.java": "package com.cartulary.dms.security;\n\nimport java.util.Set;\nimport java.util.UUID;\n\n/**\n * The authenticated subject, resolved from the access token by {@link ApiSecurityConfiguration}.\n *\n * A principal is always scoped to exactly one workspace: Cartulary tenants never share an\n * access token, so {@code workspaceId()} is the tenant boundary that every query is expected\n * to carry. Handlers that forget it are the reason this record has no no-arg accessor.\n */\npublic record WorkspacePrincipal(UUID userId, UUID workspaceId, String email, Set<String> roles) {\n\n    public boolean hasRole(String role) {\n        return roles.contains(role);\n    }\n}\n"
+      },
+      "why": "The workspace id, the action filter and the date filter are all bound as ? placeholders, but the free-text actor filter is concatenated straight into the WHERE clause inside a quoted LIKE pattern. A request param of ' or 1=1 -- closes the literal and rewrites the predicate, so the tenant scope on the line above is bypassed and the whole audit_event table is readable; on PostgreSQL the statement can be extended further. That one branch does not add to the args list is the tell — the surrounding branches show the author knew how."
+    },
+    {
+      "family": "spring-boot",
+      "architecture": "Spring Boot 3 REST API for an enterprise document-management product: @RestController handlers, Spring Data JPA repositories, JdbcTemplate read models for reporting, and one Spring Security filter chain with method security enabled.",
+      "language": "java",
+      "runtimeVerifiable": true,
+      "id": "h2-spring-boot-storage-usage-filter",
+      "file": "spring-boot/src/main/java/com/cartulary/dms/reporting/StorageUsageReportController.java",
+      "kind": "safe",
+      "pairedWith": "h2-spring-boot-audit-trail-filter",
+      "extraFiles": {
+        "src/main/java/com/cartulary/dms/security/WorkspacePrincipal.java": "package com.cartulary.dms.security;\n\nimport java.util.Set;\nimport java.util.UUID;\n\n/**\n * The authenticated subject, resolved from the access token by {@link ApiSecurityConfiguration}.\n *\n * A principal is always scoped to exactly one workspace: Cartulary tenants never share an\n * access token, so {@code workspaceId()} is the tenant boundary that every query is expected\n * to carry. Handlers that forget it are the reason this record has no no-arg accessor.\n */\npublic record WorkspacePrincipal(UUID userId, UUID workspaceId, String email, Set<String> roles) {\n\n    public boolean hasRole(String role) {\n        return roles.contains(role);\n    }\n}\n"
+      },
+      "why": "The SQL is assembled by string concatenation into a StringBuilder across four conditional branches, which is the shape that usually signals injection. Every interpolated fragment is a ? placeholder though, and the user's value goes into the args list — including the LIKE patterns, where the % wildcards are concatenated onto the argument rather than into the statement. The only non-parameterisable fragment, the ORDER BY column, is looked up in the SORT_COLUMNS map and the request is rejected outright when the key is unknown, so nothing from the request ever reaches the statement text."
+    },
+    {
+      "family": "spring-boot",
+      "architecture": "Spring Boot 3 REST API for an enterprise document-management product: @RestController handlers, Spring Data JPA repositories, JdbcTemplate read models for reporting, and one Spring Security filter chain with method security enabled.",
+      "language": "java",
+      "runtimeVerifiable": true,
+      "id": "h2-spring-boot-rendition-name",
+      "file": "spring-boot/src/main/java/com/cartulary/dms/content/RenditionDownloadController.java",
+      "kind": "vulnerable",
+      "category": "path_traversal",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "GET /api/v1/documents/:documentId/renditions",
+      "line": 67,
+      "lineRange": [
+        67,
+        73
+      ],
+      "extraFiles": {
+        "src/main/java/com/cartulary/dms/security/WorkspacePrincipal.java": "package com.cartulary.dms.security;\n\nimport java.util.Set;\nimport java.util.UUID;\n\n/**\n * The authenticated subject, resolved from the access token by {@link ApiSecurityConfiguration}.\n *\n * A principal is always scoped to exactly one workspace: Cartulary tenants never share an\n * access token, so {@code workspaceId()} is the tenant boundary that every query is expected\n * to carry. Handlers that forget it are the reason this record has no no-arg accessor.\n */\npublic record WorkspacePrincipal(UUID userId, UUID workspaceId, String email, Set<String> roles) {\n\n    public boolean hasRole(String role) {\n        return roles.contains(role);\n    }\n}\n",
+        "src/main/java/com/cartulary/dms/access/DocumentAccessPolicy.java": "package com.cartulary.dms.access;\n\nimport org.springframework.security.access.AccessDeniedException;\nimport org.springframework.stereotype.Component;\n\nimport com.cartulary.dms.documents.Document;\nimport com.cartulary.dms.security.WorkspacePrincipal;\n\n/**\n * The single place that decides whether a subject may read a document.\n *\n * Folder grants are inherited down the tree, so this cannot be collapsed into a repository\n * predicate without duplicating the inheritance walk in SQL. Handlers therefore resolve the\n * entity first and ask here second; the ordering is deliberate and is covered by\n * DocumentAccessPolicyTest.\n */\n@Component\npublic class DocumentAccessPolicy {\n\n    private final FolderGrantReader grants;\n\n    public DocumentAccessPolicy(FolderGrantReader grants) {\n        this.grants = grants;\n    }\n\n    /** Throws unless the principal may read the document, including inherited folder grants. */\n    public void requireViewer(WorkspacePrincipal principal, Document document) {\n        if (!document.getWorkspaceId().equals(principal.workspaceId())) {\n            throw new AccessDeniedException(\"document belongs to another workspace\");\n        }\n        if (document.getOwnerId().equals(principal.userId())) {\n            return;\n        }\n        if (!grants.canRead(principal.userId(), document.getFolderId())) {\n            throw new AccessDeniedException(\"no read grant on the containing folder\");\n        }\n    }\n}\n",
+        "src/main/resources/application.yml": "spring:\n  application:\n    name: cartulary-dms\n  datasource:\n    url: ${CARTULARY_JDBC_URL}\n    username: ${CARTULARY_DB_USER}\n    password: ${CARTULARY_DB_PASSWORD}\n  jpa:\n    open-in-view: false\n    hibernate:\n      ddl-auto: validate\n  servlet:\n    multipart:\n      max-file-size: 256MB\n      max-request-size: 256MB\n  security:\n    oauth2:\n      resourceserver:\n        jwt:\n          issuer-uri: ${CARTULARY_OIDC_ISSUER}\n\nserver:\n  forward-headers-strategy: framework\n  error:\n    include-message: never\n    include-stacktrace: never\n\ncartulary:\n  storage:\n    rendition-root: /var/lib/cartulary/renditions\n    template-root: /srv/cartulary/templates\n  share-links:\n    default-ttl: P14D\n    max-per-document: 50\n  partners:\n    origins: https://*.cartulary.io\n  webhooks:\n    signing-key: ${CARTULARY_WEBHOOK_SIGNING_KEY}\n    timeout: PT10S\n\nmanagement:\n  endpoints:\n    web:\n      exposure:\n        include: health,info\n"
+      },
+      "why": "The rendition name comes straight from a request parameter and is resolved against the storage root with no containment check. normalize() is present and reads like sanitisation, but it collapses ../ segments rather than rejecting them, so name=../../../../etc/passwd resolves outside cartulary.storage.rendition-root and Files.newInputStream serves it. The document-level authorisation above is done correctly, which makes the missing startsWith check the sole defect: any authenticated user with one document of their own can read arbitrary files as the service account."
+    },
+    {
+      "family": "spring-boot",
+      "architecture": "Spring Boot 3 REST API for an enterprise document-management product: @RestController handlers, Spring Data JPA repositories, JdbcTemplate read models for reporting, and one Spring Security filter chain with method security enabled.",
+      "language": "java",
+      "runtimeVerifiable": true,
+      "id": "h2-spring-boot-template-name",
+      "file": "spring-boot/src/main/java/com/cartulary/dms/templates/TemplateDownloadController.java",
+      "kind": "safe",
+      "pairedWith": "h2-spring-boot-rendition-name",
+      "extraFiles": {
+        "src/main/java/com/cartulary/dms/security/WorkspacePrincipal.java": "package com.cartulary.dms.security;\n\nimport java.util.Set;\nimport java.util.UUID;\n\n/**\n * The authenticated subject, resolved from the access token by {@link ApiSecurityConfiguration}.\n *\n * A principal is always scoped to exactly one workspace: Cartulary tenants never share an\n * access token, so {@code workspaceId()} is the tenant boundary that every query is expected\n * to carry. Handlers that forget it are the reason this record has no no-arg accessor.\n */\npublic record WorkspacePrincipal(UUID userId, UUID workspaceId, String email, Set<String> roles) {\n\n    public boolean hasRole(String role) {\n        return roles.contains(role);\n    }\n}\n",
+        "src/main/resources/application.yml": "spring:\n  application:\n    name: cartulary-dms\n  datasource:\n    url: ${CARTULARY_JDBC_URL}\n    username: ${CARTULARY_DB_USER}\n    password: ${CARTULARY_DB_PASSWORD}\n  jpa:\n    open-in-view: false\n    hibernate:\n      ddl-auto: validate\n  servlet:\n    multipart:\n      max-file-size: 256MB\n      max-request-size: 256MB\n  security:\n    oauth2:\n      resourceserver:\n        jwt:\n          issuer-uri: ${CARTULARY_OIDC_ISSUER}\n\nserver:\n  forward-headers-strategy: framework\n  error:\n    include-message: never\n    include-stacktrace: never\n\ncartulary:\n  storage:\n    rendition-root: /var/lib/cartulary/renditions\n    template-root: /srv/cartulary/templates\n  share-links:\n    default-ttl: P14D\n    max-per-document: 50\n  partners:\n    origins: https://*.cartulary.io\n  webhooks:\n    signing-key: ${CARTULARY_WEBHOOK_SIGNING_KEY}\n    timeout: PT10S\n\nmanagement:\n  endpoints:\n    web:\n      exposure:\n        include: health,info\n"
+      },
+      "why": "A user-supplied relative path is joined onto a filesystem root and streamed back, which is the vulnerable shape almost exactly. It is correct because the root is canonicalised once in the constructor with toAbsolutePath().normalize(), and the resolved candidate is proven to sit inside it with file.startsWith(templateRoot) before anything opens it — a traversing name resolves and normalizes happily and is then rejected by that comparison. Ordering is what makes it work: the containment proof happens after resolution, so it cannot be defeated by encoding."
+    },
+    {
+      "family": "spring-boot",
+      "architecture": "Spring Boot 3 REST API for an enterprise document-management product: @RestController handlers, Spring Data JPA repositories, JdbcTemplate read models for reporting, and one Spring Security filter chain with method security enabled.",
+      "language": "java",
+      "runtimeVerifiable": true,
+      "id": "h2-spring-boot-partner-cors",
+      "file": "spring-boot/src/main/java/com/cartulary/dms/config/PartnerApiWebConfiguration.java",
+      "kind": "vulnerable",
+      "category": "insecure_cors_configuration",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 29,
+      "lineRange": [
+        25,
+        34
+      ],
+      "extraFiles": {
+        "src/main/java/com/cartulary/dms/security/ApiSecurityConfiguration.java": "package com.cartulary.dms.security;\n\nimport org.springframework.context.annotation.Bean;\nimport org.springframework.context.annotation.Configuration;\nimport org.springframework.security.config.Customizer;\nimport org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;\nimport org.springframework.security.config.annotation.web.builders.HttpSecurity;\nimport org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;\nimport org.springframework.security.config.http.SessionCreationPolicy;\nimport org.springframework.security.web.SecurityFilterChain;\n\n/**\n * The API filter chain.\n *\n * Exactly two coarse rules live here and nowhere else: the public catalogue is anonymous,\n * and everything under /api/v1/admin is compliance-only. Anything finer than that — which\n * workspace, which document, which record class — belongs in the handler, because the URL\n * does not carry enough information to decide it.\n */\n@Configuration\n@EnableWebSecurity\n@EnableMethodSecurity\npublic class ApiSecurityConfiguration {\n\n    @Bean\n    SecurityFilterChain apiFilterChain(HttpSecurity http) throws Exception {\n        http.securityMatcher(\"/api/**\")\n                .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))\n                .authorizeHttpRequests(requests -> requests\n                        .requestMatchers(\"/api/v1/public/**\").permitAll()\n                        .requestMatchers(\"/api/v1/admin/**\").hasRole(\"COMPLIANCE_OFFICER\")\n                        .anyRequest().authenticated())\n                .oauth2ResourceServer(oauth2 -> oauth2.jwt(Customizer.withDefaults()));\n        return http.build();\n    }\n}\n"
+      },
+      "why": "allowedOriginPatterns(\"*\") combined with allowCredentials(true) tells Spring to reflect whatever Origin the browser sends back in Access-Control-Allow-Origin and to permit the session cookie with it. Unlike allowedOrigins(\"*\"), that combination is not rejected at startup, so it ships silently. The mapping covers the whole authenticated /api/v1/** surface with allowedMethods(\"*\"), so any page a user visits can read and write every document in their workspace with their own credentials."
+    },
+    {
+      "family": "spring-boot",
+      "architecture": "Spring Boot 3 REST API for an enterprise document-management product: @RestController handlers, Spring Data JPA repositories, JdbcTemplate read models for reporting, and one Spring Security filter chain with method security enabled.",
+      "language": "java",
+      "runtimeVerifiable": true,
+      "id": "h2-spring-boot-public-catalog-cors",
+      "file": "spring-boot/src/main/java/com/cartulary/dms/config/PublicCatalogWebConfiguration.java",
+      "kind": "safe",
+      "pairedWith": "h2-spring-boot-partner-cors",
+      "extraFiles": {
+        "src/main/java/com/cartulary/dms/security/ApiSecurityConfiguration.java": "package com.cartulary.dms.security;\n\nimport org.springframework.context.annotation.Bean;\nimport org.springframework.context.annotation.Configuration;\nimport org.springframework.security.config.Customizer;\nimport org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;\nimport org.springframework.security.config.annotation.web.builders.HttpSecurity;\nimport org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;\nimport org.springframework.security.config.http.SessionCreationPolicy;\nimport org.springframework.security.web.SecurityFilterChain;\n\n/**\n * The API filter chain.\n *\n * Exactly two coarse rules live here and nowhere else: the public catalogue is anonymous,\n * and everything under /api/v1/admin is compliance-only. Anything finer than that — which\n * workspace, which document, which record class — belongs in the handler, because the URL\n * does not carry enough information to decide it.\n */\n@Configuration\n@EnableWebSecurity\n@EnableMethodSecurity\npublic class ApiSecurityConfiguration {\n\n    @Bean\n    SecurityFilterChain apiFilterChain(HttpSecurity http) throws Exception {\n        http.securityMatcher(\"/api/**\")\n                .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))\n                .authorizeHttpRequests(requests -> requests\n                        .requestMatchers(\"/api/v1/public/**\").permitAll()\n                        .requestMatchers(\"/api/v1/admin/**\").hasRole(\"COMPLIANCE_OFFICER\")\n                        .anyRequest().authenticated())\n                .oauth2ResourceServer(oauth2 -> oauth2.jwt(Customizer.withDefaults()));\n        return http.build();\n    }\n}\n"
+      },
+      "why": "allowedOrigins(\"*\") is right there in the mapping, which is the construct the sibling gets wrong. It is safe for two reasons that have to be read together: allowCredentials is explicitly false, so no browser will attach the session cookie to a cross-origin call, and the mapping is scoped to /api/v1/public/**, which ApiSecurityConfiguration marks permitAll() — a record-class dictionary and MIME glossary that an anonymous curl can already fetch. Methods are restricted to GET and HEAD, so there is nothing to forge either."
+    },
+    {
+      "family": "spring-boot",
+      "architecture": "Spring Boot 3 REST API for an enterprise document-management product: @RestController handlers, Spring Data JPA repositories, JdbcTemplate read models for reporting, and one Spring Security filter chain with method security enabled.",
+      "language": "java",
+      "runtimeVerifiable": true,
+      "id": "h2-spring-boot-layout-roaming",
+      "file": "spring-boot/src/main/java/com/cartulary/dms/desktop/LayoutStateController.java",
+      "kind": "vulnerable",
+      "category": "unsafe_deserialization",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "POST /api/v1/desktop/layout",
+      "line": 66,
+      "lineRange": [
+        65,
+        66
+      ],
+      "extraFiles": {
+        "src/main/java/com/cartulary/dms/security/WorkspacePrincipal.java": "package com.cartulary.dms.security;\n\nimport java.util.Set;\nimport java.util.UUID;\n\n/**\n * The authenticated subject, resolved from the access token by {@link ApiSecurityConfiguration}.\n *\n * A principal is always scoped to exactly one workspace: Cartulary tenants never share an\n * access token, so {@code workspaceId()} is the tenant boundary that every query is expected\n * to carry. Handlers that forget it are the reason this record has no no-arg accessor.\n */\npublic record WorkspacePrincipal(UUID userId, UUID workspaceId, String email, Set<String> roles) {\n\n    public boolean hasRole(String role) {\n        return roles.contains(role);\n    }\n}\n"
+      },
+      "why": "The request body carries a base64 blob and the handler feeds it to ObjectInputStream.readObject() with no filter. Java deserialization constructs whatever the stream names before any cast is evaluated, so the (DesktopLayout) cast and the ClassCastException catch below it run far too late to help; a gadget chain from any library on the classpath executes during readObject. The size cap bounds memory, not classes. Any user who can authenticate can reach it, and the fix is an ObjectInputFilter allow-list rather than better validation of the result."
+    },
+    {
+      "family": "spring-boot",
+      "architecture": "Spring Boot 3 REST API for an enterprise document-management product: @RestController handlers, Spring Data JPA repositories, JdbcTemplate read models for reporting, and one Spring Security filter chain with method security enabled.",
+      "language": "java",
+      "runtimeVerifiable": true,
+      "id": "h2-spring-boot-workspace-roaming",
+      "file": "spring-boot/src/main/java/com/cartulary/dms/desktop/WorkspaceStateController.java",
+      "kind": "safe",
+      "pairedWith": "h2-spring-boot-layout-roaming",
+      "extraFiles": {
+        "src/main/java/com/cartulary/dms/security/WorkspacePrincipal.java": "package com.cartulary.dms.security;\n\nimport java.util.Set;\nimport java.util.UUID;\n\n/**\n * The authenticated subject, resolved from the access token by {@link ApiSecurityConfiguration}.\n *\n * A principal is always scoped to exactly one workspace: Cartulary tenants never share an\n * access token, so {@code workspaceId()} is the tenant boundary that every query is expected\n * to carry. Handlers that forget it are the reason this record has no no-arg accessor.\n */\npublic record WorkspacePrincipal(UUID userId, UUID workspaceId, String email, Set<String> roles) {\n\n    public boolean hasRole(String role) {\n        return roles.contains(role);\n    }\n}\n"
+      },
+      "why": "This is the same legacy Java-serialization endpoint, base64 blob and readObject() included, so it looks identical to the sibling. The difference is the line before the read: setObjectInputFilter installs a JEP 290 allow-list naming only the four data-only state classes plus String, Integer, Number, Enum, UUID and ArrayList, terminated by !* so every other class is refused before its constructor or readObject runs. The same filter caps depth, refs, array length and byte count, which closes the resource-exhaustion path that an allow-list alone leaves open."
+    },
+    {
+      "family": "spring-boot",
+      "architecture": "Spring Boot 3 REST API for an enterprise document-management product: @RestController handlers, Spring Data JPA repositories, JdbcTemplate read models for reporting, and one Spring Security filter chain with method security enabled.",
+      "language": "java",
+      "runtimeVerifiable": true,
+      "id": "h2-spring-boot-share-link-key",
+      "file": "spring-boot/src/main/java/com/cartulary/dms/config/ShareLinkSigningConfiguration.java",
+      "kind": "vulnerable",
+      "category": "hardcoded_secret",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 37,
+      "lineRange": [
+        37,
+        38
+      ],
+      "extraFiles": {
+        "src/main/resources/application.yml": "spring:\n  application:\n    name: cartulary-dms\n  datasource:\n    url: ${CARTULARY_JDBC_URL}\n    username: ${CARTULARY_DB_USER}\n    password: ${CARTULARY_DB_PASSWORD}\n  jpa:\n    open-in-view: false\n    hibernate:\n      ddl-auto: validate\n  servlet:\n    multipart:\n      max-file-size: 256MB\n      max-request-size: 256MB\n  security:\n    oauth2:\n      resourceserver:\n        jwt:\n          issuer-uri: ${CARTULARY_OIDC_ISSUER}\n\nserver:\n  forward-headers-strategy: framework\n  error:\n    include-message: never\n    include-stacktrace: never\n\ncartulary:\n  storage:\n    rendition-root: /var/lib/cartulary/renditions\n    template-root: /srv/cartulary/templates\n  share-links:\n    default-ttl: P14D\n    max-per-document: 50\n  partners:\n    origins: https://*.cartulary.io\n  webhooks:\n    signing-key: ${CARTULARY_WEBHOOK_SIGNING_KEY}\n    timeout: PT10S\n\nmanagement:\n  endpoints:\n    web:\n      exposure:\n        include: health,info\n"
+      },
+      "why": "The HMAC key that signs public share links is committed as the default of the @Value placeholder, and application.yml never sets cartulary.share-links.signing-key — so unless the operator remembers an environment variable that nothing enforces, this literal is the production signing key. Anyone with the repository can mint a signature for any document id and any expiry, which is the entire authorisation model for /s/ links. A default that silently substitutes for a secret is worse than a missing one, because the deployment boots and looks healthy."
+    },
+    {
+      "family": "spring-boot",
+      "architecture": "Spring Boot 3 REST API for an enterprise document-management product: @RestController handlers, Spring Data JPA repositories, JdbcTemplate read models for reporting, and one Spring Security filter chain with method security enabled.",
+      "language": "java",
+      "runtimeVerifiable": true,
+      "id": "h2-spring-boot-webhook-key",
+      "file": "spring-boot/src/main/java/com/cartulary/dms/config/WebhookSigningConfiguration.java",
+      "kind": "safe",
+      "pairedWith": "h2-spring-boot-share-link-key",
+      "extraFiles": {
+        "src/main/resources/application.yml": "spring:\n  application:\n    name: cartulary-dms\n  datasource:\n    url: ${CARTULARY_JDBC_URL}\n    username: ${CARTULARY_DB_USER}\n    password: ${CARTULARY_DB_PASSWORD}\n  jpa:\n    open-in-view: false\n    hibernate:\n      ddl-auto: validate\n  servlet:\n    multipart:\n      max-file-size: 256MB\n      max-request-size: 256MB\n  security:\n    oauth2:\n      resourceserver:\n        jwt:\n          issuer-uri: ${CARTULARY_OIDC_ISSUER}\n\nserver:\n  forward-headers-strategy: framework\n  error:\n    include-message: never\n    include-stacktrace: never\n\ncartulary:\n  storage:\n    rendition-root: /var/lib/cartulary/renditions\n    template-root: /srv/cartulary/templates\n  share-links:\n    default-ttl: P14D\n    max-per-document: 50\n  partners:\n    origins: https://*.cartulary.io\n  webhooks:\n    signing-key: ${CARTULARY_WEBHOOK_SIGNING_KEY}\n    timeout: PT10S\n\nmanagement:\n  endpoints:\n    web:\n      exposure:\n        include: health,info\n"
+      },
+      "why": "A high-entropy base64 literal sits in a private static final field next to an HMAC key setup, which is the exact silhouette of a committed credential. Its only use is a rejection: @PostConstruct compares the configured key against it and refuses to start when a deployment is still carrying the value printed in the public self-hosting example. The real key is read from cartulary.webhooks.signing-key with no default, which application.yml sources from an environment variable, so a missing secret fails the boot instead of falling back to something guessable."
+    }
+  ]
+}

@@ -1,0 +1,80 @@
+{
+  "family": "electron-ipc",
+  "architecture": "Electron main-process modules registering ipcMain.handle channels for a renderer that also loads remote documentation and embedded partner content, with app.getPath storage and a pairing relay",
+  "cases": [
+    {
+      "id": "holdout-desktop-workspace-read",
+      "family": "electron-ipc",
+      "architecture": "Electron main-process IPC handlers reading and writing notes under the user data directory",
+      "language": "javascript",
+      "file": "electron-ipc/main/workspace-bridge.js",
+      "kind": "vulnerable",
+      "category": "path_traversal",
+      "severityBand": ["high", "medium"],
+      "line": 27,
+      "lineRange": [26, 29],
+      "runtimeVerifiable": false,
+      "packageJson": {
+        "name": "acme-suite-desktop",
+        "version": "1.0.0",
+        "main": "main/index.js",
+        "devDependencies": { "electron": "^29.3.0" }
+      },
+      "why": "The workspace id is validated by a shared helper and the write handler reduces its note name to a basename, so two of the three channels defend themselves. The read channel joins the renderer's relative path straight onto the workspace directory, so any content the renderer loads can walk out of it and read arbitrary files from the user's machine through the privileged main process."
+    },
+    {
+      "id": "holdout-desktop-library-read",
+      "family": "electron-ipc",
+      "architecture": "Electron main-process IPC handlers reading and writing notes under the user data directory",
+      "language": "javascript",
+      "file": "electron-ipc/main/library-bridge.js",
+      "kind": "safe",
+      "pairedWith": "holdout-desktop-workspace-read",
+      "runtimeVerifiable": false,
+      "packageJson": {
+        "name": "acme-suite-desktop",
+        "version": "1.0.0",
+        "main": "main/index.js",
+        "devDependencies": { "electron": "^29.3.0" }
+      },
+      "why": "The renderer still supplies a relative path that is resolved against the library directory and read from disk, but the resolved path must remain inside that directory or the handler throws, so traversal cannot leave it."
+    },
+    {
+      "id": "holdout-desktop-pairing-code",
+      "family": "electron-ipc",
+      "architecture": "Electron main-process IPC handlers issuing a device pairing code through a relay",
+      "language": "javascript",
+      "file": "electron-ipc/main/pairing-bridge.js",
+      "kind": "vulnerable",
+      "category": "insecure_randomness",
+      "severityBand": ["medium", "high"],
+      "line": 20,
+      "lineRange": [18, 22],
+      "runtimeVerifiable": false,
+      "packageJson": {
+        "name": "acme-suite-desktop",
+        "version": "1.0.0",
+        "main": "main/index.js",
+        "devDependencies": { "electron": "^29.3.0" }
+      },
+      "why": "The pairing id uses randomUUID, so node:crypto is imported and the author reached for it once already. The eight-character code that actually authorises a new device to join the account is drawn from Math.random, whose state is recoverable from a handful of observed outputs, so an attacker who sees one pairing code can predict the next."
+    },
+    {
+      "id": "holdout-desktop-enrollment-code",
+      "family": "electron-ipc",
+      "architecture": "Electron main-process IPC handlers issuing a device pairing code through a relay",
+      "language": "javascript",
+      "file": "electron-ipc/main/enrollment-bridge.js",
+      "kind": "safe",
+      "pairedWith": "holdout-desktop-pairing-code",
+      "runtimeVerifiable": false,
+      "packageJson": {
+        "name": "acme-suite-desktop",
+        "version": "1.0.0",
+        "main": "main/index.js",
+        "devDependencies": { "electron": "^29.3.0" }
+      },
+      "why": "Math.random is still in the file, deciding how long to wait before announcing the enrollment, which is not a security decision; the code itself is drawn from randomBytes with the biased byte values rejected rather than folded in."
+    }
+  ]
+}

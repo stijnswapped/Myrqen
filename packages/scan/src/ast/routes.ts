@@ -2,6 +2,7 @@ import ts from "typescript";
 import path from "node:path";
 import { calleeName, calleeTail, collect, literalTextOf } from "./helpers.js";
 import { lineOf, type ParsedFile } from "./parse.js";
+import { entryPointsOf } from "./entrypoints.js";
 import type { RouteHint } from "../rules/context.js";
 
 const HTTP_METHODS = new Set(["get", "post", "put", "patch", "delete", "options", "head", "all", "use"]);
@@ -30,6 +31,19 @@ const NOT_A_ROUTER = /^(res|reply|response|ctx|context|c|req|request|console|log
  */
 export function discoverRoutes(file: ParsedFile): RouteHint[] {
   const hints: RouteHint[] = [];
+
+  // Framework adapters first. They recognise entry points this file's own
+  // heuristics cannot see at all — a NestJS controller decorator, a SvelteKit
+  // `+server.ts`, a Lambda handler, an Electron IPC channel — and they know the
+  // handler node exactly, which makes attribution certain rather than nearest-above.
+  for (const entry of entryPointsOf(file)) {
+    hints.push({
+      method: entry.method,
+      path: entry.path,
+      line: entry.line,
+      ...(entry.node ? { node: entry.node } : {})
+    });
+  }
 
   for (const call of collect(file.source, ts.isCallExpression)) {
     const tail = calleeTail(call).toLowerCase();
@@ -156,13 +170,47 @@ export function discoverRoutes(file: ParsedFile): RouteHint[] {
     }
   }
 
-  return hints.sort((a, b) => a.line - b.line);
+  return dedupeHints(hints).sort((a, b) => a.line - b.line);
+}
+
+/**
+ * The same endpoint found twice is one endpoint.
+ *
+ * A framework adapter and the generic call-shape discovery legitimately overlap —
+ * an itty-router registration inside a Worker looks like an Express registration —
+ * and two hints for one line would make `routeCount` overstate the attack surface
+ * that was actually mapped.
+ */
+function dedupeHints(hints: RouteHint[]): RouteHint[] {
+  const seen = new Map<string, RouteHint>();
+  for (const hint of hints) {
+    const key = `${hint.method} ${hint.path} @${hint.line}`;
+    const existing = seen.get(key);
+    // Keep whichever of the two knows its handler body.
+    if (!existing || (!existing.node && hint.node)) seen.set(key, hint);
+  }
+  return [...seen.values()];
 }
 
 /** `app/api/orders/[id]/route.ts` becomes `/api/orders/:id`. */
 export function routeFromFilePath(relativePath: string): string | null {
   const normalized = relativePath.split(path.sep).join("/");
-  const match = /(?:^|\/)(?:app|pages)\/(.+)\/(route|page)\.[cm]?[jt]sx?$/.exec(normalized);
+  /*
+   * `app/` and `pages/` are Next.js. `api/` is the same convention under a different
+   * root, which is what Medusa uses — `src/api/admin/vendors/[id]/route.ts` is
+   * `/admin/vendors/:id`, spelled exactly as Next spells it, including the bracketed
+   * parameter. Run 7 reported findings in those files against no endpoint at all, so
+   * every rule that asks "which route is this and does it authenticate" was silent on the
+   * whole surface.
+   *
+   * The `api/` segment is kept in the URL for Next (`app/api/thumbnail` is
+   * `/api/thumbnail`) and dropped when it *is* the root, because a Medusa route file at
+   * `src/api/admin/x/route.ts` answers `/admin/x`. That is decided by which alternative
+   * matched rather than by guessing from the depth.
+   */
+  const match =
+    /(?:^|\/)(?:app|pages)\/(.+)\/(route|page)\.[cm]?[jt]sx?$/.exec(normalized) ??
+    /(?:^|\/)api\/(.+)\/(route)\.[cm]?[jt]sx?$/.exec(normalized);
   if (!match) return null;
   const segments = match[1]!
     .split("/")
@@ -284,11 +332,34 @@ function joinPrefix(prefix: string, path: string): string {
 }
 
 /**
- * A path a reader would recognise. Parameter constraints such as `:filename{.+}` are
- * an implementation detail of one router and match nothing anybody would write down.
+ * A path a reader would recognise.
+ *
+ * A brace group means two different things depending on what precedes it, and
+ * stripping both was wrong. Attached to a parameter — Express's `:filename{.+}` — it
+ * is a constraint, an implementation detail of one router that matches nothing anybody
+ * would write down. Standing as its own segment — Hapi's `/api/notes/{noteId}` — it
+ * **is** the parameter, and removing it produced `/api/notes/`: an address that
+ * matches no route, cannot be grepped for, and silently loses the fact that the
+ * endpoint takes an identifier at all.
+ *
+ * So the constraint form is stripped and the parameter form is kept, exactly as the
+ * file spells it. That is the same ruling the corpus follows: report the route as the
+ * framework declares it and translate between conventions nowhere.
  */
 function normalizePath(path: string): string {
-  return path.replace(/\{[^}]*\}/g, "").replace(/\/{2,}/g, "/") || "/";
+  return (
+    path
+      // A brace group glued to the token before it is a constraint on that token.
+      /*
+       * A capture group rather than a lookbehind. `(?<=[^/\\s])` expressed this more
+       * directly and cost **more than half the scan time of a large file** — 6.4 s
+       * against 3.0 s on a 165 KB module — because V8 evaluates a lookbehind at every
+       * position. Keeping the preceding character and putting it back is the same
+       * assertion at a fraction of the price.
+       */
+      .replace(/([^/\s])\s*\{[^}]*\}/g, "$1")
+      .replace(/\/{2,}/g, "/") || "/"
+  );
 }
 
 /** Does this file define GraphQL resolvers? */

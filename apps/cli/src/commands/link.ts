@@ -5,9 +5,7 @@ import { hashToken } from "@myrqen/auth";
 import { ApiClient, ApiRequestError, defaultDeviceName } from "../api/client.js";
 import { storeCredential } from "../config/credentials.js";
 import { readConfig, updateConfig } from "../config/store.js";
-import { findRepoRoot } from "../discovery/project.js";
-import { detectAgents, installSkill, skillSourceDirectory } from "../install/skill.js";
-import { blank, bullet, capabilityNote, field, heading, style, warn, write } from "../ui/output.js";
+import { blank, bullet, capabilityNote, field, heading, style, write } from "../ui/output.js";
 import { confirm, isInteractive, text } from "../ui/prompt.js";
 
 const POLL_TIMEOUT_MS = 10 * 60 * 1000;
@@ -25,29 +23,50 @@ async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export interface LinkOptions {
+export interface AccountLinkOptions {
   apiBaseUrl?: string;
   deviceName?: string;
-  skipSkillInstall?: boolean;
   open?: boolean;
+  /**
+   * Offered rather than demanded.
+   *
+   * `myrqen link` finishes by mentioning cloud reports. Scanning is entirely
+   * local and works with no account at all, so this step asks once, accepts no
+   * as an answer, and never blocks a non-interactive shell.
+   */
+  offer?: boolean;
 }
 
 /**
- * Installs the portable skill, then links this device through the browser. The
- * durable credential is minted only after an authenticated human approval and is
- * never placed in a URL.
+ * Links this device to an account through the browser. The durable credential is
+ * minted only after an authenticated human approval and is never placed in a URL.
  */
-export async function linkCommand(options: LinkOptions = {}): Promise<void> {
+export async function accountLinkCommand(options: AccountLinkOptions = {}): Promise<void> {
   const config = await readConfig();
   const baseUrl = options.apiBaseUrl ?? config.apiBaseUrl;
-  const repoRoot = await findRepoRoot(process.cwd());
 
-  heading("link");
-
-  if (!options.skipSkillInstall) {
-    await installSkillsInteractively(repoRoot);
+  if (options.offer) {
+    if (config.account) {
+      blank();
+      write(`${style.dim("Account")} ${config.account.email} ${style.dim("· already connected")}`);
+      return;
+    }
     blank();
+    write(style.bold("Cloud reports"));
+    capabilityNote(
+      "Scanning works entirely locally and needs no account. Connecting one adds shareable web reports and history."
+    );
+    if (!isInteractive()) {
+      bullet(`Connect later with "${BRAND.cliName} login".`);
+      return;
+    }
+    if (!(await confirm("Connect an account now?", { defaultYes: false }))) {
+      bullet(`Connect later with "${BRAND.cliName} login".`);
+      return;
+    }
   }
+
+  heading("login");
 
   const client = new ApiClient({ baseUrl });
   const verifier = crypto.randomBytes(32).toString("base64url");
@@ -137,54 +156,3 @@ export async function linkCommand(options: LinkOptions = {}): Promise<void> {
   bullet(`Run "${BRAND.cliName} doctor" to see what this machine can assess.`);
 }
 
-async function installSkillsInteractively(repoRoot: string): Promise<void> {
-  let source: string;
-  try {
-    source = await skillSourceDirectory();
-  } catch (error) {
-    warn(error instanceof Error ? error.message : "The skill bundle was not found.");
-    return;
-  }
-
-  const agents = await detectAgents(repoRoot);
-  const detected = agents.filter((agent) => agent.detected);
-  const targets = detected.length > 0 ? detected : agents.filter((agent) => agent.id === "portable");
-
-  write(style.bold("Agent integration"));
-  if (detected.length === 0) {
-    capabilityNote(
-      "No agent installation was detected. Installing the portable skill so any compatible agent can find it."
-    );
-  }
-
-  for (const target of targets) {
-    if (target.scope === "project" && isInteractive()) {
-      const wants = await confirm(`Install the ${BRAND.displayName} skill into this project for ${target.label}?`);
-      if (!wants) continue;
-    }
-    const result = await installSkill(target, source);
-    const suffix =
-      result.action === "unchanged"
-        ? "already current"
-        : result.action === "backed_up_and_installed"
-          ? `installed, previous copy kept at ${result.backupLocation}`
-          : result.action;
-    bullet(`${target.label}: ${suffix} (${result.location})`);
-    if (target.slashInvocation) {
-      bullet(`  Invoke with "/${BRAND.skillId} auto" or "${BRAND.cliName} auto".`);
-    }
-    await updateConfig((current) => ({
-      ...current,
-      agents: [
-        ...(current.agents ?? []).filter((entry) => entry.location !== result.location),
-        { id: target.id, installedAt: new Date().toISOString(), location: result.location }
-      ]
-    }));
-  }
-}
-
-export async function installCommand(): Promise<void> {
-  const repoRoot = await findRepoRoot(process.cwd());
-  heading("install");
-  await installSkillsInteractively(repoRoot);
-}

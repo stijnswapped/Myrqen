@@ -174,10 +174,19 @@ test("verifying requires an observation, not just a claim", async () => {
   try {
     await cliJson(root, ["auto", "--sync", "no"]);
     const state = await session(root);
-    await assert.rejects(
-      () => cliJson(root, ["finding", "verify", state.findings[0].id, "--description", "   "]),
-      /Verification needs a description/
-    );
+    // Under `--json` the reason is a JSON document on stdout, not prose on
+    // stderr: a machine consumer parses stdout, and an empty stdout told it only
+    // "Unexpected end of JSON input". The command still exits non-zero.
+    let failure;
+    try {
+      await cliJson(root, ["finding", "verify", state.findings[0].id, "--description", "   "]);
+    } catch (error) {
+      failure = error;
+    }
+    assert.ok(failure, "the command failed");
+    assert.notEqual(failure.code, 0, "a refused verification is not a success");
+    const reported = JSON.parse(String(failure.stdout ?? "{}"));
+    assert.match(reported.error?.message ?? "", /Verification needs a description/);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }
@@ -214,4 +223,67 @@ test("a finding whose evidence quotes an environment dump survives redaction", a
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }
+});
+
+test("`finding list` returns the candidates the static pass recorded", async () => {
+  /*
+   * The gap this closes: `METHODOLOGY.md` opens the source-review phase with "start
+   * by reading its candidates", and until this command existed nothing returned them.
+   * `SessionContext.staticPass` carried a count, and `session static-pass` re-ran the
+   * pass and resubmitted everything. An agent following the skill literally could not
+   * see what there was to settle.
+   */
+  const cwd = await makeProject();
+  const context = await cliJson(cwd, ["high"]);
+  assert.ok(context.staticPass.candidatesRecorded > 0, "the static pass should find something in this project");
+
+  const listed = await cliJson(cwd, ["finding", "list"]);
+  const state = await session(cwd);
+
+  // Exactly what the session holds, not a re-derivation of it.
+  assert.equal(listed.total, state.findings.length);
+  assert.deepEqual(
+    listed.findings.map((finding) => finding.id).sort(),
+    state.findings.map((finding) => finding.id).sort()
+  );
+  // Every row carries what an agent needs to go and exercise it.
+  for (const finding of listed.findings) {
+    assert.ok(finding.category, `${finding.id} should name its class`);
+    assert.ok(finding.severity, `${finding.id} should carry a severity`);
+    assert.ok(finding.affected, `${finding.id} should say what it affects`);
+  }
+});
+
+test("listing candidates does not change the session", async () => {
+  // `session static-pass` re-runs and resubmits, which inflates the duplicate
+  // counter. Reading must be free, or an agent that reads twice corrupts its own
+  // report.
+  const cwd = await makeProject();
+  await cliJson(cwd, ["high"]);
+  const before = await session(cwd);
+  await cliJson(cwd, ["finding", "list"]);
+  await cliJson(cwd, ["finding", "list", "--all"]);
+  const after = await session(cwd);
+
+  assert.equal(after.findings.length, before.findings.length);
+  assert.equal(after.candidateCount, before.candidateCount);
+  assert.equal(after.duplicateCount, before.duplicateCount);
+});
+
+test("`finding list` hides settled findings unless asked", async () => {
+  const cwd = await makeProject();
+  await cliJson(cwd, ["high"]);
+  const all = await cliJson(cwd, ["finding", "list", "--all"]);
+  const target = all.findings[0];
+  assert.ok(target, "the project should produce at least one candidate");
+
+  await cliJson(cwd, ["finding", "refute", target.id, "--reason", "the path is a constant in this build"]);
+
+  const unsettled = await cliJson(cwd, ["finding", "list"]);
+  assert.ok(
+    !unsettled.findings.some((finding) => finding.id === target.id),
+    "a refuted finding is settled and should not be offered again"
+  );
+  const withSettled = await cliJson(cwd, ["finding", "list", "--all"]);
+  assert.ok(withSettled.findings.some((finding) => finding.id === target.id), "--all should still show it");
 });

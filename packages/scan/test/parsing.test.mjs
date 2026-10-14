@@ -336,6 +336,85 @@ test("a caller-controlled $where clause is reported as critical", async () => {
   assert.equal(hits[0].severity, "critical");
 });
 
+
+test("a filter assembled by assignment carries the caller's keys into the query", async () => {
+  const source = `
+    const { MongoClient } = require("mongodb");
+    const express = require("express");
+    const app = express();
+    const invoices = new MongoClient(process.env.MONGO_URL).db().collection("invoices");
+    app.post("/invoices/lookup", async (req, res) => {
+      const filter = { orgId: req.user.orgId, voided: false };
+      if (req.body.reference) filter.reference = String(req.body.reference);
+      if (req.body.minTotal !== undefined) {
+        filter.$where = "this.total >= " + req.body.minTotal;
+      }
+      res.json({ invoices: await invoices.find(filter).toArray() });
+    });
+  `;
+  const found = await analyze(source);
+  const hits = of(found, "nosql_injection");
+  assert.equal(hits.length, 1, "a query with optional criteria is built in steps, not as one literal");
+  assert.equal(hits[0].severity, "critical", "$where is evaluated by the database server");
+  const line = source.split("\n")[hits[0].location.line - 1];
+  assert.match(line, /filter\.\$where/, "the report anchors on the assignment that added the key");
+});
+
+test("Object.assign of the request body into a filter is reported like a spread", async () => {
+  const found = await analyze(`
+    const { MongoClient } = require("mongodb");
+    const express = require("express");
+    const app = express();
+    const invoices = new MongoClient(process.env.MONGO_URL).db().collection("invoices");
+    app.post("/invoices/lookup", async (req, res) => {
+      const filter = { orgId: req.user.orgId };
+      Object.assign(filter, req.body.criteria);
+      res.json({ invoices: await invoices.find(filter).toArray() });
+    });
+  `);
+  const hits = of(found, "nosql_injection");
+  assert.equal(hits.length, 1, "merging the caller's object in is the same defect as spreading it in");
+});
+
+test("a filter assembled by assignment from coerced and guarded values stays quiet", async () => {
+  const found = await analyze(`
+    const { MongoClient } = require("mongodb");
+    const express = require("express");
+    const app = express();
+    const invoices = new MongoClient(process.env.MONGO_URL).db().collection("invoices");
+    app.post("/invoices/lookup", async (req, res) => {
+      const filter = { orgId: req.user.orgId, voided: false };
+      if (req.body.reference) filter.reference = String(req.body.reference);
+      if (req.body.minTotal !== undefined) {
+        const floor = Number(req.body.minTotal);
+        if (!Number.isFinite(floor)) return res.status(400).json({ error: "minTotal must be a number" });
+        filter.total = { $gte: floor };
+        filter.settledAt = { $ne: null };
+      }
+      res.json({ invoices: await invoices.find(filter).toArray() });
+    });
+  `);
+  assert.deepEqual(of(found, "nosql_injection"), [], "every added key is a scalar the caller cannot reshape");
+});
+
+test("a key written onto the filter after the query is not part of that query", async () => {
+  const found = await analyze(`
+    const { MongoClient } = require("mongodb");
+    const express = require("express");
+    const app = express();
+    const invoices = new MongoClient(process.env.MONGO_URL).db().collection("invoices");
+    const audits = new MongoClient(process.env.MONGO_URL).db().collection("audits");
+    app.post("/invoices/lookup", async (req, res) => {
+      const filter = { orgId: req.user.orgId };
+      const rows = await invoices.find(filter).toArray();
+      filter.note = req.body.note;
+      await audits.insertOne(filter);
+      res.json({ invoices: rows });
+    });
+  `);
+  assert.deepEqual(of(found, "nosql_injection"), [], "the query ran before the key existed");
+});
+
 /* ---------------- unsafe_deserialization ---------------- */
 
 test("a request payload handed to node-serialize is reported as critical", async () => {
@@ -399,6 +478,43 @@ test("JSON.parse followed by a field-by-field check is not reported", async () =
   assert.deepEqual(of(found, "unsafe_deserialization"), []);
 });
 
+
+test("a deserializing helper is reported when a handler hands it the request payload", async () => {
+  const found = await analyze(`
+    const serialize = require("node-serialize");
+    const express = require("express");
+    const app = express();
+    function revive(blob) {
+      return serialize.unserialize(blob);
+    }
+    app.post("/editor/restore", async (req, res) => {
+      const restored = revive(req.body.snapshot);
+      res.json({ id: restored.id });
+    });
+  `);
+  const hits = of(found, "unsafe_deserialization");
+  assert.equal(hits.length, 1, "splitting the handler into a helper does not make the payload trusted");
+  assert.equal(hits[0].severity, "critical");
+});
+
+test("the same helper is not reported when nothing hands it caller data", async () => {
+  const found = await analyze(`
+    const fs = require("fs");
+    const serialize = require("node-serialize");
+    const express = require("express");
+    const app = express();
+    const SEED = fs.readFileSync("/etc/acme/seed.bin", "utf8");
+    function revive(blob) {
+      return serialize.unserialize(blob);
+    }
+    app.post("/editor/restore", async (req, res) => {
+      const restored = revive(SEED);
+      res.json({ id: restored.id, requested: String(req.body.snapshot || "") });
+    });
+  `);
+  assert.deepEqual(of(found, "unsafe_deserialization"), [], "the helper only ever parses a file the application ships");
+});
+
 /* ---------------- prototype_pollution ---------------- */
 
 test("a recursive merge of the request body with no reserved-key guard is reported", async () => {
@@ -453,6 +569,33 @@ test("the same merge is not reported once it skips the reserved keys", async () 
     });
   `);
   assert.deepEqual(of(found, "prototype_pollution"), []);
+});
+
+test("the merge finding points at the assignment that writes the untrusted key", async () => {
+  const source = `
+    const express = require("express");
+    const app = express();
+    const DEFAULTS = { theme: "system" };
+    function foldInto(target, patch) {
+      for (const key of Object.keys(patch)) {
+        const value = patch[key];
+        if (value && typeof value === "object" && !Array.isArray(value)) {
+          foldInto(target[key], value);
+        } else {
+          target[key] = value;
+        }
+      }
+      return target;
+    }
+    app.patch("/profiles/:profileId/settings", async (req, res) => {
+      res.json({ settings: foldInto({ ...DEFAULTS }, req.body) });
+    });
+  `;
+  const found = await analyze(source);
+  const hits = of(found, "prototype_pollution");
+  assert.equal(hits.length, 1);
+  const line = source.split("\n")[hits[0].location.line - 1];
+  assert.match(line, /target\[key\] = value/, "the declaration is not the line a reader has to change");
 });
 
 test("a repository method that happens to be called merge is not a deep merge", async () => {

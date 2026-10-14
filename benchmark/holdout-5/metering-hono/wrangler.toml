@@ -1,0 +1,24 @@
+name = "tallymark-metering"
+main = "src/index.ts"
+compatibility_date = "2024-11-12"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+ENVIRONMENT = "production"
+INTERNAL_ALLOWED_IPS = "203.0.113.17,203.0.113.18"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "tallymark-ledger"
+database_id = "0f2c9a41-6c1e-4b0f-9c53-3d51a7f2b8d4"
+migrations_dir = "migrations"
+
+[[kv_namespaces]]
+binding = "COUNTERS"
+id = "b4d1e7c05a9f4c2a8f6e1d3b7c9a0e52"
+
+[[r2_buckets]]
+binding = "EXPORTS"
+bucket_name = "tallymark-exports"
+
+# INTERNAL_SERVICE_SECRET and EXPORT_LINK_SECRET are wrangler secrets, not vars.

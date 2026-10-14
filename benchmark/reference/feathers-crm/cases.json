@@ -1,0 +1,617 @@
+{
+  "family": "feathers-crm",
+  "cases": [
+    {
+      "id": "ref-feathers-crm-contact-detail-drawer",
+      "family": "feathers-crm",
+      "architecture": "Feathers 5 application in TypeScript: one service per resource, each a MongoDBService over @feathersjs/mongodb, with authentication and authorization expressed as `around` and `before` hooks rather than as middleware; the caller's identity is `params.user`, resolved by @feathersjs/authentication from a JWT, and `params.provider` is set by the transport ('rest' or 'socketio') and absent for in-process calls, which is what the internal-versus-external guards are written against. Two services are additionally reachable through plain Express routes mounted on the same app.",
+      "language": "typescript",
+      "file": "feathers-crm/src/services/contacts.service.ts",
+      "scanAs": "src/services/contacts.service.ts",
+      "kind": "vulnerable",
+      "runtimeVerifiable": true,
+      "why": "`contactForDrawer` hands the route's id straight to the adapter's `get`, which resolves a document by `_id` alone. The `before.find` hook narrows the *list* to the caller's territory and nothing narrows this read, so any authenticated user of the product can read any workspace's contact — name, email, phone, deal value and notes — by supplying its id.",
+      "packageJson": {
+        "name": "northwind-crm",
+        "version": "2.6.1",
+        "private": true,
+        "type": "module",
+        "scripts": {
+          "dev": "ts-node-dev --respawn src/index.ts",
+          "compile": "shx rm -rf lib/ && tsc",
+          "start": "node lib/index.js"
+        },
+        "dependencies": {
+          "@feathersjs/authentication": "^5.0.30",
+          "@feathersjs/authentication-local": "^5.0.30",
+          "@feathersjs/configuration": "^5.0.30",
+          "@feathersjs/errors": "^5.0.30",
+          "@feathersjs/express": "^5.0.30",
+          "@feathersjs/feathers": "^5.0.30",
+          "@feathersjs/mongodb": "^5.0.30",
+          "@feathersjs/schema": "^5.0.30",
+          "@feathersjs/socketio": "^5.0.30",
+          "express": "^4.21.2",
+          "mongodb": "^6.13.0",
+          "winston": "^3.17.0"
+        },
+        "devDependencies": {
+          "@types/express": "^4.17.21",
+          "@types/node": "^22.13.0",
+          "ts-node-dev": "^2.0.0",
+          "typescript": "^5.7.3"
+        }
+      },
+      "extraFiles": {
+        "src/hooks/identity.ts": "import { Forbidden, NotAuthenticated } from '@feathersjs/errors'\nimport type { HookContext } from '@feathersjs/feathers'\n\n/**\n * Who is calling, and on whose behalf.\n *\n * `params.user` is set by `@feathersjs/authentication` once a JWT has been verified. It is\n * never read off the wire — the client sends a token, the strategy resolves it to the stored\n * user document, and that document is what lands here.\n */\nexport interface CrmUser {\n  _id: string\n  email: string\n  role: 'owner' | 'manager' | 'rep' | 'readonly'\n  workspaceId: string\n  /** Set only on `rep` accounts: the territory whose contacts they may work. */\n  territory?: string | null\n}\n\n/**\n * Is this call arriving from outside, or from our own code?\n *\n * `params.provider` is `'rest'` or `'socketio'` for a client call and **undefined** for an\n * internal `app.service(...)` call. Every external-facing guard has to be written against\n * this, because internal calls legitimately need to bypass ownership filters — a nightly job\n * really does read every workspace.\n */\nexport function isExternal(context: HookContext): boolean {\n  return context.params.provider !== undefined\n}\n\n/** The authenticated caller, or a 401. */\nexport function requireUser(context: HookContext): CrmUser {\n  const user = context.params.user as CrmUser | undefined\n  if (!user) {\n    throw new NotAuthenticated('Sign in to continue.')\n  }\n  return user\n}\n\n/**\n * Narrow a query to the caller's own workspace, and to their territory when they have one.\n *\n * Returns a query rather than mutating, and **throws** rather than returning an unnarrowed\n * query when the caller has no workspace, so a missing field can never widen a read.\n */\nexport function scopeToCaller(query: Record<string, unknown>, user: CrmUser): Record<string, unknown> {\n  if (!user.workspaceId) {\n    throw new Forbidden('Your account is not attached to a workspace.')\n  }\n  const scoped: Record<string, unknown> = { ...query, workspaceId: user.workspaceId }\n  if (user.role === 'rep') {\n    if (!user.territory) {\n      throw new Forbidden('Your account has no territory assigned.')\n    }\n    scoped.territory = user.territory\n  }\n  return scoped\n}\n\n/** Roles allowed to change another member's record. */\nconst CAN_ADMINISTER = new Set(['owner', 'manager'])\n\nexport function requireAdministrator(user: CrmUser): void {\n  if (!CAN_ADMINISTER.has(user.role)) {\n    throw new Forbidden('Only an owner or manager can do that.')\n  }\n}\n"
+      },
+      "category": "cross_workspace_record_read_via_unscoped_get",
+      "cwe": "CWE-639",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 58,
+      "lineRange": [
+        50,
+        62
+      ]
+    },
+    {
+      "id": "ref-feathers-crm-deal-detail-drawer",
+      "family": "feathers-crm",
+      "architecture": "Feathers 5 application in TypeScript: one service per resource, each a MongoDBService over @feathersjs/mongodb, with authentication and authorization expressed as `around` and `before` hooks rather than as middleware; the caller's identity is `params.user`, resolved by @feathersjs/authentication from a JWT, and `params.provider` is set by the transport ('rest' or 'socketio') and absent for in-process calls, which is what the internal-versus-external guards are written against. Two services are additionally reachable through plain Express routes mounted on the same app.",
+      "language": "typescript",
+      "file": "feathers-crm/src/services/deals.service.ts",
+      "scanAs": "src/services/deals.service.ts",
+      "kind": "safe",
+      "runtimeVerifiable": true,
+      "why": "Same untrusted id for the same kind of drawer, but read through `find` with `scopeToCaller` applied, so the id is one clause of a query already pinned to the caller's workspace and territory; another workspace's id matches nothing and the handler answers 404. `scopeToCaller` throws rather than returning an unnarrowed query when the workspace or territory is missing.",
+      "packageJson": {
+        "name": "northwind-crm",
+        "version": "2.6.1",
+        "private": true,
+        "type": "module",
+        "scripts": {
+          "dev": "ts-node-dev --respawn src/index.ts",
+          "compile": "shx rm -rf lib/ && tsc",
+          "start": "node lib/index.js"
+        },
+        "dependencies": {
+          "@feathersjs/authentication": "^5.0.30",
+          "@feathersjs/authentication-local": "^5.0.30",
+          "@feathersjs/configuration": "^5.0.30",
+          "@feathersjs/errors": "^5.0.30",
+          "@feathersjs/express": "^5.0.30",
+          "@feathersjs/feathers": "^5.0.30",
+          "@feathersjs/mongodb": "^5.0.30",
+          "@feathersjs/schema": "^5.0.30",
+          "@feathersjs/socketio": "^5.0.30",
+          "express": "^4.21.2",
+          "mongodb": "^6.13.0",
+          "winston": "^3.17.0"
+        },
+        "devDependencies": {
+          "@types/express": "^4.17.21",
+          "@types/node": "^22.13.0",
+          "ts-node-dev": "^2.0.0",
+          "typescript": "^5.7.3"
+        }
+      },
+      "extraFiles": {
+        "src/hooks/identity.ts": "import { Forbidden, NotAuthenticated } from '@feathersjs/errors'\nimport type { HookContext } from '@feathersjs/feathers'\n\n/**\n * Who is calling, and on whose behalf.\n *\n * `params.user` is set by `@feathersjs/authentication` once a JWT has been verified. It is\n * never read off the wire — the client sends a token, the strategy resolves it to the stored\n * user document, and that document is what lands here.\n */\nexport interface CrmUser {\n  _id: string\n  email: string\n  role: 'owner' | 'manager' | 'rep' | 'readonly'\n  workspaceId: string\n  /** Set only on `rep` accounts: the territory whose contacts they may work. */\n  territory?: string | null\n}\n\n/**\n * Is this call arriving from outside, or from our own code?\n *\n * `params.provider` is `'rest'` or `'socketio'` for a client call and **undefined** for an\n * internal `app.service(...)` call. Every external-facing guard has to be written against\n * this, because internal calls legitimately need to bypass ownership filters — a nightly job\n * really does read every workspace.\n */\nexport function isExternal(context: HookContext): boolean {\n  return context.params.provider !== undefined\n}\n\n/** The authenticated caller, or a 401. */\nexport function requireUser(context: HookContext): CrmUser {\n  const user = context.params.user as CrmUser | undefined\n  if (!user) {\n    throw new NotAuthenticated('Sign in to continue.')\n  }\n  return user\n}\n\n/**\n * Narrow a query to the caller's own workspace, and to their territory when they have one.\n *\n * Returns a query rather than mutating, and **throws** rather than returning an unnarrowed\n * query when the caller has no workspace, so a missing field can never widen a read.\n */\nexport function scopeToCaller(query: Record<string, unknown>, user: CrmUser): Record<string, unknown> {\n  if (!user.workspaceId) {\n    throw new Forbidden('Your account is not attached to a workspace.')\n  }\n  const scoped: Record<string, unknown> = { ...query, workspaceId: user.workspaceId }\n  if (user.role === 'rep') {\n    if (!user.territory) {\n      throw new Forbidden('Your account has no territory assigned.')\n    }\n    scoped.territory = user.territory\n  }\n  return scoped\n}\n\n/** Roles allowed to change another member's record. */\nconst CAN_ADMINISTER = new Set(['owner', 'manager'])\n\nexport function requireAdministrator(user: CrmUser): void {\n  if (!CAN_ADMINISTER.has(user.role)) {\n    throw new Forbidden('Only an owner or manager can do that.')\n  }\n}\n"
+      },
+      "pairedWith": "ref-feathers-crm-contact-detail-drawer"
+    },
+    {
+      "id": "ref-feathers-crm-member-self-service-patch",
+      "family": "feathers-crm",
+      "architecture": "Feathers 5 application in TypeScript: one service per resource, each a MongoDBService over @feathersjs/mongodb, with authentication and authorization expressed as `around` and `before` hooks rather than as middleware; the caller's identity is `params.user`, resolved by @feathersjs/authentication from a JWT, and `params.provider` is set by the transport ('rest' or 'socketio') and absent for in-process calls, which is what the internal-versus-external guards are written against. Two services are additionally reachable through plain Express routes mounted on the same app.",
+      "language": "typescript",
+      "file": "feathers-crm/src/services/members.service.ts",
+      "scanAs": "src/services/members.service.ts",
+      "kind": "vulnerable",
+      "runtimeVerifiable": true,
+      "why": "The patch hook pins `context.id` to the caller, which stops one member editing another, and then passes `context.data` through untouched. A rep can therefore patch their own document with `{\"role\": \"owner\"}` — or move themselves into another workspace by sending `workspaceId` — because the adapter writes whatever fields it is given.",
+      "packageJson": {
+        "name": "northwind-crm",
+        "version": "2.6.1",
+        "private": true,
+        "type": "module",
+        "scripts": {
+          "dev": "ts-node-dev --respawn src/index.ts",
+          "compile": "shx rm -rf lib/ && tsc",
+          "start": "node lib/index.js"
+        },
+        "dependencies": {
+          "@feathersjs/authentication": "^5.0.30",
+          "@feathersjs/authentication-local": "^5.0.30",
+          "@feathersjs/configuration": "^5.0.30",
+          "@feathersjs/errors": "^5.0.30",
+          "@feathersjs/express": "^5.0.30",
+          "@feathersjs/feathers": "^5.0.30",
+          "@feathersjs/mongodb": "^5.0.30",
+          "@feathersjs/schema": "^5.0.30",
+          "@feathersjs/socketio": "^5.0.30",
+          "express": "^4.21.2",
+          "mongodb": "^6.13.0",
+          "winston": "^3.17.0"
+        },
+        "devDependencies": {
+          "@types/express": "^4.17.21",
+          "@types/node": "^22.13.0",
+          "ts-node-dev": "^2.0.0",
+          "typescript": "^5.7.3"
+        }
+      },
+      "extraFiles": {
+        "src/hooks/identity.ts": "import { Forbidden, NotAuthenticated } from '@feathersjs/errors'\nimport type { HookContext } from '@feathersjs/feathers'\n\n/**\n * Who is calling, and on whose behalf.\n *\n * `params.user` is set by `@feathersjs/authentication` once a JWT has been verified. It is\n * never read off the wire — the client sends a token, the strategy resolves it to the stored\n * user document, and that document is what lands here.\n */\nexport interface CrmUser {\n  _id: string\n  email: string\n  role: 'owner' | 'manager' | 'rep' | 'readonly'\n  workspaceId: string\n  /** Set only on `rep` accounts: the territory whose contacts they may work. */\n  territory?: string | null\n}\n\n/**\n * Is this call arriving from outside, or from our own code?\n *\n * `params.provider` is `'rest'` or `'socketio'` for a client call and **undefined** for an\n * internal `app.service(...)` call. Every external-facing guard has to be written against\n * this, because internal calls legitimately need to bypass ownership filters — a nightly job\n * really does read every workspace.\n */\nexport function isExternal(context: HookContext): boolean {\n  return context.params.provider !== undefined\n}\n\n/** The authenticated caller, or a 401. */\nexport function requireUser(context: HookContext): CrmUser {\n  const user = context.params.user as CrmUser | undefined\n  if (!user) {\n    throw new NotAuthenticated('Sign in to continue.')\n  }\n  return user\n}\n\n/**\n * Narrow a query to the caller's own workspace, and to their territory when they have one.\n *\n * Returns a query rather than mutating, and **throws** rather than returning an unnarrowed\n * query when the caller has no workspace, so a missing field can never widen a read.\n */\nexport function scopeToCaller(query: Record<string, unknown>, user: CrmUser): Record<string, unknown> {\n  if (!user.workspaceId) {\n    throw new Forbidden('Your account is not attached to a workspace.')\n  }\n  const scoped: Record<string, unknown> = { ...query, workspaceId: user.workspaceId }\n  if (user.role === 'rep') {\n    if (!user.territory) {\n      throw new Forbidden('Your account has no territory assigned.')\n    }\n    scoped.territory = user.territory\n  }\n  return scoped\n}\n\n/** Roles allowed to change another member's record. */\nconst CAN_ADMINISTER = new Set(['owner', 'manager'])\n\nexport function requireAdministrator(user: CrmUser): void {\n  if (!CAN_ADMINISTER.has(user.role)) {\n    throw new Forbidden('Only an owner or manager can do that.')\n  }\n}\n"
+      },
+      "category": "privilege_escalation_via_unfiltered_self_patch",
+      "cwe": "CWE-915",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 36,
+      "lineRange": [
+        30,
+        41
+      ]
+    },
+    {
+      "id": "ref-feathers-crm-profile-self-service-patch",
+      "family": "feathers-crm",
+      "architecture": "Feathers 5 application in TypeScript: one service per resource, each a MongoDBService over @feathersjs/mongodb, with authentication and authorization expressed as `around` and `before` hooks rather than as middleware; the caller's identity is `params.user`, resolved by @feathersjs/authentication from a JWT, and `params.provider` is set by the transport ('rest' or 'socketio') and absent for in-process calls, which is what the internal-versus-external guards are written against. Two services are additionally reachable through plain Express routes mounted on the same app.",
+      "language": "typescript",
+      "file": "feathers-crm/src/services/profile.service.ts",
+      "scanAs": "src/services/profile.service.ts",
+      "kind": "safe",
+      "runtimeVerifiable": true,
+      "why": "Same pinned id and the same self-service patch, but the payload is reduced by `pickFields` to the three fields a member administers for themselves, so `role`, `territory` and `workspaceId` are dropped before the adapter sees them rather than being trusted not to arrive.",
+      "packageJson": {
+        "name": "northwind-crm",
+        "version": "2.6.1",
+        "private": true,
+        "type": "module",
+        "scripts": {
+          "dev": "ts-node-dev --respawn src/index.ts",
+          "compile": "shx rm -rf lib/ && tsc",
+          "start": "node lib/index.js"
+        },
+        "dependencies": {
+          "@feathersjs/authentication": "^5.0.30",
+          "@feathersjs/authentication-local": "^5.0.30",
+          "@feathersjs/configuration": "^5.0.30",
+          "@feathersjs/errors": "^5.0.30",
+          "@feathersjs/express": "^5.0.30",
+          "@feathersjs/feathers": "^5.0.30",
+          "@feathersjs/mongodb": "^5.0.30",
+          "@feathersjs/schema": "^5.0.30",
+          "@feathersjs/socketio": "^5.0.30",
+          "express": "^4.21.2",
+          "mongodb": "^6.13.0",
+          "winston": "^3.17.0"
+        },
+        "devDependencies": {
+          "@types/express": "^4.17.21",
+          "@types/node": "^22.13.0",
+          "ts-node-dev": "^2.0.0",
+          "typescript": "^5.7.3"
+        }
+      },
+      "extraFiles": {
+        "src/hooks/identity.ts": "import { Forbidden, NotAuthenticated } from '@feathersjs/errors'\nimport type { HookContext } from '@feathersjs/feathers'\n\n/**\n * Who is calling, and on whose behalf.\n *\n * `params.user` is set by `@feathersjs/authentication` once a JWT has been verified. It is\n * never read off the wire — the client sends a token, the strategy resolves it to the stored\n * user document, and that document is what lands here.\n */\nexport interface CrmUser {\n  _id: string\n  email: string\n  role: 'owner' | 'manager' | 'rep' | 'readonly'\n  workspaceId: string\n  /** Set only on `rep` accounts: the territory whose contacts they may work. */\n  territory?: string | null\n}\n\n/**\n * Is this call arriving from outside, or from our own code?\n *\n * `params.provider` is `'rest'` or `'socketio'` for a client call and **undefined** for an\n * internal `app.service(...)` call. Every external-facing guard has to be written against\n * this, because internal calls legitimately need to bypass ownership filters — a nightly job\n * really does read every workspace.\n */\nexport function isExternal(context: HookContext): boolean {\n  return context.params.provider !== undefined\n}\n\n/** The authenticated caller, or a 401. */\nexport function requireUser(context: HookContext): CrmUser {\n  const user = context.params.user as CrmUser | undefined\n  if (!user) {\n    throw new NotAuthenticated('Sign in to continue.')\n  }\n  return user\n}\n\n/**\n * Narrow a query to the caller's own workspace, and to their territory when they have one.\n *\n * Returns a query rather than mutating, and **throws** rather than returning an unnarrowed\n * query when the caller has no workspace, so a missing field can never widen a read.\n */\nexport function scopeToCaller(query: Record<string, unknown>, user: CrmUser): Record<string, unknown> {\n  if (!user.workspaceId) {\n    throw new Forbidden('Your account is not attached to a workspace.')\n  }\n  const scoped: Record<string, unknown> = { ...query, workspaceId: user.workspaceId }\n  if (user.role === 'rep') {\n    if (!user.territory) {\n      throw new Forbidden('Your account has no territory assigned.')\n    }\n    scoped.territory = user.territory\n  }\n  return scoped\n}\n\n/** Roles allowed to change another member's record. */\nconst CAN_ADMINISTER = new Set(['owner', 'manager'])\n\nexport function requireAdministrator(user: CrmUser): void {\n  if (!CAN_ADMINISTER.has(user.role)) {\n    throw new Forbidden('Only an owner or manager can do that.')\n  }\n}\n",
+        "src/hooks/query-safety.ts": "import { BadRequest } from '@feathersjs/errors'\n\n/**\n * What a client is allowed to say in `params.query`.\n *\n * Feathers passes the query straight to the adapter, and the Mongo adapter understands `$`\n * operators, so an unfiltered query is a query language handed to the caller. The service's\n * `filters`/`operators` options are the supported way to bound that; these helpers are for\n * the places that assemble a query by hand.\n */\n\n/** Operators this application uses. Anything else is refused rather than dropped. */\nconst ALLOWED_OPERATORS = new Set(['$in', '$nin', '$lt', '$lte', '$gt', '$gte', '$ne', '$sort', '$limit', '$skip'])\n\n/**\n * Refuse a query carrying an operator we do not use.\n *\n * Refusing rather than stripping: a caller who sent `$where` asked for something, and\n * silently answering a different question is how an injection becomes a data leak nobody\n * notices. `$where` and `$function` execute server-side JavaScript; `$regex` is a denial of\n * service on an unindexed field.\n */\nexport function refuseUnknownOperators(value: unknown, path = 'query'): void {\n  if (Array.isArray(value)) {\n    value.forEach((entry, index) => refuseUnknownOperators(entry, `${path}[${index}]`))\n    return\n  }\n  if (value === null || typeof value !== 'object') {\n    return\n  }\n  for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {\n    if (key.startsWith('$') && !ALLOWED_OPERATORS.has(key)) {\n      throw new BadRequest(`Unsupported query operator ${key} at ${path}.`)\n    }\n    refuseUnknownOperators(nested, `${path}.${key}`)\n  }\n}\n\n/** Keep only the fields a client may set, so an unexpected one cannot reach the adapter. */\nexport function pickFields<T extends Record<string, unknown>>(data: T, allowed: readonly string[]): Partial<T> {\n  const out: Partial<T> = {}\n  for (const field of allowed) {\n    if (Object.prototype.hasOwnProperty.call(data, field)) {\n      out[field as keyof T] = data[field as keyof T]\n    }\n  }\n  return out\n}\n"
+      },
+      "pairedWith": "ref-feathers-crm-member-self-service-patch"
+    },
+    {
+      "id": "ref-feathers-crm-saved-report-runner",
+      "family": "feathers-crm",
+      "architecture": "Feathers 5 application in TypeScript: one service per resource, each a MongoDBService over @feathersjs/mongodb, with authentication and authorization expressed as `around` and `before` hooks rather than as middleware; the caller's identity is `params.user`, resolved by @feathersjs/authentication from a JWT, and `params.provider` is set by the transport ('rest' or 'socketio') and absent for in-process calls, which is what the internal-versus-external guards are written against. Two services are additionally reachable through plain Express routes mounted on the same app.",
+      "language": "typescript",
+      "file": "feathers-crm/src/services/reports.service.ts",
+      "scanAs": "src/services/reports.service.ts",
+      "kind": "vulnerable",
+      "runtimeVerifiable": true,
+      "why": "A saved report's criteria are spread into the query and handed to the Mongo adapter, which passes `$` operators through verbatim. The workspace clause bounds which documents match but not what the caller may ask: `$where` and `$function` run server-side JavaScript, and a `$regex` on an unindexed field is a denial of service.",
+      "packageJson": {
+        "name": "northwind-crm",
+        "version": "2.6.1",
+        "private": true,
+        "type": "module",
+        "scripts": {
+          "dev": "ts-node-dev --respawn src/index.ts",
+          "compile": "shx rm -rf lib/ && tsc",
+          "start": "node lib/index.js"
+        },
+        "dependencies": {
+          "@feathersjs/authentication": "^5.0.30",
+          "@feathersjs/authentication-local": "^5.0.30",
+          "@feathersjs/configuration": "^5.0.30",
+          "@feathersjs/errors": "^5.0.30",
+          "@feathersjs/express": "^5.0.30",
+          "@feathersjs/feathers": "^5.0.30",
+          "@feathersjs/mongodb": "^5.0.30",
+          "@feathersjs/schema": "^5.0.30",
+          "@feathersjs/socketio": "^5.0.30",
+          "express": "^4.21.2",
+          "mongodb": "^6.13.0",
+          "winston": "^3.17.0"
+        },
+        "devDependencies": {
+          "@types/express": "^4.17.21",
+          "@types/node": "^22.13.0",
+          "ts-node-dev": "^2.0.0",
+          "typescript": "^5.7.3"
+        }
+      },
+      "extraFiles": {
+        "src/hooks/identity.ts": "import { Forbidden, NotAuthenticated } from '@feathersjs/errors'\nimport type { HookContext } from '@feathersjs/feathers'\n\n/**\n * Who is calling, and on whose behalf.\n *\n * `params.user` is set by `@feathersjs/authentication` once a JWT has been verified. It is\n * never read off the wire — the client sends a token, the strategy resolves it to the stored\n * user document, and that document is what lands here.\n */\nexport interface CrmUser {\n  _id: string\n  email: string\n  role: 'owner' | 'manager' | 'rep' | 'readonly'\n  workspaceId: string\n  /** Set only on `rep` accounts: the territory whose contacts they may work. */\n  territory?: string | null\n}\n\n/**\n * Is this call arriving from outside, or from our own code?\n *\n * `params.provider` is `'rest'` or `'socketio'` for a client call and **undefined** for an\n * internal `app.service(...)` call. Every external-facing guard has to be written against\n * this, because internal calls legitimately need to bypass ownership filters — a nightly job\n * really does read every workspace.\n */\nexport function isExternal(context: HookContext): boolean {\n  return context.params.provider !== undefined\n}\n\n/** The authenticated caller, or a 401. */\nexport function requireUser(context: HookContext): CrmUser {\n  const user = context.params.user as CrmUser | undefined\n  if (!user) {\n    throw new NotAuthenticated('Sign in to continue.')\n  }\n  return user\n}\n\n/**\n * Narrow a query to the caller's own workspace, and to their territory when they have one.\n *\n * Returns a query rather than mutating, and **throws** rather than returning an unnarrowed\n * query when the caller has no workspace, so a missing field can never widen a read.\n */\nexport function scopeToCaller(query: Record<string, unknown>, user: CrmUser): Record<string, unknown> {\n  if (!user.workspaceId) {\n    throw new Forbidden('Your account is not attached to a workspace.')\n  }\n  const scoped: Record<string, unknown> = { ...query, workspaceId: user.workspaceId }\n  if (user.role === 'rep') {\n    if (!user.territory) {\n      throw new Forbidden('Your account has no territory assigned.')\n    }\n    scoped.territory = user.territory\n  }\n  return scoped\n}\n\n/** Roles allowed to change another member's record. */\nconst CAN_ADMINISTER = new Set(['owner', 'manager'])\n\nexport function requireAdministrator(user: CrmUser): void {\n  if (!CAN_ADMINISTER.has(user.role)) {\n    throw new Forbidden('Only an owner or manager can do that.')\n  }\n}\n"
+      },
+      "category": "query_operator_injection_via_saved_criteria",
+      "cwe": "CWE-943",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 36,
+      "lineRange": [
+        28,
+        39
+      ]
+    },
+    {
+      "id": "ref-feathers-crm-saved-segment-runner",
+      "family": "feathers-crm",
+      "architecture": "Feathers 5 application in TypeScript: one service per resource, each a MongoDBService over @feathersjs/mongodb, with authentication and authorization expressed as `around` and `before` hooks rather than as middleware; the caller's identity is `params.user`, resolved by @feathersjs/authentication from a JWT, and `params.provider` is set by the transport ('rest' or 'socketio') and absent for in-process calls, which is what the internal-versus-external guards are written against. Two services are additionally reachable through plain Express routes mounted on the same app.",
+      "language": "typescript",
+      "file": "feathers-crm/src/services/segments.service.ts",
+      "scanAs": "src/services/segments.service.ts",
+      "kind": "safe",
+      "runtimeVerifiable": true,
+      "why": "The same caller-authored criteria for the same kind of stored query, checked by `refuseUnknownOperators` against the operators this application uses before they reach the adapter. It walks nested objects and arrays and refuses rather than strips, so a segment carrying `$where` is rejected instead of quietly answering a different question.",
+      "packageJson": {
+        "name": "northwind-crm",
+        "version": "2.6.1",
+        "private": true,
+        "type": "module",
+        "scripts": {
+          "dev": "ts-node-dev --respawn src/index.ts",
+          "compile": "shx rm -rf lib/ && tsc",
+          "start": "node lib/index.js"
+        },
+        "dependencies": {
+          "@feathersjs/authentication": "^5.0.30",
+          "@feathersjs/authentication-local": "^5.0.30",
+          "@feathersjs/configuration": "^5.0.30",
+          "@feathersjs/errors": "^5.0.30",
+          "@feathersjs/express": "^5.0.30",
+          "@feathersjs/feathers": "^5.0.30",
+          "@feathersjs/mongodb": "^5.0.30",
+          "@feathersjs/schema": "^5.0.30",
+          "@feathersjs/socketio": "^5.0.30",
+          "express": "^4.21.2",
+          "mongodb": "^6.13.0",
+          "winston": "^3.17.0"
+        },
+        "devDependencies": {
+          "@types/express": "^4.17.21",
+          "@types/node": "^22.13.0",
+          "ts-node-dev": "^2.0.0",
+          "typescript": "^5.7.3"
+        }
+      },
+      "extraFiles": {
+        "src/hooks/identity.ts": "import { Forbidden, NotAuthenticated } from '@feathersjs/errors'\nimport type { HookContext } from '@feathersjs/feathers'\n\n/**\n * Who is calling, and on whose behalf.\n *\n * `params.user` is set by `@feathersjs/authentication` once a JWT has been verified. It is\n * never read off the wire — the client sends a token, the strategy resolves it to the stored\n * user document, and that document is what lands here.\n */\nexport interface CrmUser {\n  _id: string\n  email: string\n  role: 'owner' | 'manager' | 'rep' | 'readonly'\n  workspaceId: string\n  /** Set only on `rep` accounts: the territory whose contacts they may work. */\n  territory?: string | null\n}\n\n/**\n * Is this call arriving from outside, or from our own code?\n *\n * `params.provider` is `'rest'` or `'socketio'` for a client call and **undefined** for an\n * internal `app.service(...)` call. Every external-facing guard has to be written against\n * this, because internal calls legitimately need to bypass ownership filters — a nightly job\n * really does read every workspace.\n */\nexport function isExternal(context: HookContext): boolean {\n  return context.params.provider !== undefined\n}\n\n/** The authenticated caller, or a 401. */\nexport function requireUser(context: HookContext): CrmUser {\n  const user = context.params.user as CrmUser | undefined\n  if (!user) {\n    throw new NotAuthenticated('Sign in to continue.')\n  }\n  return user\n}\n\n/**\n * Narrow a query to the caller's own workspace, and to their territory when they have one.\n *\n * Returns a query rather than mutating, and **throws** rather than returning an unnarrowed\n * query when the caller has no workspace, so a missing field can never widen a read.\n */\nexport function scopeToCaller(query: Record<string, unknown>, user: CrmUser): Record<string, unknown> {\n  if (!user.workspaceId) {\n    throw new Forbidden('Your account is not attached to a workspace.')\n  }\n  const scoped: Record<string, unknown> = { ...query, workspaceId: user.workspaceId }\n  if (user.role === 'rep') {\n    if (!user.territory) {\n      throw new Forbidden('Your account has no territory assigned.')\n    }\n    scoped.territory = user.territory\n  }\n  return scoped\n}\n\n/** Roles allowed to change another member's record. */\nconst CAN_ADMINISTER = new Set(['owner', 'manager'])\n\nexport function requireAdministrator(user: CrmUser): void {\n  if (!CAN_ADMINISTER.has(user.role)) {\n    throw new Forbidden('Only an owner or manager can do that.')\n  }\n}\n",
+        "src/hooks/query-safety.ts": "import { BadRequest } from '@feathersjs/errors'\n\n/**\n * What a client is allowed to say in `params.query`.\n *\n * Feathers passes the query straight to the adapter, and the Mongo adapter understands `$`\n * operators, so an unfiltered query is a query language handed to the caller. The service's\n * `filters`/`operators` options are the supported way to bound that; these helpers are for\n * the places that assemble a query by hand.\n */\n\n/** Operators this application uses. Anything else is refused rather than dropped. */\nconst ALLOWED_OPERATORS = new Set(['$in', '$nin', '$lt', '$lte', '$gt', '$gte', '$ne', '$sort', '$limit', '$skip'])\n\n/**\n * Refuse a query carrying an operator we do not use.\n *\n * Refusing rather than stripping: a caller who sent `$where` asked for something, and\n * silently answering a different question is how an injection becomes a data leak nobody\n * notices. `$where` and `$function` execute server-side JavaScript; `$regex` is a denial of\n * service on an unindexed field.\n */\nexport function refuseUnknownOperators(value: unknown, path = 'query'): void {\n  if (Array.isArray(value)) {\n    value.forEach((entry, index) => refuseUnknownOperators(entry, `${path}[${index}]`))\n    return\n  }\n  if (value === null || typeof value !== 'object') {\n    return\n  }\n  for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {\n    if (key.startsWith('$') && !ALLOWED_OPERATORS.has(key)) {\n      throw new BadRequest(`Unsupported query operator ${key} at ${path}.`)\n    }\n    refuseUnknownOperators(nested, `${path}.${key}`)\n  }\n}\n\n/** Keep only the fields a client may set, so an unexpected one cannot reach the adapter. */\nexport function pickFields<T extends Record<string, unknown>>(data: T, allowed: readonly string[]): Partial<T> {\n  const out: Partial<T> = {}\n  for (const field of allowed) {\n    if (Object.prototype.hasOwnProperty.call(data, field)) {\n      out[field as keyof T] = data[field as keyof T]\n    }\n  }\n  return out\n}\n"
+      },
+      "pairedWith": "ref-feathers-crm-saved-report-runner"
+    },
+    {
+      "id": "ref-feathers-crm-import-run-route",
+      "family": "feathers-crm",
+      "architecture": "Feathers 5 application in TypeScript: one service per resource, each a MongoDBService over @feathersjs/mongodb, with authentication and authorization expressed as `around` and `before` hooks rather than as middleware; the caller's identity is `params.user`, resolved by @feathersjs/authentication from a JWT, and `params.provider` is set by the transport ('rest' or 'socketio') and absent for in-process calls, which is what the internal-versus-external guards are written against. Two services are additionally reachable through plain Express routes mounted on the same app.",
+      "language": "typescript",
+      "file": "feathers-crm/src/services/imports.service.ts",
+      "scanAs": "src/services/imports.service.ts",
+      "kind": "vulnerable",
+      "runtimeVerifiable": true,
+      "why": "The `around` hook authenticates only calls that have a `provider`, which is correct on its own. The Express route then calls `create` with no params at all, so `provider` is undefined and the hook concludes the caller is the in-process scheduler: an unauthenticated POST to /imports/run creates an import job for whatever `workspaceId` the body names.",
+      "packageJson": {
+        "name": "northwind-crm",
+        "version": "2.6.1",
+        "private": true,
+        "type": "module",
+        "scripts": {
+          "dev": "ts-node-dev --respawn src/index.ts",
+          "compile": "shx rm -rf lib/ && tsc",
+          "start": "node lib/index.js"
+        },
+        "dependencies": {
+          "@feathersjs/authentication": "^5.0.30",
+          "@feathersjs/authentication-local": "^5.0.30",
+          "@feathersjs/configuration": "^5.0.30",
+          "@feathersjs/errors": "^5.0.30",
+          "@feathersjs/express": "^5.0.30",
+          "@feathersjs/feathers": "^5.0.30",
+          "@feathersjs/mongodb": "^5.0.30",
+          "@feathersjs/schema": "^5.0.30",
+          "@feathersjs/socketio": "^5.0.30",
+          "express": "^4.21.2",
+          "mongodb": "^6.13.0",
+          "winston": "^3.17.0"
+        },
+        "devDependencies": {
+          "@types/express": "^4.17.21",
+          "@types/node": "^22.13.0",
+          "ts-node-dev": "^2.0.0",
+          "typescript": "^5.7.3"
+        }
+      },
+      "extraFiles": {
+        "src/hooks/identity.ts": "import { Forbidden, NotAuthenticated } from '@feathersjs/errors'\nimport type { HookContext } from '@feathersjs/feathers'\n\n/**\n * Who is calling, and on whose behalf.\n *\n * `params.user` is set by `@feathersjs/authentication` once a JWT has been verified. It is\n * never read off the wire — the client sends a token, the strategy resolves it to the stored\n * user document, and that document is what lands here.\n */\nexport interface CrmUser {\n  _id: string\n  email: string\n  role: 'owner' | 'manager' | 'rep' | 'readonly'\n  workspaceId: string\n  /** Set only on `rep` accounts: the territory whose contacts they may work. */\n  territory?: string | null\n}\n\n/**\n * Is this call arriving from outside, or from our own code?\n *\n * `params.provider` is `'rest'` or `'socketio'` for a client call and **undefined** for an\n * internal `app.service(...)` call. Every external-facing guard has to be written against\n * this, because internal calls legitimately need to bypass ownership filters — a nightly job\n * really does read every workspace.\n */\nexport function isExternal(context: HookContext): boolean {\n  return context.params.provider !== undefined\n}\n\n/** The authenticated caller, or a 401. */\nexport function requireUser(context: HookContext): CrmUser {\n  const user = context.params.user as CrmUser | undefined\n  if (!user) {\n    throw new NotAuthenticated('Sign in to continue.')\n  }\n  return user\n}\n\n/**\n * Narrow a query to the caller's own workspace, and to their territory when they have one.\n *\n * Returns a query rather than mutating, and **throws** rather than returning an unnarrowed\n * query when the caller has no workspace, so a missing field can never widen a read.\n */\nexport function scopeToCaller(query: Record<string, unknown>, user: CrmUser): Record<string, unknown> {\n  if (!user.workspaceId) {\n    throw new Forbidden('Your account is not attached to a workspace.')\n  }\n  const scoped: Record<string, unknown> = { ...query, workspaceId: user.workspaceId }\n  if (user.role === 'rep') {\n    if (!user.territory) {\n      throw new Forbidden('Your account has no territory assigned.')\n    }\n    scoped.territory = user.territory\n  }\n  return scoped\n}\n\n/** Roles allowed to change another member's record. */\nconst CAN_ADMINISTER = new Set(['owner', 'manager'])\n\nexport function requireAdministrator(user: CrmUser): void {\n  if (!CAN_ADMINISTER.has(user.role)) {\n    throw new Forbidden('Only an owner or manager can do that.')\n  }\n}\n"
+      },
+      "category": "authentication_bypass_via_internal_service_call",
+      "cwe": "CWE-306",
+      "severityBand": [
+        "critical"
+      ],
+      "line": 45,
+      "lineRange": [
+        40,
+        52
+      ]
+    },
+    {
+      "id": "ref-feathers-crm-export-run-route",
+      "family": "feathers-crm",
+      "architecture": "Feathers 5 application in TypeScript: one service per resource, each a MongoDBService over @feathersjs/mongodb, with authentication and authorization expressed as `around` and `before` hooks rather than as middleware; the caller's identity is `params.user`, resolved by @feathersjs/authentication from a JWT, and `params.provider` is set by the transport ('rest' or 'socketio') and absent for in-process calls, which is what the internal-versus-external guards are written against. Two services are additionally reachable through plain Express routes mounted on the same app.",
+      "language": "typescript",
+      "file": "feathers-crm/src/services/exports.service.ts",
+      "scanAs": "src/services/exports.service.ts",
+      "kind": "safe",
+      "runtimeVerifiable": true,
+      "why": "The same provider-gated hook behind the same kind of Express route, but the route forwards `provider: 'rest'` and the request's bearer token, so the call is treated as what it is — one from outside — and authenticated. The workspace is then taken from the resolved user rather than from the body.",
+      "packageJson": {
+        "name": "northwind-crm",
+        "version": "2.6.1",
+        "private": true,
+        "type": "module",
+        "scripts": {
+          "dev": "ts-node-dev --respawn src/index.ts",
+          "compile": "shx rm -rf lib/ && tsc",
+          "start": "node lib/index.js"
+        },
+        "dependencies": {
+          "@feathersjs/authentication": "^5.0.30",
+          "@feathersjs/authentication-local": "^5.0.30",
+          "@feathersjs/configuration": "^5.0.30",
+          "@feathersjs/errors": "^5.0.30",
+          "@feathersjs/express": "^5.0.30",
+          "@feathersjs/feathers": "^5.0.30",
+          "@feathersjs/mongodb": "^5.0.30",
+          "@feathersjs/schema": "^5.0.30",
+          "@feathersjs/socketio": "^5.0.30",
+          "express": "^4.21.2",
+          "mongodb": "^6.13.0",
+          "winston": "^3.17.0"
+        },
+        "devDependencies": {
+          "@types/express": "^4.17.21",
+          "@types/node": "^22.13.0",
+          "ts-node-dev": "^2.0.0",
+          "typescript": "^5.7.3"
+        }
+      },
+      "extraFiles": {
+        "src/hooks/identity.ts": "import { Forbidden, NotAuthenticated } from '@feathersjs/errors'\nimport type { HookContext } from '@feathersjs/feathers'\n\n/**\n * Who is calling, and on whose behalf.\n *\n * `params.user` is set by `@feathersjs/authentication` once a JWT has been verified. It is\n * never read off the wire — the client sends a token, the strategy resolves it to the stored\n * user document, and that document is what lands here.\n */\nexport interface CrmUser {\n  _id: string\n  email: string\n  role: 'owner' | 'manager' | 'rep' | 'readonly'\n  workspaceId: string\n  /** Set only on `rep` accounts: the territory whose contacts they may work. */\n  territory?: string | null\n}\n\n/**\n * Is this call arriving from outside, or from our own code?\n *\n * `params.provider` is `'rest'` or `'socketio'` for a client call and **undefined** for an\n * internal `app.service(...)` call. Every external-facing guard has to be written against\n * this, because internal calls legitimately need to bypass ownership filters — a nightly job\n * really does read every workspace.\n */\nexport function isExternal(context: HookContext): boolean {\n  return context.params.provider !== undefined\n}\n\n/** The authenticated caller, or a 401. */\nexport function requireUser(context: HookContext): CrmUser {\n  const user = context.params.user as CrmUser | undefined\n  if (!user) {\n    throw new NotAuthenticated('Sign in to continue.')\n  }\n  return user\n}\n\n/**\n * Narrow a query to the caller's own workspace, and to their territory when they have one.\n *\n * Returns a query rather than mutating, and **throws** rather than returning an unnarrowed\n * query when the caller has no workspace, so a missing field can never widen a read.\n */\nexport function scopeToCaller(query: Record<string, unknown>, user: CrmUser): Record<string, unknown> {\n  if (!user.workspaceId) {\n    throw new Forbidden('Your account is not attached to a workspace.')\n  }\n  const scoped: Record<string, unknown> = { ...query, workspaceId: user.workspaceId }\n  if (user.role === 'rep') {\n    if (!user.territory) {\n      throw new Forbidden('Your account has no territory assigned.')\n    }\n    scoped.territory = user.territory\n  }\n  return scoped\n}\n\n/** Roles allowed to change another member's record. */\nconst CAN_ADMINISTER = new Set(['owner', 'manager'])\n\nexport function requireAdministrator(user: CrmUser): void {\n  if (!CAN_ADMINISTER.has(user.role)) {\n    throw new Forbidden('Only an owner or manager can do that.')\n  }\n}\n"
+      },
+      "pairedWith": "ref-feathers-crm-import-run-route"
+    },
+    {
+      "id": "ref-feathers-crm-attachment-stream",
+      "family": "feathers-crm",
+      "architecture": "Feathers 5 application in TypeScript: one service per resource, each a MongoDBService over @feathersjs/mongodb, with authentication and authorization expressed as `around` and `before` hooks rather than as middleware; the caller's identity is `params.user`, resolved by @feathersjs/authentication from a JWT, and `params.provider` is set by the transport ('rest' or 'socketio') and absent for in-process calls, which is what the internal-versus-external guards are written against. Two services are additionally reachable through plain Express routes mounted on the same app.",
+      "language": "typescript",
+      "file": "feathers-crm/src/services/attachments.service.ts",
+      "scanAs": "src/services/attachments.service.ts",
+      "kind": "vulnerable",
+      "runtimeVerifiable": true,
+      "why": "The file name is joined onto the workspace's attachment directory with no check, so `../../etc/passwd` — or a name climbing into another workspace's directory — resolves outside the intended root and is streamed back. The workspace segment gives the appearance of isolation while the caller controls the segment after it.",
+      "packageJson": {
+        "name": "northwind-crm",
+        "version": "2.6.1",
+        "private": true,
+        "type": "module",
+        "scripts": {
+          "dev": "ts-node-dev --respawn src/index.ts",
+          "compile": "shx rm -rf lib/ && tsc",
+          "start": "node lib/index.js"
+        },
+        "dependencies": {
+          "@feathersjs/authentication": "^5.0.30",
+          "@feathersjs/authentication-local": "^5.0.30",
+          "@feathersjs/configuration": "^5.0.30",
+          "@feathersjs/errors": "^5.0.30",
+          "@feathersjs/express": "^5.0.30",
+          "@feathersjs/feathers": "^5.0.30",
+          "@feathersjs/mongodb": "^5.0.30",
+          "@feathersjs/schema": "^5.0.30",
+          "@feathersjs/socketio": "^5.0.30",
+          "express": "^4.21.2",
+          "mongodb": "^6.13.0",
+          "winston": "^3.17.0"
+        },
+        "devDependencies": {
+          "@types/express": "^4.17.21",
+          "@types/node": "^22.13.0",
+          "ts-node-dev": "^2.0.0",
+          "typescript": "^5.7.3"
+        }
+      },
+      "extraFiles": {
+        "src/hooks/identity.ts": "import { Forbidden, NotAuthenticated } from '@feathersjs/errors'\nimport type { HookContext } from '@feathersjs/feathers'\n\n/**\n * Who is calling, and on whose behalf.\n *\n * `params.user` is set by `@feathersjs/authentication` once a JWT has been verified. It is\n * never read off the wire — the client sends a token, the strategy resolves it to the stored\n * user document, and that document is what lands here.\n */\nexport interface CrmUser {\n  _id: string\n  email: string\n  role: 'owner' | 'manager' | 'rep' | 'readonly'\n  workspaceId: string\n  /** Set only on `rep` accounts: the territory whose contacts they may work. */\n  territory?: string | null\n}\n\n/**\n * Is this call arriving from outside, or from our own code?\n *\n * `params.provider` is `'rest'` or `'socketio'` for a client call and **undefined** for an\n * internal `app.service(...)` call. Every external-facing guard has to be written against\n * this, because internal calls legitimately need to bypass ownership filters — a nightly job\n * really does read every workspace.\n */\nexport function isExternal(context: HookContext): boolean {\n  return context.params.provider !== undefined\n}\n\n/** The authenticated caller, or a 401. */\nexport function requireUser(context: HookContext): CrmUser {\n  const user = context.params.user as CrmUser | undefined\n  if (!user) {\n    throw new NotAuthenticated('Sign in to continue.')\n  }\n  return user\n}\n\n/**\n * Narrow a query to the caller's own workspace, and to their territory when they have one.\n *\n * Returns a query rather than mutating, and **throws** rather than returning an unnarrowed\n * query when the caller has no workspace, so a missing field can never widen a read.\n */\nexport function scopeToCaller(query: Record<string, unknown>, user: CrmUser): Record<string, unknown> {\n  if (!user.workspaceId) {\n    throw new Forbidden('Your account is not attached to a workspace.')\n  }\n  const scoped: Record<string, unknown> = { ...query, workspaceId: user.workspaceId }\n  if (user.role === 'rep') {\n    if (!user.territory) {\n      throw new Forbidden('Your account has no territory assigned.')\n    }\n    scoped.territory = user.territory\n  }\n  return scoped\n}\n\n/** Roles allowed to change another member's record. */\nconst CAN_ADMINISTER = new Set(['owner', 'manager'])\n\nexport function requireAdministrator(user: CrmUser): void {\n  if (!CAN_ADMINISTER.has(user.role)) {\n    throw new Forbidden('Only an owner or manager can do that.')\n  }\n}\n"
+      },
+      "category": "path_traversal_in_attachment_stream",
+      "cwe": "CWE-22",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 44,
+      "lineRange": [
+        38,
+        48
+      ]
+    },
+    {
+      "id": "ref-feathers-crm-document-stream",
+      "family": "feathers-crm",
+      "architecture": "Feathers 5 application in TypeScript: one service per resource, each a MongoDBService over @feathersjs/mongodb, with authentication and authorization expressed as `around` and `before` hooks rather than as middleware; the caller's identity is `params.user`, resolved by @feathersjs/authentication from a JWT, and `params.provider` is set by the transport ('rest' or 'socketio') and absent for in-process calls, which is what the internal-versus-external guards are written against. Two services are additionally reachable through plain Express routes mounted on the same app.",
+      "language": "typescript",
+      "file": "feathers-crm/src/services/documents.service.ts",
+      "scanAs": "src/services/documents.service.ts",
+      "kind": "safe",
+      "runtimeVerifiable": true,
+      "why": "Same join onto the same kind of per-workspace root, but the name must first match a pattern admitting a single path segment, and `..` is refused explicitly because that character class allows a dot. Both checks run before the join, so no name reaching `path.join` can climb out of the workspace directory.",
+      "packageJson": {
+        "name": "northwind-crm",
+        "version": "2.6.1",
+        "private": true,
+        "type": "module",
+        "scripts": {
+          "dev": "ts-node-dev --respawn src/index.ts",
+          "compile": "shx rm -rf lib/ && tsc",
+          "start": "node lib/index.js"
+        },
+        "dependencies": {
+          "@feathersjs/authentication": "^5.0.30",
+          "@feathersjs/authentication-local": "^5.0.30",
+          "@feathersjs/configuration": "^5.0.30",
+          "@feathersjs/errors": "^5.0.30",
+          "@feathersjs/express": "^5.0.30",
+          "@feathersjs/feathers": "^5.0.30",
+          "@feathersjs/mongodb": "^5.0.30",
+          "@feathersjs/schema": "^5.0.30",
+          "@feathersjs/socketio": "^5.0.30",
+          "express": "^4.21.2",
+          "mongodb": "^6.13.0",
+          "winston": "^3.17.0"
+        },
+        "devDependencies": {
+          "@types/express": "^4.17.21",
+          "@types/node": "^22.13.0",
+          "ts-node-dev": "^2.0.0",
+          "typescript": "^5.7.3"
+        }
+      },
+      "extraFiles": {
+        "src/hooks/identity.ts": "import { Forbidden, NotAuthenticated } from '@feathersjs/errors'\nimport type { HookContext } from '@feathersjs/feathers'\n\n/**\n * Who is calling, and on whose behalf.\n *\n * `params.user` is set by `@feathersjs/authentication` once a JWT has been verified. It is\n * never read off the wire — the client sends a token, the strategy resolves it to the stored\n * user document, and that document is what lands here.\n */\nexport interface CrmUser {\n  _id: string\n  email: string\n  role: 'owner' | 'manager' | 'rep' | 'readonly'\n  workspaceId: string\n  /** Set only on `rep` accounts: the territory whose contacts they may work. */\n  territory?: string | null\n}\n\n/**\n * Is this call arriving from outside, or from our own code?\n *\n * `params.provider` is `'rest'` or `'socketio'` for a client call and **undefined** for an\n * internal `app.service(...)` call. Every external-facing guard has to be written against\n * this, because internal calls legitimately need to bypass ownership filters — a nightly job\n * really does read every workspace.\n */\nexport function isExternal(context: HookContext): boolean {\n  return context.params.provider !== undefined\n}\n\n/** The authenticated caller, or a 401. */\nexport function requireUser(context: HookContext): CrmUser {\n  const user = context.params.user as CrmUser | undefined\n  if (!user) {\n    throw new NotAuthenticated('Sign in to continue.')\n  }\n  return user\n}\n\n/**\n * Narrow a query to the caller's own workspace, and to their territory when they have one.\n *\n * Returns a query rather than mutating, and **throws** rather than returning an unnarrowed\n * query when the caller has no workspace, so a missing field can never widen a read.\n */\nexport function scopeToCaller(query: Record<string, unknown>, user: CrmUser): Record<string, unknown> {\n  if (!user.workspaceId) {\n    throw new Forbidden('Your account is not attached to a workspace.')\n  }\n  const scoped: Record<string, unknown> = { ...query, workspaceId: user.workspaceId }\n  if (user.role === 'rep') {\n    if (!user.territory) {\n      throw new Forbidden('Your account has no territory assigned.')\n    }\n    scoped.territory = user.territory\n  }\n  return scoped\n}\n\n/** Roles allowed to change another member's record. */\nconst CAN_ADMINISTER = new Set(['owner', 'manager'])\n\nexport function requireAdministrator(user: CrmUser): void {\n  if (!CAN_ADMINISTER.has(user.role)) {\n    throw new Forbidden('Only an owner or manager can do that.')\n  }\n}\n"
+      },
+      "pairedWith": "ref-feathers-crm-attachment-stream"
+    },
+    {
+      "id": "ref-feathers-crm-audit-timeline-actor-join",
+      "family": "feathers-crm",
+      "architecture": "Feathers 5 application in TypeScript: one service per resource, each a MongoDBService over @feathersjs/mongodb, with authentication and authorization expressed as `around` and `before` hooks rather than as middleware; the caller's identity is `params.user`, resolved by @feathersjs/authentication from a JWT, and `params.provider` is set by the transport ('rest' or 'socketio') and absent for in-process calls, which is what the internal-versus-external guards are written against. Two services are additionally reachable through plain Express routes mounted on the same app.",
+      "language": "typescript",
+      "file": "feathers-crm/src/services/audit.service.ts",
+      "scanAs": "src/services/audit.service.ts",
+      "kind": "vulnerable",
+      "runtimeVerifiable": true,
+      "why": "Each audit entry is joined to its actor with a bare `members.get`, which loads the whole document, and the result is spread into the response. The members document holds the bcrypt hash and the live password-reset token, so both are serialised to every member who can open the workspace's audit screen. `protect('password')` on the members service does not apply: this is an internal call, and it is the audit service that serialises the result.",
+      "packageJson": {
+        "name": "northwind-crm",
+        "version": "2.6.1",
+        "private": true,
+        "type": "module",
+        "scripts": {
+          "dev": "ts-node-dev --respawn src/index.ts",
+          "compile": "shx rm -rf lib/ && tsc",
+          "start": "node lib/index.js"
+        },
+        "dependencies": {
+          "@feathersjs/authentication": "^5.0.30",
+          "@feathersjs/authentication-local": "^5.0.30",
+          "@feathersjs/configuration": "^5.0.30",
+          "@feathersjs/errors": "^5.0.30",
+          "@feathersjs/express": "^5.0.30",
+          "@feathersjs/feathers": "^5.0.30",
+          "@feathersjs/mongodb": "^5.0.30",
+          "@feathersjs/schema": "^5.0.30",
+          "@feathersjs/socketio": "^5.0.30",
+          "express": "^4.21.2",
+          "mongodb": "^6.13.0",
+          "winston": "^3.17.0"
+        },
+        "devDependencies": {
+          "@types/express": "^4.17.21",
+          "@types/node": "^22.13.0",
+          "ts-node-dev": "^2.0.0",
+          "typescript": "^5.7.3"
+        }
+      },
+      "extraFiles": {
+        "src/hooks/identity.ts": "import { Forbidden, NotAuthenticated } from '@feathersjs/errors'\nimport type { HookContext } from '@feathersjs/feathers'\n\n/**\n * Who is calling, and on whose behalf.\n *\n * `params.user` is set by `@feathersjs/authentication` once a JWT has been verified. It is\n * never read off the wire — the client sends a token, the strategy resolves it to the stored\n * user document, and that document is what lands here.\n */\nexport interface CrmUser {\n  _id: string\n  email: string\n  role: 'owner' | 'manager' | 'rep' | 'readonly'\n  workspaceId: string\n  /** Set only on `rep` accounts: the territory whose contacts they may work. */\n  territory?: string | null\n}\n\n/**\n * Is this call arriving from outside, or from our own code?\n *\n * `params.provider` is `'rest'` or `'socketio'` for a client call and **undefined** for an\n * internal `app.service(...)` call. Every external-facing guard has to be written against\n * this, because internal calls legitimately need to bypass ownership filters — a nightly job\n * really does read every workspace.\n */\nexport function isExternal(context: HookContext): boolean {\n  return context.params.provider !== undefined\n}\n\n/** The authenticated caller, or a 401. */\nexport function requireUser(context: HookContext): CrmUser {\n  const user = context.params.user as CrmUser | undefined\n  if (!user) {\n    throw new NotAuthenticated('Sign in to continue.')\n  }\n  return user\n}\n\n/**\n * Narrow a query to the caller's own workspace, and to their territory when they have one.\n *\n * Returns a query rather than mutating, and **throws** rather than returning an unnarrowed\n * query when the caller has no workspace, so a missing field can never widen a read.\n */\nexport function scopeToCaller(query: Record<string, unknown>, user: CrmUser): Record<string, unknown> {\n  if (!user.workspaceId) {\n    throw new Forbidden('Your account is not attached to a workspace.')\n  }\n  const scoped: Record<string, unknown> = { ...query, workspaceId: user.workspaceId }\n  if (user.role === 'rep') {\n    if (!user.territory) {\n      throw new Forbidden('Your account has no territory assigned.')\n    }\n    scoped.territory = user.territory\n  }\n  return scoped\n}\n\n/** Roles allowed to change another member's record. */\nconst CAN_ADMINISTER = new Set(['owner', 'manager'])\n\nexport function requireAdministrator(user: CrmUser): void {\n  if (!CAN_ADMINISTER.has(user.role)) {\n    throw new Forbidden('Only an owner or manager can do that.')\n  }\n}\n"
+      },
+      "category": "credential_material_in_joined_response",
+      "cwe": "CWE-200",
+      "severityBand": [
+        "high"
+      ],
+      "line": 52,
+      "lineRange": [
+        46,
+        56
+      ]
+    },
+    {
+      "id": "ref-feathers-crm-activity-timeline-actor-join",
+      "family": "feathers-crm",
+      "architecture": "Feathers 5 application in TypeScript: one service per resource, each a MongoDBService over @feathersjs/mongodb, with authentication and authorization expressed as `around` and `before` hooks rather than as middleware; the caller's identity is `params.user`, resolved by @feathersjs/authentication from a JWT, and `params.provider` is set by the transport ('rest' or 'socketio') and absent for in-process calls, which is what the internal-versus-external guards are written against. Two services are additionally reachable through plain Express routes mounted on the same app.",
+      "language": "typescript",
+      "file": "feathers-crm/src/services/activity.service.ts",
+      "scanAs": "src/services/activity.service.ts",
+      "kind": "safe",
+      "runtimeVerifiable": true,
+      "why": "The same per-entry join for the same kind of timeline, but the adapter is asked for the three fields the view renders through `$select`, so the credential columns are never loaded. A later change to the response shape cannot leak what was not read.",
+      "packageJson": {
+        "name": "northwind-crm",
+        "version": "2.6.1",
+        "private": true,
+        "type": "module",
+        "scripts": {
+          "dev": "ts-node-dev --respawn src/index.ts",
+          "compile": "shx rm -rf lib/ && tsc",
+          "start": "node lib/index.js"
+        },
+        "dependencies": {
+          "@feathersjs/authentication": "^5.0.30",
+          "@feathersjs/authentication-local": "^5.0.30",
+          "@feathersjs/configuration": "^5.0.30",
+          "@feathersjs/errors": "^5.0.30",
+          "@feathersjs/express": "^5.0.30",
+          "@feathersjs/feathers": "^5.0.30",
+          "@feathersjs/mongodb": "^5.0.30",
+          "@feathersjs/schema": "^5.0.30",
+          "@feathersjs/socketio": "^5.0.30",
+          "express": "^4.21.2",
+          "mongodb": "^6.13.0",
+          "winston": "^3.17.0"
+        },
+        "devDependencies": {
+          "@types/express": "^4.17.21",
+          "@types/node": "^22.13.0",
+          "ts-node-dev": "^2.0.0",
+          "typescript": "^5.7.3"
+        }
+      },
+      "extraFiles": {
+        "src/hooks/identity.ts": "import { Forbidden, NotAuthenticated } from '@feathersjs/errors'\nimport type { HookContext } from '@feathersjs/feathers'\n\n/**\n * Who is calling, and on whose behalf.\n *\n * `params.user` is set by `@feathersjs/authentication` once a JWT has been verified. It is\n * never read off the wire — the client sends a token, the strategy resolves it to the stored\n * user document, and that document is what lands here.\n */\nexport interface CrmUser {\n  _id: string\n  email: string\n  role: 'owner' | 'manager' | 'rep' | 'readonly'\n  workspaceId: string\n  /** Set only on `rep` accounts: the territory whose contacts they may work. */\n  territory?: string | null\n}\n\n/**\n * Is this call arriving from outside, or from our own code?\n *\n * `params.provider` is `'rest'` or `'socketio'` for a client call and **undefined** for an\n * internal `app.service(...)` call. Every external-facing guard has to be written against\n * this, because internal calls legitimately need to bypass ownership filters — a nightly job\n * really does read every workspace.\n */\nexport function isExternal(context: HookContext): boolean {\n  return context.params.provider !== undefined\n}\n\n/** The authenticated caller, or a 401. */\nexport function requireUser(context: HookContext): CrmUser {\n  const user = context.params.user as CrmUser | undefined\n  if (!user) {\n    throw new NotAuthenticated('Sign in to continue.')\n  }\n  return user\n}\n\n/**\n * Narrow a query to the caller's own workspace, and to their territory when they have one.\n *\n * Returns a query rather than mutating, and **throws** rather than returning an unnarrowed\n * query when the caller has no workspace, so a missing field can never widen a read.\n */\nexport function scopeToCaller(query: Record<string, unknown>, user: CrmUser): Record<string, unknown> {\n  if (!user.workspaceId) {\n    throw new Forbidden('Your account is not attached to a workspace.')\n  }\n  const scoped: Record<string, unknown> = { ...query, workspaceId: user.workspaceId }\n  if (user.role === 'rep') {\n    if (!user.territory) {\n      throw new Forbidden('Your account has no territory assigned.')\n    }\n    scoped.territory = user.territory\n  }\n  return scoped\n}\n\n/** Roles allowed to change another member's record. */\nconst CAN_ADMINISTER = new Set(['owner', 'manager'])\n\nexport function requireAdministrator(user: CrmUser): void {\n  if (!CAN_ADMINISTER.has(user.role)) {\n    throw new Forbidden('Only an owner or manager can do that.')\n  }\n}\n"
+      },
+      "pairedWith": "ref-feathers-crm-audit-timeline-actor-join"
+    }
+  ]
+}

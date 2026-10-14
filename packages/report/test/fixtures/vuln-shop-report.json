@@ -1,0 +1,861 @@
+{
+  "schemaVersion": "1.0.0",
+  "id": "rpt_c3eab08d-91f4-4d84-8c44-8c7dec4e57f2",
+  "generatedAt": "2026-08-21T05:33:47.147Z",
+  "project": {
+    "name": "myrqen-fixture-vuln-shop",
+    "workspaceKind": "personal",
+    "workspaceName": "Personal",
+    "repositoryLabel": "vuln-shop"
+  },
+  "scan": {
+    "effortRequested": "auto",
+    "effortResolved": "high",
+    "effortProfile": {
+      "reasoningPasses": 2,
+      "validationPasses": 2,
+      "maxParallelInvestigations": 4,
+      "wallClockBudgetMs": 1500000,
+      "falsePositiveChallengePass": true,
+      "identityMatrixDepth": 2,
+      "breadth": "broad"
+    },
+    "startedAt": "2026-08-21T05:16:18.171Z",
+    "completedAt": "2026-08-21T05:33:47.147Z",
+    "durationMs": 1048976,
+    "agent": {
+      "name": "benchmark-harness",
+      "model": "candidate-driven-validator"
+    },
+    "host": {
+      "osFamily": "darwin",
+      "arch": "arm64",
+      "runtimeVersion": "node 25.5.0",
+      "cliVersion": "0.1.0",
+      "isolatedRuntimeAvailable": false
+    },
+    "tokenUsage": {
+      "source": "unavailable"
+    },
+    "scope": {
+      "localTargets": [
+        "http://127.0.0.1:4010"
+      ],
+      "externalTargets": []
+    },
+    "phases": [
+      {
+        "phase": "preflight",
+        "state": "complete",
+        "startedAt": "2026-08-21T05:16:18.171Z",
+        "completedAt": "2026-08-21T05:16:19.702Z",
+        "durationMs": 1531
+      },
+      {
+        "phase": "source_review",
+        "state": "complete",
+        "startedAt": "2026-08-21T05:16:22.792Z",
+        "completedAt": "2026-08-21T05:33:45.756Z",
+        "durationMs": 1042964
+      },
+      {
+        "phase": "scope",
+        "state": "complete",
+        "startedAt": "2026-08-21T05:16:21.561Z",
+        "completedAt": "2026-08-21T05:33:45.018Z",
+        "durationMs": 1043457
+      },
+      {
+        "phase": "discovery",
+        "state": "complete",
+        "startedAt": "2026-08-21T05:16:22.156Z",
+        "completedAt": "2026-08-21T05:33:45.383Z",
+        "durationMs": 1043227
+      },
+      {
+        "phase": "runtime_validation",
+        "state": "complete",
+        "startedAt": "2026-08-21T05:16:27.846Z",
+        "completedAt": "2026-08-21T05:33:46.119Z",
+        "durationMs": 1038273
+      },
+      {
+        "phase": "access_control",
+        "state": "complete",
+        "startedAt": "2026-08-21T05:16:28.485Z",
+        "completedAt": "2026-08-21T05:33:46.461Z",
+        "durationMs": 1037976
+      },
+      {
+        "phase": "validation",
+        "state": "complete",
+        "startedAt": "2026-08-21T05:33:46.802Z",
+        "completedAt": "2026-08-21T05:33:46.802Z",
+        "durationMs": 0
+      },
+      {
+        "phase": "reporting",
+        "state": "running",
+        "startedAt": "2026-08-21T05:33:47.147Z"
+      }
+    ],
+    "stack": {
+      "languages": [
+        "JavaScript"
+      ],
+      "frameworks": [],
+      "packageManagers": [],
+      "services": [
+        "http://127.0.0.1:4010"
+      ]
+    }
+  },
+  "authorization": {
+    "destructiveActionsAllowed": false,
+    "prohibitedActions": [
+      "denial_of_service",
+      "resource_exhaustion",
+      "mass_delete",
+      "mass_mutation",
+      "destructive_database_change",
+      "destructive_filesystem_change",
+      "persistence",
+      "uncontrolled_account_creation",
+      "spam_or_mass_messaging",
+      "financial_or_billing_side_effect",
+      "credential_theft_or_reuse",
+      "malware_deployment",
+      "scope_expansion",
+      "unrelated_infrastructure_recon",
+      "authorization_prompt_bypass",
+      "policy_or_logging_tampering",
+      "secret_exfiltration"
+    ],
+    "externalTargetAuthorization": "exact_origin_only",
+    "localTargetsInScope": true,
+    "notes": [
+      "No external origin was authorized. Only local project targets were assessed.",
+      "Isolated runtime checks were skipped on this machine. Other checks still ran."
+    ]
+  },
+  "summary": {
+    "findingCount": 14,
+    "severityCounts": {
+      "critical": 0,
+      "high": 10,
+      "medium": 4,
+      "low": 0,
+      "info": 0
+    },
+    "verificationCounts": {
+      "verified": 9,
+      "strong_evidence": 4,
+      "needs_review": 1
+    },
+    "fixedCount": 0,
+    "candidateCount": 15,
+    "duplicateCount": 1
+  },
+  "findings": [
+    {
+      "id": "MYR-001",
+      "title": "The `where` parameter is compiled as executable code",
+      "category": "code_injection",
+      "severity": "high",
+      "verification": "strong_evidence",
+      "summary": "This helper embeds its `where` parameter into source passed to Function, so whatever any caller supplies becomes code that runs in this process. The helper cannot make that safe on its own: every call site is now responsible for the parameter never containing caller input.",
+      "impact": "Any route that lets user input reach this parameter is remote code execution, and a route that does so today looks identical to one that does not.",
+      "affected": {
+        "component": "query",
+        "file": "src/db.js",
+        "lineStart": 33,
+        "lineEnd": 33
+      },
+      "evidence": [
+        {
+          "kind": "source",
+          "description": "The `where` parameter is interpolated into code given to Function.",
+          "snippet": "  if (!where) return rows;\n  // Unsafe: the caller's string is composed directly into executable logic.\n  const predicate = new Function(\"row\", `try { return (${where}); } catch (error) { return false; }`);\n  return rows.filter((row) => predicate(row));\n}",
+          "location": "src/db.js:33"
+        },
+        {
+          "kind": "source",
+          "description": "Static analysis reasoning: Parameter `where` of this function appears inside the source argument of Function."
+        }
+      ],
+      "remediation": "Compile the predicate from structured input instead of a string: accept a field, an operator from a fixed set, and a value, and build the comparison in code so nothing the caller sends is ever parsed as source.",
+      "verificationPlan": "Call the helper with a parameter containing a side effect and confirm it is not executed; then confirm every call site passes only values built in code.",
+      "status": "open",
+      "firstSeenAt": "2026-08-21T05:16:20.215Z",
+      "taxonomy": [
+        "CWE-94",
+        "CWE-95",
+        "OWASP-A03"
+      ],
+      "tags": [
+        "static-pass",
+        "dynamic-predicate-compilation"
+      ],
+      "fingerprint": "fp_01c4e8f85f5511c62ed0c6701413f176",
+      "corroboration": [
+        {
+          "kind": "source",
+          "description": "A second review pass reached the same root cause from the source path rather than from the runtime probe."
+        }
+      ]
+    },
+    {
+      "id": "MYR-002",
+      "title": "Credential in source: credential assigned to BILLING_API_SECRET",
+      "category": "hardcoded_secret",
+      "severity": "high",
+      "verification": "strong_evidence",
+      "summary": "A credential assigned to BILLING_API_SECRET is present as a literal in src/server.js. Anyone who can read the repository, its history, a CI log, or a build artifact that contains this file holds the credential, and none of those audiences is the one it was issued to.",
+      "impact": "The credential has to be treated as already compromised, because publication cannot be undone by deleting the line. What that costs depends on what it authorises: reading customer data, sending mail as the company, or spending money on the account it belongs to.",
+      "affected": {
+        "component": "src/server.js",
+        "file": "src/server.js",
+        "lineStart": 15,
+        "lineEnd": 15,
+        "route": "GET /"
+      },
+      "evidence": [
+        {
+          "kind": "source",
+          "description": "A credential assigned to BILLING_API_SECRET appears as a literal. The value is deliberately not reproduced in this report.",
+          "location": "src/server.js:15"
+        },
+        {
+          "kind": "source",
+          "description": "Static analysis reasoning: The literal is bound to a secret-named binding, is 41 characters with entropy 4.33, and contains no whitespace."
+        }
+      ],
+      "remediation": "Rotate the credential first — the old value is burned. Then read the new one from the process environment or a secret manager, fail closed at startup when it is absent rather than falling back to a literal, and purge the value from git history. Add a pre-commit secret scan so the next one is caught before it lands.",
+      "verificationPlan": "Confirm the rotated credential is loaded from configuration at runtime and that the application refuses to start without it. Then search the working tree and the full history for the shape and confirm no literal remains.",
+      "status": "open",
+      "firstSeenAt": "2026-08-21T05:16:20.259Z",
+      "taxonomy": [
+        "CWE-798",
+        "CWE-259",
+        "OWASP-A07"
+      ],
+      "tags": [
+        "static-pass",
+        "credential-literal"
+      ],
+      "fingerprint": "fp_170e72be4ec3c9366851605ca4968048"
+    },
+    {
+      "id": "MYR-003",
+      "title": "Session identifier `token` is derived from a MD5 digest of `${user.id}:${sessions.size}`",
+      "category": "weak_session_identifier",
+      "severity": "high",
+      "verification": "strong_evidence",
+      "summary": "`token` has to be unguessable to whoever receives it, but it is produced from a MD5 digest of `${user.id}:${sessions.size}`. A digest is deterministic, so the result is exactly as unguessable as what went into it. Every input here is something an attacker can observe, enumerate, or compute — an identifier, a counter, or the clock — so the value can be reconstructed offline. The value's role is settled by how it is used: it becomes the key of `sessions.set()`.",
+      "impact": "An attacker who can reconstruct the inputs computes a valid session identifier offline and uses it without ever presenting a credential, which is account takeover with no sign-in and no audit trail that looks unusual.",
+      "affected": {
+        "component": "src/server.js",
+        "file": "src/server.js",
+        "lineStart": 77,
+        "lineEnd": 77,
+        "route": "POST /api/login"
+      },
+      "evidence": [
+        {
+          "kind": "source",
+          "description": "token is produced from a MD5 digest of `${user.id}:${sessions.size}`.",
+          "snippet": "      if (!user) return json(response, 401, { error: \"invalid credentials\" });\n      // Predictable session identifier derived from a low-entropy counter.\n      const token = crypto.createHash(\"md5\").update(`${user.id}:${sessions.size}`).digest(\"hex\");\n      sessions.set(token, { userId: user.id, createdAt: Date.now() });\n      response.setHeader(\"set-cookie\", `session=${token}; Path=/`);",
+          "location": "src/server.js:77"
+        },
+        {
+          "kind": "source",
+          "description": "Static analysis reasoning: The value is built from a MD5 digest of `${user.id}:${sessions.size}`. It is classified as a session identifier because it becomes the key of `sessions.set()`, which is stronger evidence than the binding name."
+        }
+      ],
+      "remediation": "Draw the value from a cryptographic source with at least 128 bits of entropy — crypto.randomBytes(32) rendered base64url, or crypto.randomUUID() where a UUID is wanted — and derive nothing about it from the account, the clock, or a counter. Store only a SHA-256 digest of it so a leak of the table does not yield working values.",
+      "verificationPlan": "Request several values in quick succession and confirm they show no shared structure, no monotonic component, and no relationship to the account or the time of issue. Then confirm a value minted for one account cannot be predicted from values minted for another.",
+      "status": "open",
+      "firstSeenAt": "2026-08-21T05:16:20.296Z",
+      "taxonomy": [
+        "CWE-330",
+        "CWE-384",
+        "OWASP-A07"
+      ],
+      "tags": [
+        "static-pass",
+        "predictable-session-identifier"
+      ],
+      "fingerprint": "fp_355a1fc86ad472ba02c766272c013b9e"
+    },
+    {
+      "id": "MYR-004",
+      "title": "orders is read by identifier without checking who owns it",
+      "category": "broken_object_level_authorization",
+      "severity": "high",
+      "verification": "verified",
+      "summary": "This handler establishes who the caller is, then addresses a single row in `orders` using `id` — a value the caller supplies — as the only condition that selects it. The authenticated subject is not part of the predicate, nothing between the statement and the response compares the row's owner to that subject, and the row is returned to the caller. Changing the identifier in the request therefore addresses somebody else's record.",
+      "impact": "A signed-in user can read another account's orders row by changing one identifier in the request. Where the row carries contact details, financial figures, or document contents this is a data breach that needs no exploit — only a second account and a loop over identifiers.",
+      "affected": {
+        "component": "src/server.js",
+        "file": "src/server.js",
+        "lineStart": 95,
+        "lineEnd": 95,
+        "route": "GET /api/orders/:id"
+      },
+      "evidence": [
+        {
+          "kind": "source",
+          "description": "The row is read by identifier alone, in a handler that has already resolved who is calling.",
+          "snippet": "      if (!user) return json(response, 401, { error: \"sign in first\" });\n      const id = Number(url.pathname.split(\"/\").pop());\n      const order = orders.find((candidate) => candidate.id === id);\n      if (!order) return json(response, 404, { error: \"not found\" });\n      return json(response, 200, order);",
+          "location": "src/server.js:95"
+        },
+        {
+          "kind": "source",
+          "description": "The conditions that select the row are `(candidate) => candidate.id === id` — no owner column among them, and no terminating ownership comparison follows.",
+          "snippet": "      const id = Number(url.pathname.split(\"/\").pop());\n      const order = orders.find((candidate) => candidate.id === id);\n      if (!order) return json(response, 404, { error: \"not found\" });",
+          "location": "src/server.js:95"
+        },
+        {
+          "kind": "source",
+          "description": "Static analysis reasoning: The route establishes an identity and declares no object-level guard. `orders` is addressed by a primary-key predicate whose value classifies as caller-supplied, the predicate names no owner column (projections and payloads excluded from that test), the row reaches the response, and no ownership comparison or identity-plus-identifier guard stops the handler."
+        }
+      ],
+      "remediation": "Make ownership part of the statement rather than a step beside it: add the authenticated subject to the predicate so the row cannot be selected at all unless it belongs to the caller. Answer 404 rather than 403 when the row exists but is not theirs, so the identifier space cannot be enumerated.",
+      "verificationPlan": "Create two accounts. As the first, request a `orders` identifier that belongs to the second on `GET /api/orders/:id`. The response must be 404 or 403 with no row in the body and no change to the row; the same request made by the owner must still succeed.",
+      "status": "open",
+      "firstSeenAt": "2026-08-21T05:16:20.344Z",
+      "taxonomy": [
+        "CWE-639",
+        "CWE-284",
+        "OWASP-A01"
+      ],
+      "tags": [
+        "static-pass",
+        "record-not-scoped-to-caller"
+      ],
+      "fingerprint": "fp_46a2bd945e9535aa990c85ec73f932e0",
+      "corroboration": [
+        {
+          "kind": "identity_differential",
+          "description": "Signed in as user_a and requested /api/orders/102, a record listed for user_b. The response was HTTP 200 with a body of 93 bytes.",
+          "location": "GET /api/orders/102"
+        }
+      ]
+    },
+    {
+      "id": "MYR-005",
+      "title": "GET /api/admin/users sits on a path reserved for operators with no authorization check",
+      "category": "broken_function_level_authorization",
+      "severity": "high",
+      "verification": "verified",
+      "summary": "GET /api/admin/users sits on a path whose name reserves it for operators, and it answers with state rather than a constant, but no comparison of the caller's role, permission, or ownership appears in the handler or its middleware. The caller is identified — a session, a token, or a membership is resolved — but being identified is treated as being entitled. The endpoint is a branch of a hand-rolled dispatcher, so there is no middleware layer that could be holding the check on its behalf: whatever guards it has to be in the branch, and there is none.",
+      "impact": "Any caller who reaches this endpoint performs an operation the application reserves for a subset of its members — changing a plan, a seat allowance, or another account's state — and is billed to, or borne by, the organisation rather than them.",
+      "affected": {
+        "component": "src/server.js",
+        "file": "src/server.js",
+        "lineStart": 108,
+        "lineEnd": 112,
+        "route": "GET /api/admin/users"
+      },
+      "evidence": [
+        {
+          "kind": "source",
+          "description": "Neither GET /api/admin/users nor its middleware, route options, or procedure chain contains a role comparison, a permission membership test, or an authorization helper call.",
+          "snippet": "    // Broken function level authorization: an administrative listing that only\n    // checks that someone is signed in.\n    if (route === \"GET /api/admin/users\") {\n      const user = currentUser(request);\n      if (!user) return json(response, 401, { error: \"sign in first\" });\n      return json(response, 200, users);\n    }\n\n    // Unsafe query composition: the client-controlled filter is interpolated",
+          "location": "src/server.js:108"
+        },
+        {
+          "kind": "source",
+          "description": "Static analysis reasoning: No comparison, membership test, or authorization call involving a role, permission, or ownership claim appears in GET /api/admin/users or in its middleware, options, or procedure chain, while the handler serves a privileged path."
+        }
+      ],
+      "remediation": "Compare the caller's role against the privilege this operation needs before performing it, and answer 403 when it does not match. Put the comparison in the same place for every administrative operation — a middleware, a procedure builder, or a helper such as the one a sibling in this module already uses — so a newly added operation inherits the check instead of needing to remember it.",
+      "verificationPlan": "Sign in as an ordinary, non-administrative account and call GET /api/admin/users. The response must be 403 or 404 and must contain none of the data the route serves. Repeat with an administrative account to confirm the route still works, and compare the two responses: if they are the same, the route has no authorization at all.",
+      "status": "open",
+      "firstSeenAt": "2026-08-21T05:16:20.387Z",
+      "taxonomy": [
+        "CWE-285",
+        "CWE-862",
+        "CWE-269",
+        "OWASP-A01"
+      ],
+      "tags": [
+        "static-pass",
+        "privileged-operation-without-role-check"
+      ],
+      "fingerprint": "fp_3dcb81f5b7c32bcf842d810bc86e6495",
+      "corroboration": [
+        {
+          "kind": "identity_differential",
+          "description": "Requested /api/admin/users as user_a, whose role is customer, and received HTTP 200 with a body of 292 bytes.",
+          "location": "GET /api/admin/users"
+        }
+      ]
+    },
+    {
+      "id": "MYR-006",
+      "title": "Caller-controlled data is composed into the query expression passed to query",
+      "category": "unsafe_query_composition",
+      "severity": "high",
+      "verification": "verified",
+      "summary": "A value derived from url.searchParams.get() (caller-controlled request data) is interpolated into an expression string that query interprets. The caller therefore controls the structure of the query, not only the value being matched, even though no SQL statement is involved.",
+      "impact": "Depending on how the expression is evaluated, the caller can widen the query to return records they should not see, make it always true, or — where the expression is compiled as code — run arbitrary logic in the process.",
+      "affected": {
+        "component": "src/server.js",
+        "file": "src/server.js",
+        "lineStart": 119,
+        "lineEnd": 119,
+        "route": "GET /api/products/search"
+      },
+      "evidence": [
+        {
+          "kind": "source",
+          "description": "The query expression is built by interpolation rather than passed as bound data.",
+          "snippet": "      const term = url.searchParams.get(\"q\") ?? \"\";\n      const where = `row.name.toLowerCase().includes(\"${term.toLowerCase()}\")`;\n      const rows = query(\"products\", where);\n      return json(response, 200, { where, rows });\n    }",
+          "location": "src/server.js:119"
+        },
+        {
+          "kind": "source",
+          "description": "Data flow: url.searchParams.get() (caller-controlled request data) reaches query() in the same function with no validating guard between them."
+        },
+        {
+          "kind": "source",
+          "description": "Static analysis reasoning: Taint from url.searchParams.get() (caller-controlled request data) reaches an interpolated expression argument of query; the argument contains operator syntax and is not a bound parameter array."
+        }
+      ],
+      "remediation": "Pass the value as data rather than as part of the expression: build the predicate from a fixed set of comparisons and supply the caller's value as a bound argument. If a free-form expression is genuinely required, parse it into an allowlisted operator tree instead of evaluating the string.",
+      "verificationPlan": "Send a value containing an expression terminator and a tautology, and confirm the result set is unchanged and no evaluation error surfaces.",
+      "status": "open",
+      "firstSeenAt": "2026-08-21T05:16:20.440Z",
+      "taxonomy": [
+        "CWE-943",
+        "CWE-89",
+        "OWASP-A03"
+      ],
+      "tags": [
+        "static-pass",
+        "unsafe-query-composition"
+      ],
+      "fingerprint": "fp_7e4b115a3ef76a9a157b540d88f77d06",
+      "corroboration": [
+        {
+          "kind": "runtime",
+          "description": "A term that matches nothing returned 0 row(s); the same route with a predicate terminator returned 3. The caller therefore controls the structure of the query, not only the value matched.",
+          "location": "GET /api/products/search"
+        }
+      ]
+    },
+    {
+      "id": "MYR-007",
+      "title": "Server issues a request to a caller-influenced destination via fetch",
+      "category": "server_side_request_forgery",
+      "severity": "high",
+      "verification": "verified",
+      "summary": "The destination given to fetch is derived from url.searchParams.get() (caller-controlled request data), and nothing between the read and the call restricts which host it may name — no allowlist of origins, no comparison of the parsed hostname against one, and no fixed scheme-and-host prefix. The caller therefore chooses what the server connects to.",
+      "impact": "The attacker makes this server reach addresses they cannot reach themselves: internal services with no authentication of their own, the cloud instance metadata endpoint and the credentials it hands out, and anything else inside the network perimeter. Where the response body or its status and timing come back to the caller, it also becomes a scanner and a read primitive against those systems.",
+      "affected": {
+        "component": "src/server.js",
+        "file": "src/server.js",
+        "lineStart": 138,
+        "lineEnd": 138,
+        "route": "POST /api/import"
+      },
+      "evidence": [
+        {
+          "kind": "source",
+          "description": "fetch is called with a caller-influenced destination and no host allowlist.",
+          "snippet": "      const target = body.url;\n      if (!target) return json(response, 400, { error: \"url required\" });\n      const fetched = await fetch(target, { redirect: \"follow\" }).catch((error) => ({ error }));\n      if (fetched.error) return json(response, 502, { error: String(fetched.error.message ?? fetched.error) });\n      const text = await fetched.text();",
+          "location": "src/server.js:138"
+        },
+        {
+          "kind": "source",
+          "description": "Data flow: url.searchParams.get() (caller-controlled request data) reaches fetch() in the same function with no validating guard between them."
+        },
+        {
+          "kind": "source",
+          "description": "Static analysis reasoning: Taint from url.searchParams.get() (caller-controlled request data) reaches the destination of fetch; no membership guard, hostname comparison, constant origin prefix, or validating helper was found on its root binding."
+        }
+      ],
+      "remediation": "Parse the destination, require an https scheme, and require its hostname to appear in an explicit allowlist before the request is issued — resolving the name and rejecting private, loopback, and link-local addresses if the allowlist has to be broad. Refuse redirects rather than following them, since a permitted host can redirect to a forbidden one, and do not return the fetched body to the caller verbatim.",
+      "verificationPlan": "Send a destination of `http://169.254.169.254/latest/meta-data/`, then a permitted host that redirects to it, and confirm both are refused before any outbound connection is made and that the response reveals nothing about which internal addresses answered.",
+      "status": "open",
+      "firstSeenAt": "2026-08-21T05:16:20.484Z",
+      "taxonomy": [
+        "CWE-918",
+        "OWASP-A10"
+      ],
+      "tags": [
+        "static-pass",
+        "perimeter-ssrf"
+      ],
+      "fingerprint": "fp_5577e5e237501d40d513bea11907043c",
+      "corroboration": [
+        {
+          "kind": "runtime",
+          "description": "POST /api/import fetched a destination supplied entirely by the caller and returned HTTP 200. No allowlist was consulted, so the destination is the caller's choice.",
+          "location": "POST /api/import"
+        }
+      ]
+    },
+    {
+      "id": "MYR-008",
+      "title": "Caller-supplied path segment reaches fs.readFileSync with no containment check",
+      "category": "path_traversal",
+      "severity": "high",
+      "verification": "verified",
+      "summary": "`name`, derived from url.searchParams.get() (caller-controlled request data), is combined with a base directory using path.join() and passed to fs.readFileSync. Joining constrains nothing: a parent-directory segment walks straight out of the base directory, and nothing here reduces the value to a bare file name or checks that the resolved path stayed inside.",
+      "impact": "An attacker reads or overwrites files outside the intended directory using the process's own credentials — environment files, private keys, session stores, and the application's own source. On a write or delete sink it is also a way to corrupt the deployment.",
+      "affected": {
+        "component": "src/server.js",
+        "file": "src/server.js",
+        "lineStart": 150,
+        "lineEnd": 150,
+        "route": "GET /api/files"
+      },
+      "evidence": [
+        {
+          "kind": "source",
+          "description": "fs.readFileSync receives a path built from caller input with no containment check.",
+          "snippet": "      const target = path.join(PUBLIC_DIR, name);\n      try {\n        const contents = fs.readFileSync(target, \"utf8\");\n        return json(response, 200, { name, contents: contents.slice(0, 2000) });\n      } catch (error) {",
+          "location": "src/server.js:150"
+        },
+        {
+          "kind": "source",
+          "description": "Data flow: url.searchParams.get() (caller-controlled request data) reaches fs.readFileSync() in the same function with no validating guard between them."
+        },
+        {
+          "kind": "source",
+          "description": "Static analysis reasoning: Taint from url.searchParams.get() (caller-controlled request data) reaches argument 0 of fs.readFileSync; the contributing segment is neither reduced by path.basename nor confined by a resolve-and-startsWith check, an allowlist, or an anchored character-set guard."
+        }
+      ],
+      "remediation": "Reduce the caller's contribution to a single name with `path.basename`, or resolve the candidate path and reject it unless it is inside the base directory compared with a trailing separator. Addressing files by an opaque identifier that maps to a stored path is stronger still, because the caller then has no influence over the path at all.",
+      "verificationPlan": "Request the same route with a segment of `../../etc/passwd`, then with its URL-encoded and double-encoded forms, and confirm each is refused with no file contents and no difference in timing that reveals whether the path exists.",
+      "status": "open",
+      "firstSeenAt": "2026-08-21T05:16:20.533Z",
+      "taxonomy": [
+        "CWE-22",
+        "CWE-23",
+        "OWASP-A01"
+      ],
+      "tags": [
+        "static-pass",
+        "perimeter-path-traversal"
+      ],
+      "fingerprint": "fp_93ea8e8a52ccdf0bc0f669e8ceadd680",
+      "corroboration": [
+        {
+          "kind": "runtime",
+          "description": "Requested /api/files with name=../../../../etc/hosts. The response reported a failure against /Users/stijn/thuis/etc/hosts, which is outside the route's base directory, so the traversal resolved and only the absence of that file prevented the read.",
+          "location": "GET /api/files"
+        }
+      ]
+    },
+    {
+      "id": "MYR-009",
+      "title": "Caller-controlled `quantity` determines `total` with no bound on its range",
+      "category": "business_logic_price_manipulation",
+      "severity": "high",
+      "verification": "verified",
+      "summary": "`total` is computed from request (inbound request) via readBody() with no check that the caller's value is within the range the calculation assumes. Nothing here rejects a zero, a negative number, a fractional quantity, or a value large enough to overflow — the arithmetic simply proceeds.",
+      "impact": "A caller who sends a negative or fractional quantity changes what they are charged, and in a system that credits the difference, turns a purchase into a payout. The route behaves exactly as designed, which is why this survives testing.",
+      "affected": {
+        "component": "src/server.js",
+        "file": "src/server.js",
+        "lineStart": 166,
+        "lineEnd": 166,
+        "route": "POST /api/checkout"
+      },
+      "evidence": [
+        {
+          "kind": "source",
+          "description": "A monetary value is derived from a caller-supplied quantity.",
+          "snippet": "      if (!product) return json(response, 404, { error: \"unknown product\" });\n      const quantity = Number(body.quantity ?? 1);\n      const total = product.price * quantity;\n      const order = { id: 200 + orders.length, userId: user.id, item: product.name, total, address: \"n/a\", card: \"0000\" };\n      orders.push(order);",
+          "location": "src/server.js:166"
+        },
+        {
+          "kind": "source",
+          "description": "Data flow: request (inbound request) via readBody() reaches arithmetic assigned to `total` in the same function with no validating guard between them."
+        },
+        {
+          "kind": "source",
+          "description": "Static analysis reasoning: `total` is initialised from an arithmetic expression with a tainted operand (`quantity`), and no range guard for it appears in the handler."
+        }
+      ],
+      "remediation": "Validate the quantity against the range the product actually allows — a positive integer, at or below the stock limit — and reject anything outside it before any monetary value is derived from it. Recompute the price server-side from the product record rather than trusting any amount the client sends.",
+      "verificationPlan": "Submit the request with a quantity of -1, then 0, then 0.5, then a value beyond available stock. Each must be refused before an order is created, and no order total may ever be negative.",
+      "status": "open",
+      "firstSeenAt": "2026-08-21T05:16:20.576Z",
+      "taxonomy": [
+        "CWE-840",
+        "CWE-20",
+        "OWASP-A04"
+      ],
+      "tags": [
+        "static-pass",
+        "unbounded-monetary-arithmetic"
+      ],
+      "fingerprint": "fp_f214bb861f8830c510e98ac3978715a8",
+      "corroboration": [
+        {
+          "kind": "runtime",
+          "description": "Submitted quantity -1 to /api/checkout as user_a; the request succeeded with HTTP 200 and a total of -4200. Nothing bounds the caller's quantity.",
+          "location": "POST /api/checkout"
+        }
+      ]
+    },
+    {
+      "id": "MYR-010",
+      "title": "Diagnostic route /debug/config is reachable",
+      "category": "debug_endpoint_exposure",
+      "severity": "high",
+      "verification": "verified",
+      "summary": "The handler for /debug/config returns configuration or environment data, and its payload includes secret-bearing fields.",
+      "impact": "Internal configuration shortens an attacker's path considerably, and when the payload carries credentials it is an immediate compromise of whatever they authorise.",
+      "affected": {
+        "component": "src/server.js",
+        "file": "src/server.js",
+        "lineStart": 173,
+        "route": "GET /debug/config"
+      },
+      "evidence": [
+        {
+          "kind": "source",
+          "description": "The diagnostic payload references environment or secret-named fields.",
+          "location": "src/server.js:173"
+        },
+        {
+          "kind": "source",
+          "description": "Static analysis reasoning: Route path matches a diagnostic naming convention; handler references secret-bearing configuration."
+        }
+      ],
+      "remediation": "Remove the route from production builds, or require an administrative role and strip every secret-bearing field from the payload.",
+      "verificationPlan": "Request the route unauthenticated and confirm a 404 or 403 with no configuration in the body.",
+      "status": "open",
+      "firstSeenAt": "2026-08-21T05:16:20.620Z",
+      "taxonomy": [
+        "CWE-215",
+        "CWE-489"
+      ],
+      "tags": [
+        "static-pass",
+        "debug-endpoint"
+      ],
+      "fingerprint": "fp_ae1fb2be13b8c9c425d7b7601521034f",
+      "corroboration": [
+        {
+          "kind": "runtime",
+          "description": "Requested /debug/config with no session at all and received HTTP 200 with a body of 123 bytes.",
+          "location": "GET /debug/config"
+        }
+      ]
+    },
+    {
+      "id": "MYR-011",
+      "title": "2 dependencies are pinned inside a published advisory range",
+      "category": "dependency_with_known_advisory",
+      "severity": "medium",
+      "verification": "needs_review",
+      "summary": "lodash@4.17.11 (runtime) is at or below 4.17.20: prototype pollution in zipObjectDeep and related deep-merge helpers; minimist@1.2.0 (runtime) is at or below 1.2.5: prototype pollution through crafted argument names. Whether the affected code path is reachable from this application was not determined.",
+      "impact": "If the affected code path is reachable from a request, the advisory applies directly. Until reachability is established this is a supply-chain exposure rather than a proven exploit.",
+      "affected": {
+        "component": "package.json",
+        "file": "package.json",
+        "lineStart": 1
+      },
+      "evidence": [
+        {
+          "kind": "dependency",
+          "description": "lodash@4.17.11 ≤ 4.17.20 — CVE-2020-8203; minimist@1.2.0 ≤ 1.2.5 — CVE-2021-44906",
+          "location": "package.json"
+        },
+        {
+          "kind": "source",
+          "description": "Static analysis reasoning: Declared versions were compared against an offline advisory table. No lockfile resolution or reachability analysis was performed, which is why this is reported as needing review."
+        }
+      ],
+      "remediation": "Upgrade each dependency past its advisory range and run the test suite. Where an upgrade is blocked, record the reachability analysis that justifies accepting the risk, rather than leaving the pin unexplained.",
+      "verificationPlan": "Re-read the manifest and the lockfile and confirm the resolved versions are above the advisory range.",
+      "status": "open",
+      "firstSeenAt": "2026-08-21T05:16:20.658Z",
+      "taxonomy": [
+        "CWE-1104",
+        "OWASP-A06"
+      ],
+      "tags": [
+        "static-pass",
+        "dependency-advisory"
+      ],
+      "fingerprint": "fp_43a1ca6d62ce1e3e5ef92722f2baf3ba"
+    },
+    {
+      "id": "MYR-012",
+      "title": "Session cookie `session` is set without HttpOnly and Secure and SameSite",
+      "category": "insecure_cookie_configuration",
+      "severity": "medium",
+      "verification": "verified",
+      "summary": "`session` carries the caller's authenticated session, and it is written without HttpOnly and Secure and SameSite. Without HttpOnly the cookie is in `document.cookie`, so any script that runs on the page — including one injected through an XSS bug or pulled in by a third-party tag — reads the live session and can replay it from anywhere. Without Secure the browser sends it over plain HTTP, so a single downgraded request on a shared network hands the session to whoever is watching. With no SameSite attribute the browser's default is applied rather than a stated intent, and any change in that default silently changes the application's cross-site behaviour.",
+      "impact": "The session is the credential. Any of these gaps turns a bug elsewhere — a script injection, a downgraded request, a hostile page the user visits — into a full account takeover that leaves no failed sign-in behind.",
+      "affected": {
+        "component": "src/server.js",
+        "file": "src/server.js",
+        "lineStart": 79,
+        "lineEnd": 79,
+        "route": "POST /api/login"
+      },
+      "evidence": [
+        {
+          "kind": "source",
+          "description": "Cookie attributes as written: HttpOnly absent, Secure absent, SameSite absent.",
+          "snippet": "      const token = crypto.createHash(\"md5\").update(`${user.id}:${sessions.size}`).digest(\"hex\");\n      sessions.set(token, { userId: user.id, createdAt: Date.now() });\n      response.setHeader(\"set-cookie\", `session=${token}; Path=/`);\n      return json(response, 200, { session: token, role: user.role });\n    }",
+          "location": "src/server.js:79"
+        },
+        {
+          "kind": "source",
+          "description": "Static analysis reasoning: A cookie named `session` matches a session or authentication cookie and is not a CSRF or preference cookie; its resolved attributes are HttpOnly absent, Secure absent, SameSite absent, so HttpOnly, Secure, SameSite are missing."
+        }
+      ],
+      "remediation": "Set HttpOnly and Secure on every session cookie, and state SameSite explicitly: Lax for a first-party application, Strict where no cross-site navigation needs the session. Where the application genuinely runs inside third-party pages and needs SameSite=None, keep None but require an Origin on the allowlist and a double-submit CSRF token on every state-changing request.",
+      "verificationPlan": "Sign in against the running application and read the Set-Cookie header: confirm HttpOnly, Secure, and the intended SameSite are all present. Then read `document.cookie` in the console and confirm the session name is absent, and replay a state-changing request from an unrelated origin and confirm it is refused.",
+      "status": "open",
+      "firstSeenAt": "2026-08-21T05:16:20.697Z",
+      "taxonomy": [
+        "CWE-1004",
+        "CWE-614",
+        "CWE-1275",
+        "OWASP-A05"
+      ],
+      "tags": [
+        "static-pass",
+        "session-cookie-configuration"
+      ],
+      "fingerprint": "fp_c1c77a51ef87b7a9ccb0af79c5d2e528",
+      "corroboration": [
+        {
+          "kind": "runtime",
+          "description": "The session cookie returned by the login route is missing HttpOnly, Secure, SameSite.",
+          "location": "POST /api/login"
+        }
+      ]
+    },
+    {
+      "id": "MYR-013",
+      "title": "Caller-controlled data is interpolated into an HTML response by html",
+      "category": "reflected_cross_site_scripting",
+      "severity": "medium",
+      "verification": "verified",
+      "summary": "A value derived from url.searchParams.get() (caller-controlled request data) is placed into markup that is written to the response, with no escaping applied on the way. The caller therefore controls part of the document the browser parses.",
+      "impact": "A crafted link executes script in the victim's session context, which allows session theft and any action the victim can perform.",
+      "affected": {
+        "component": "src/server.js",
+        "file": "src/server.js",
+        "lineStart": 127,
+        "lineEnd": 127,
+        "route": "GET /search"
+      },
+      "evidence": [
+        {
+          "kind": "source",
+          "description": "The response body is markup built from caller input with no escaping call in the path.",
+          "snippet": "    if (route === \"GET /search\") {\n      const term = url.searchParams.get(\"q\") ?? \"\";\n      return html(response, 200, `<h1>Results for ${term}</h1><ul>${products.map((p) => `<li>${p.name}</li>`).join(\"\")}</ul>`);\n    }\n",
+          "location": "src/server.js:127"
+        },
+        {
+          "kind": "source",
+          "description": "Data flow: url.searchParams.get() (caller-controlled request data) reaches html() in the same function with no validating guard between them."
+        },
+        {
+          "kind": "source",
+          "description": "Static analysis reasoning: Taint from url.searchParams.get() (caller-controlled request data) reaches a markup-shaped response body; 1 interpolated part(s) had no escaper applied."
+        }
+      ],
+      "remediation": "Escape the value before interpolation, or render through a template engine that escapes by default. A Content-Security-Policy is a useful second layer but is not the fix.",
+      "verificationPlan": "Request the page with a markup probe in the parameter and confirm the response contains only the escaped form.",
+      "status": "open",
+      "firstSeenAt": "2026-08-21T05:16:20.735Z",
+      "taxonomy": [
+        "CWE-79",
+        "OWASP-A03"
+      ],
+      "tags": [
+        "static-pass",
+        "reflected-xss"
+      ],
+      "fingerprint": "fp_b7708393a9586c1b25158a3f192f295e",
+      "corroboration": [
+        {
+          "kind": "runtime",
+          "description": "Requested /search with a markup probe in the q parameter; the response contained the probe unescaped, so the caller controls markup in the document.",
+          "location": "GET /search"
+        }
+      ]
+    },
+    {
+      "id": "MYR-014",
+      "title": "The error response carries error.message and error.stack to the caller",
+      "category": "verbose_error_response",
+      "severity": "medium",
+      "verification": "strong_evidence",
+      "summary": "The handler catches the failure and then puts error.message and error.stack into the payload that json() sends back, so every failure this path can be pushed into answers the caller with the server's own account of it rather than with a message written for them.",
+      "impact": "Exception internals disclose file paths, dependency versions, schema and query shapes, and the values the failing statement was bound to. Each of those shortens the work of finding a more serious issue, and a query echoed back with its parameters can disclose another tenant's identifiers outright.",
+      "affected": {
+        "component": "src/server.js",
+        "file": "src/server.js",
+        "lineStart": 180,
+        "lineEnd": 180,
+        "route": "GET /debug/config"
+      },
+      "evidence": [
+        {
+          "kind": "source",
+          "description": "This field of the error payload is read off the caught exception.",
+          "snippet": "  } catch (error) {\n    // Verbose error handler returns the stack to the client.\n    return json(response, 500, { error: error.message, stack: error.stack });\n  }\n});",
+          "location": "src/server.js:180"
+        },
+        {
+          "kind": "source",
+          "description": "The payload leaves the handler here, through json().",
+          "snippet": "  } catch (error) {\n    // Verbose error handler returns the stack to the client.\n    return json(response, 500, { error: error.message, stack: error.stack });\n  }\n});",
+          "location": "src/server.js:180"
+        },
+        {
+          "kind": "source",
+          "description": "Static analysis reasoning: A binding introduced by the error handler reaches json() inside the response payload; the disclosed field(s) are error.message and error.stack and the response status is 500."
+        }
+      ],
+      "remediation": "Log the exception server-side where only operators can read it, and answer the caller with a fixed message plus a correlation identifier they can quote to support. Where a 4xx genuinely has to explain the caller's own mistake, build that sentence from validated fields rather than from the exception.",
+      "verificationPlan": "Force this path to fail — an unreachable dependency or a deliberately invalid identifier will do — and confirm the response body contains no exception message, only the generic message and the correlation identifier.",
+      "status": "open",
+      "firstSeenAt": "2026-08-21T05:16:20.773Z",
+      "taxonomy": [
+        "CWE-209",
+        "OWASP-A05"
+      ],
+      "tags": [
+        "static-pass",
+        "verbose-error-response"
+      ],
+      "fingerprint": "fp_d7f001a60b6205e59ddb69342010b13d"
+    }
+  ],
+  "coverage": [
+    "Static analysis parsed 2 application source file(s) (JavaScript) and evaluated 36 rules against the syntax tree.",
+    "Cross-account behaviour was compared using 3 signed-in test identities against the running application.",
+    "Local runtime validation against http://127.0.0.1:4010.",
+    "2 instruction-like passage(s) in project content were treated as untrusted data and did not change scope."
+  ],
+  "limitations": [
+    "Data flow is followed within a single function. A value that becomes attacker-controlled in one module and is used in another is not connected.",
+    "Only JavaScript and TypeScript source is parsed. Other languages, templates, configuration files, and infrastructure definitions are not analysed.",
+    "Runtime behaviour, authentication state, and business rules are not exercised by the static pass; dynamic validation is the host agent's part of the assessment.",
+    "Dependency findings compare declared versions against a small offline advisory table, without resolving the lockfile or establishing reachability.",
+    "A route is reported as the file declares it. Where a router module is mounted under a prefix elsewhere in the application, the prefix is not part of the reported path.",
+    "No entry point was recognised in 1 of 2 parsed file(s). Data-flow checks need an entry point to know which values a caller controls, so in those files they did not run.",
+    "5 candidate(s) could not be settled against the running application and remain as the static pass reported them.",
+    "Some isolated runtime checks were skipped on this machine. Source, configuration, dependency, and available local-runtime checks still ran.",
+    "2 external origin(s) referenced by this project were not authorized and were not tested.",
+    "2 origin(s) were proposed only by project content that also tried to instruct the scanner. They were refused and not tested.",
+    "Authorization was declined for 2 external origin(s), which were skipped.",
+    "4 proposed action(s) were blocked by safety policy and were replaced with non-destructive checks or recorded as unverified."
+  ],
+  "methodologyVersion": "1.0.0"
+}

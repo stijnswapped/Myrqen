@@ -1,0 +1,23 @@
+{
+  "name": "@northgate/freight-api",
+  "version": "1.4.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/api.ts"
+  },
+  "dependencies": {
+    "@effect/platform": "^0.75.2",
+    "@effect/platform-node": "^0.70.4",
+    "@effect/sql": "^0.26.1",
+    "@effect/sql-pg": "^0.27.3",
+    "effect": "^3.12.10",
+    "jsonwebtoken": "^9.0.2"
+  },
+  "devDependencies": {
+    "@types/jsonwebtoken": "^9.0.7",
+    "@types/node": "^22.10.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

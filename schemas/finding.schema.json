@@ -82,6 +82,22 @@
       }
     },
     "firstSeenAt": { "type": "string", "format": "date-time" },
-    "tags": { "type": "array", "items": { "type": "string", "maxLength": 80 }, "maxItems": 32 }
+    "tags": { "type": "array", "items": { "type": "string", "maxLength": 80 }, "maxItems": 32 },
+    "compliance": {
+      "description": "Standard references derived from the category at report time: CWE, OWASP Top 10 (2021 and 2025), and OWASP ASVS requirement ids (v4.0.3-x.y.z / v5.0.0-x.y.z).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cwe","owasp2021","owasp2025","asvs"],
+      "properties": {
+        "cwe": { "type": "array", "items": { "type": "string", "pattern": "^CWE-[0-9]+$" }, "maxItems": 16 },
+        "owasp2021": { "type": "array", "items": { "type": "string", "pattern": "^A(0[1-9]|10):2021$" }, "maxItems": 10 },
+        "owasp2025": { "type": "array", "items": { "type": "string", "pattern": "^A(0[1-9]|10):2025$" }, "maxItems": 10 },
+        "asvs": { "type": "array", "items": { "type": "string", "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+-[0-9]+\\.[0-9]+\\.[0-9]+$" }, "maxItems": 16 }
+      }
+    },
+    "baselineState": {
+      "description": "Present only when the scan was compared against a baseline: new since it, or already in it.",
+      "enum": ["new","unchanged"]
+    }
   }
 }

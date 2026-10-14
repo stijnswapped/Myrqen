@@ -1,0 +1,45 @@
+spring:
+  application:
+    name: cartulary-dms
+  datasource:
+    url: ${CARTULARY_JDBC_URL}
+    username: ${CARTULARY_DB_USER}
+    password: ${CARTULARY_DB_PASSWORD}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+  servlet:
+    multipart:
+      max-file-size: 256MB
+      max-request-size: 256MB
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${CARTULARY_OIDC_ISSUER}
+
+server:
+  forward-headers-strategy: framework
+  error:
+    include-message: never
+    include-stacktrace: never
+
+cartulary:
+  storage:
+    rendition-root: /var/lib/cartulary/renditions
+    template-root: /srv/cartulary/templates
+  share-links:
+    default-ttl: P14D
+    max-per-document: 50
+  partners:
+    origins: https://*.cartulary.io
+  webhooks:
+    signing-key: ${CARTULARY_WEBHOOK_SIGNING_KEY}
+    timeout: PT10S
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info

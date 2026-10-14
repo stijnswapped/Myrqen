@@ -77,6 +77,35 @@ export interface SessionContext {
     /** What the static pass could not see. The agent's job starts here. */
     notAssessed: string[];
   };
+  /**
+   * How to start the application under test, from `.myrqen/config.json` or
+   * detected from the project. `env` holds variable names only, never values.
+   * `persisted` is false when the answer was detected but nobody confirmed it.
+   * `confirmed` is false when the command came from the repository (a committed
+   * config or detection) and was never written or confirmed on this machine: the
+   * agent must show the user the exact command and ask before running it.
+   * `source` is "committed" for a committed config this machine has not confirmed.
+   */
+  appRuntime?: {
+    command: string;
+    url: string;
+    port: number;
+    env: string[];
+    source: "detected" | "confirmed" | "flags" | "edited" | "committed";
+    persisted: boolean;
+    confirmed: boolean;
+    /** The user was shown the committed command in a terminal and declined it. */
+    declined?: boolean;
+    reachable: boolean;
+  };
+  /**
+   * Whether a coding agent appears to be driving this run. Verification is the
+   * agent's job, so a run without one stops after the static pass.
+   */
+  hostAgent?: {
+    detected: boolean;
+    name?: string;
+  };
   nextSteps: string[];
 }
 

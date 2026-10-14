@@ -18,6 +18,18 @@ export function expressionName(expression: ts.Expression | ts.LeftHandSideExpres
   if (ts.isNonNullExpression(expression) || ts.isParenthesizedExpression(expression)) {
     return expressionName(expression.expression);
   }
+  /*
+   * A type assertion names whatever it wraps.
+   *
+   * `(request.query as { sort?: string }).sort` is how Fastify's own documentation
+   * reads a query parameter, because `request.query` is `unknown` until you say what
+   * it is. This helper returned "" for the assertion, so the property's parent name
+   * was empty, nothing matched `.query`, and the value was not caller data — in a
+   * TypeScript codebase, which is the language this engine is for.
+   */
+  if (ts.isAsExpression(expression) || ts.isSatisfiesExpression(expression) || ts.isTypeAssertionExpression(expression)) {
+    return expressionName(expression.expression);
+  }
   if (ts.isAwaitExpression(expression)) return expressionName(expression.expression as ts.Expression);
   return "";
 }
@@ -136,4 +148,47 @@ export function hasAncestor(node: ts.Node, predicate: (node: ts.Node) => boolean
 
 export function textOf(file: ParsedFile, node: ts.Node): string {
   return node.getText(file.source);
+}
+
+/**
+ * Names that end a request by being called rather than by `throw` or `return`.
+ *
+ * Koa aborts with `ctx.throw(400, …)`, Next with `notFound()` and `redirect()`,
+ * SvelteKit and Hono with helpers of the same shape. A guard model that only
+ * recognises the `throw` and `return` *statements* reads every one of these as
+ * fall-through, and then reports the guarded code.
+ *
+ * This existed twice already — in `perimeter.ts` and `records-origin.ts` — and not
+ * in the three other copies of the same predicate, which is how holdout-5 came to
+ * report a Mongo lookup guarded by `if (!isValidObjectId(id)) ctx.throw(400)`. One
+ * definition, so the next framework idiom is added once.
+ */
+const ABORTING_CALL = new Set([
+  "throw",
+  "abort",
+  "notfound",
+  "not_found",
+  "unauthorized",
+  "unauthorised",
+  "forbidden",
+  "redirect"
+]);
+
+/*
+ * Read the callee's last segment directly rather than building its dotted name.
+ *
+ * This runs for every call inside every guarded branch, and the first version went
+ * through `expressionName`, which allocates a string per property access and then
+ * matched a regex against it. That alone doubled the cost of scanning a 72KB file.
+ * Only the final segment can ever match, so only the final segment is looked at.
+ */
+export function isAbortCall(node: ts.Node): boolean {
+  if (!ts.isCallExpression(node)) return false;
+  const callee = node.expression;
+  const tail = ts.isIdentifier(callee)
+    ? callee.text
+    : ts.isPropertyAccessExpression(callee)
+      ? callee.name.text
+      : null;
+  return tail !== null && ABORTING_CALL.has(tail.toLowerCase());
 }

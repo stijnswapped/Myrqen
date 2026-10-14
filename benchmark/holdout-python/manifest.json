@@ -1,0 +1,981 @@
+{
+  "generatedBy": "benchmark/build-corpus-manifest.mjs --corpus benchmark/holdout-python",
+  "families": [
+    {
+      "family": "fastapi",
+      "architecture": "FastAPI with APIRouter modules, Pydantic v2 request models, Depends() for the DB session and the current user, SQLAlchemy 2 / sqlite3, httpx, Jinja2, PyYAML",
+      "vulnerable": 14,
+      "safe": 15
+    },
+    {
+      "family": "flask",
+      "architecture": "Flask with Blueprints, flask-login (@login_required, current_user, before_request hooks), Flask-SQLAlchemy / sqlite3 / psycopg2, requests, Jinja2 via render_template(_string), markupsafe",
+      "vulnerable": 14,
+      "safe": 15
+    }
+  ],
+  "totals": {
+    "vulnerable": 28,
+    "safe": 30,
+    "classes": 13
+  },
+  "classes": [
+    "broken_object_level_authorization",
+    "command_injection",
+    "debug_endpoint_exposure",
+    "hardcoded_secret",
+    "insecure_cookie_configuration",
+    "missing_authentication",
+    "open_redirect",
+    "path_traversal",
+    "reflected_cross_site_scripting",
+    "server_side_request_forgery",
+    "sql_injection",
+    "template_injection",
+    "unsafe_deserialization"
+  ],
+  "cases": [
+    {
+      "id": "fastapi-invoice-search-fstring",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter with sqlite3 connection dependency",
+      "language": "python",
+      "file": "fastapi/invoices_search.py",
+      "kind": "vulnerable",
+      "category": "sql_injection",
+      "cwe": "CWE-89",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "GET /invoices/search",
+      "line": 32,
+      "lineRange": [
+        26,
+        32
+      ],
+      "runtimeVerifiable": true,
+      "why": "The customer query parameter is spliced into the LIKE clause with an f-string and the composed string is executed without bound parameters, so a quote in the search term rewrites the query and escapes the org_id filter."
+    },
+    {
+      "id": "fastapi-invoice-search-bound",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter with sqlite3 connection dependency",
+      "language": "python",
+      "file": "fastapi/invoices_lookup.py",
+      "kind": "safe",
+      "pairedWith": "fastapi-invoice-search-fstring",
+      "runtimeVerifiable": true,
+      "why": "The f-strings only interpolate a module constant column list and build the LIKE pattern value; the user-supplied term reaches SQLite as a bound ? parameter, never as SQL text."
+    },
+    {
+      "id": "fastapi-sales-report-format",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter with SQLAlchemy Session dependency and a Pydantic body model",
+      "language": "python",
+      "file": "fastapi/report_builder.py",
+      "kind": "vulnerable",
+      "category": "sql_injection",
+      "cwe": "CWE-89",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "POST /reports/sales",
+      "line": 44,
+      "lineRange": [
+        39,
+        49
+      ],
+      "runtimeVerifiable": true,
+      "why": "ReportFilters.region and the free-form ReportFilters.sort_by string are inserted into the text() statement with str.format; only the dates and limit are bound, so either body field can inject SQL."
+    },
+    {
+      "id": "fastapi-sales-report-allowlisted-order",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter with SQLAlchemy Session dependency and a Pydantic body model",
+      "language": "python",
+      "file": "fastapi/report_summary.py",
+      "kind": "safe",
+      "pairedWith": "fastapi-sales-report-format",
+      "runtimeVerifiable": true,
+      "why": "sort_by is a Literal validated by Pydantic and mapped through a constant dict to a fixed column name before the f-string; region and every other value are bound parameters."
+    },
+    {
+      "id": "fastapi-diagnostics-ping-shell",
+      "family": "fastapi",
+      "architecture": "FastAPI admin router with role dependency and a Pydantic body model",
+      "language": "python",
+      "file": "fastapi/network_tools.py",
+      "kind": "vulnerable",
+      "category": "command_injection",
+      "cwe": "CWE-78",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "POST /admin/diagnostics/ping",
+      "line": 34,
+      "lineRange": [
+        31,
+        40
+      ],
+      "runtimeVerifiable": true,
+      "why": "PingRequest.host is only length-checked and is formatted into a command string run with shell=True, so shell metacharacters in host execute arbitrary commands on the API node."
+    },
+    {
+      "id": "fastapi-diagnostics-ping-argv",
+      "family": "fastapi",
+      "architecture": "FastAPI admin router with role dependency and a Pydantic body model",
+      "language": "python",
+      "file": "fastapi/network_checks.py",
+      "kind": "safe",
+      "pairedWith": "fastapi-diagnostics-ping-shell",
+      "runtimeVerifiable": true,
+      "why": "The host is validated as an IP address or DNS name and passed as one argv element after \"--\" to subprocess.run without a shell, so it can neither inject commands nor be read as a ping option."
+    },
+    {
+      "id": "fastapi-export-download-join",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter returning FileResponse",
+      "language": "python",
+      "file": "fastapi/export_downloads.py",
+      "kind": "vulnerable",
+      "category": "path_traversal",
+      "cwe": "CWE-22",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "GET /exports/download",
+      "line": 51,
+      "lineRange": [
+        47,
+        55
+      ],
+      "runtimeVerifiable": true,
+      "why": "The name query parameter is joined onto the export directory with os.path.join and served without normalising or checking containment, so ../ sequences or an absolute path read any file the process can access."
+    },
+    {
+      "id": "fastapi-export-download-contained",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter returning FileResponse",
+      "language": "python",
+      "file": "fastapi/export_files.py",
+      "kind": "safe",
+      "pairedWith": "fastapi-export-download-join",
+      "runtimeVerifiable": true,
+      "why": "The requested path is resolved and rejected unless it is_relative_to the caller's resolved export directory, so traversal and absolute paths return 404 before FileResponse is built."
+    },
+    {
+      "id": "fastapi-public-content-constant-paths",
+      "family": "fastapi",
+      "architecture": "FastAPI public router serving bundled content",
+      "language": "python",
+      "file": "fastapi/release_notes.py",
+      "kind": "safe",
+      "pairedWith": "fastapi-export-download-join",
+      "runtimeVerifiable": true,
+      "why": "open() and FileResponse are given paths composed only from __file__ and module constants; no request data reaches either path."
+    },
+    {
+      "id": "fastapi-webhook-verify-any-url",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter with async httpx client",
+      "language": "python",
+      "file": "fastapi/webhook_settings.py",
+      "kind": "vulnerable",
+      "category": "server_side_request_forgery",
+      "cwe": "CWE-918",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "POST /integrations/webhooks/verify",
+      "line": 37,
+      "lineRange": [
+        35,
+        37
+      ],
+      "runtimeVerifiable": true,
+      "why": "HttpUrl only checks URL syntax; the server POSTs to whatever host the user supplies (following redirects) and returns the status and body, so internal services and cloud metadata endpoints are reachable and readable."
+    },
+    {
+      "id": "fastapi-webhook-verify-partner-hosts",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter with async httpx client",
+      "language": "python",
+      "file": "fastapi/webhook_registry.py",
+      "kind": "safe",
+      "pairedWith": "fastapi-webhook-verify-any-url",
+      "runtimeVerifiable": true,
+      "why": "The target must be https on the default port with a hostname in a fixed set of partner hosts, redirects are not followed, and the response body is not echoed back."
+    },
+    {
+      "id": "fastapi-notification-preview-template-from-body",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter rendering Jinja2 templates",
+      "language": "python",
+      "file": "fastapi/notification_templates.py",
+      "kind": "vulnerable",
+      "category": "template_injection",
+      "cwe": "CWE-1336",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "POST /notifications/templates/preview",
+      "line": 35,
+      "lineRange": [
+        34,
+        36
+      ],
+      "runtimeVerifiable": true,
+      "why": "The request body is compiled as a Jinja2 Template with the default (unsandboxed) environment, so template expressions in it can walk Python object attributes to code execution on the server."
+    },
+    {
+      "id": "fastapi-notification-preview-fixed-layout",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter rendering Jinja2 templates",
+      "language": "python",
+      "file": "fastapi/notification_preview.py",
+      "kind": "safe",
+      "pairedWith": "fastapi-notification-preview-template-from-body",
+      "runtimeVerifiable": true,
+      "why": "The template is loaded from the server's template directory via a Literal-to-filename mapping; the admin's text is only passed as autoescaped context data and is never compiled as a template."
+    },
+    {
+      "id": "fastapi-pipeline-import-object-loader",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter accepting UploadFile",
+      "language": "python",
+      "file": "fastapi/pipeline_import.py",
+      "kind": "vulnerable",
+      "category": "unsafe_deserialization",
+      "cwe": "CWE-502",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "POST /pipelines/import",
+      "line": 41,
+      "lineRange": [
+        40,
+        42
+      ],
+      "runtimeVerifiable": true,
+      "why": "An uploaded file is parsed with yaml.load(Loader=yaml.Loader), which honours python/object tags, so a crafted definition instantiates arbitrary Python objects before the Pydantic validation ever runs."
+    },
+    {
+      "id": "fastapi-pipeline-import-safe-loader",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter accepting UploadFile",
+      "language": "python",
+      "file": "fastapi/pipeline_definitions.py",
+      "kind": "safe",
+      "pairedWith": "fastapi-pipeline-import-object-loader",
+      "runtimeVerifiable": true,
+      "why": "yaml.load is called with Loader=yaml.SafeLoader, which only constructs plain scalars, lists and dicts, and the result is then validated by a Pydantic model."
+    },
+    {
+      "id": "fastapi-jwt-signing-key-literal",
+      "family": "fastapi",
+      "architecture": "FastAPI OAuth2 bearer dependency with PyJWT",
+      "language": "python",
+      "file": "fastapi/token_service.py",
+      "kind": "vulnerable",
+      "category": "hardcoded_secret",
+      "cwe": "CWE-798",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "line": 15,
+      "lineRange": [
+        15,
+        15
+      ],
+      "runtimeVerifiable": false,
+      "why": "The HS256 signing key for every access token is a literal committed in source; anyone with repository access can mint valid tokens for any user."
+    },
+    {
+      "id": "fastapi-jwt-signing-key-env",
+      "family": "fastapi",
+      "architecture": "FastAPI OAuth2 bearer dependency with PyJWT",
+      "language": "python",
+      "file": "fastapi/token_issuer.py",
+      "kind": "safe",
+      "pairedWith": "fastapi-jwt-signing-key-literal",
+      "runtimeVerifiable": false,
+      "why": "The signing key is read from the environment at import and startup fails if it is missing or short; the only string constants are the variable's name, the algorithm and the issuer."
+    },
+    {
+      "id": "fastapi-production-app-debug-flag",
+      "family": "fastapi",
+      "architecture": "FastAPI application entry point served by gunicorn/uvicorn",
+      "language": "python",
+      "file": "fastapi/server.py",
+      "kind": "vulnerable",
+      "category": "debug_endpoint_exposure",
+      "cwe": "CWE-489",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "line": 22,
+      "lineRange": [
+        19,
+        25
+      ],
+      "runtimeVerifiable": true,
+      "why": "The documented production entry point constructs FastAPI with debug=True hard-coded, so any unhandled exception returns a full Python traceback with source and local context to the client."
+    },
+    {
+      "id": "fastapi-production-app-debug-from-env",
+      "family": "fastapi",
+      "architecture": "FastAPI application entry point served by gunicorn/uvicorn",
+      "language": "python",
+      "file": "fastapi/application.py",
+      "kind": "safe",
+      "pairedWith": "fastapi-production-app-debug-flag",
+      "runtimeVerifiable": true,
+      "why": "debug comes from a pydantic-settings field that defaults to False and is only enabled by an explicit LEDGER_DEBUG environment variable."
+    },
+    {
+      "id": "fastapi-address-export-unauthenticated",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter with per-route Depends(get_current_user)",
+      "language": "python",
+      "file": "fastapi/account_addresses.py",
+      "kind": "vulnerable",
+      "category": "missing_authentication",
+      "cwe": "CWE-306",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "route": "GET /account/addresses/export",
+      "line": 68,
+      "lineRange": [
+        67,
+        71
+      ],
+      "runtimeVerifiable": true,
+      "why": "Every other address route depends on get_current_user, but the export route has no auth dependency and takes user_id from the query string, so anyone can download any customer's address book."
+    },
+    {
+      "id": "fastapi-address-export-router-dependency",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter with a router-level Depends(get_current_user)",
+      "language": "python",
+      "file": "fastapi/account_profile.py",
+      "kind": "safe",
+      "pairedWith": "fastapi-address-export-unauthenticated",
+      "runtimeVerifiable": true,
+      "why": "Authentication is declared once on the APIRouter's dependencies, so every route including /countries is authenticated, and the export is scoped to the authenticated user's id rather than a query parameter."
+    },
+    {
+      "id": "fastapi-document-detail-unscoped",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter with SQLAlchemy Session and current-user dependencies",
+      "language": "python",
+      "file": "fastapi/documents.py",
+      "kind": "vulnerable",
+      "category": "broken_object_level_authorization",
+      "cwe": "CWE-639",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "GET /documents/:document_id",
+      "line": 54,
+      "lineRange": [
+        54,
+        56
+      ],
+      "runtimeVerifiable": true,
+      "why": "The caller is authenticated but the document is fetched by primary key alone with no owner check, so any user can read any other customer's document metadata and receive a presigned download link."
+    },
+    {
+      "id": "fastapi-document-detail-owner-scoped",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter with SQLAlchemy Session and current-user dependencies",
+      "language": "python",
+      "file": "fastapi/document_access.py",
+      "kind": "safe",
+      "pairedWith": "fastapi-document-detail-unscoped",
+      "runtimeVerifiable": true,
+      "why": "The lookup filters on both the document id and owner_id == user.id, so another user's document id returns 404."
+    },
+    {
+      "id": "fastapi-portal-session-cookie-flags",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter issuing server-side session cookies",
+      "language": "python",
+      "file": "fastapi/session_login.py",
+      "kind": "vulnerable",
+      "category": "insecure_cookie_configuration",
+      "cwe": "CWE-1004",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "route": "POST /auth/login",
+      "line": 29,
+      "lineRange": [
+        29,
+        34
+      ],
+      "runtimeVerifiable": true,
+      "why": "The session identifier cookie is set without httponly, secure or samesite (Starlette defaults all three off), so script can read it, it travels over plain HTTP, and it is sent on cross-site requests."
+    },
+    {
+      "id": "fastapi-portal-session-cookie-hardened",
+      "family": "fastapi",
+      "architecture": "FastAPI APIRouter issuing server-side session cookies",
+      "language": "python",
+      "file": "fastapi/session_auth.py",
+      "kind": "safe",
+      "pairedWith": "fastapi-portal-session-cookie-flags",
+      "runtimeVerifiable": true,
+      "why": "The cookie is set with secure=True, httponly=True and samesite=lax from a shared flags dict, under a __Host- prefixed name."
+    },
+    {
+      "id": "fastapi-sso-return-to-unchecked",
+      "family": "fastapi",
+      "architecture": "FastAPI OIDC sign-in router using Starlette session middleware",
+      "language": "python",
+      "file": "fastapi/sso_callback.py",
+      "kind": "vulnerable",
+      "category": "open_redirect",
+      "cwe": "CWE-601",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "route": "GET /auth/sso/callback",
+      "line": 42,
+      "lineRange": [
+        41,
+        42
+      ],
+      "runtimeVerifiable": true,
+      "why": "The return_to query parameter accepted by /start is stored in the session unvalidated and the callback redirects to it after sign-in, so a crafted sign-in link lands a freshly authenticated user on any external site."
+    },
+    {
+      "id": "fastapi-sso-return-to-local-path",
+      "family": "fastapi",
+      "architecture": "FastAPI OIDC sign-in router using Starlette session middleware",
+      "language": "python",
+      "file": "fastapi/sso_return.py",
+      "kind": "safe",
+      "pairedWith": "fastapi-sso-return-to-unchecked",
+      "runtimeVerifiable": true,
+      "why": "Both when stored and when used, the destination is reduced to a same-site path: anything with a scheme, a host, a leading // or backslash, or not starting with / falls back to /dashboard."
+    },
+    {
+      "id": "fastapi-catalog-search-fragment-reflection",
+      "family": "fastapi",
+      "architecture": "FastAPI router returning htmx HTML fragments",
+      "language": "python",
+      "file": "fastapi/catalog_search.py",
+      "kind": "vulnerable",
+      "category": "reflected_cross_site_scripting",
+      "cwe": "CWE-79",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "route": "GET /catalog/search",
+      "line": 37,
+      "lineRange": [
+        36,
+        37
+      ],
+      "runtimeVerifiable": true,
+      "why": "Product names are escaped but the q search term is interpolated raw into the HTMLResponse for the empty-results message, so a link with markup in q executes script on the storefront origin."
+    },
+    {
+      "id": "fastapi-catalog-search-fragment-escaped",
+      "family": "fastapi",
+      "architecture": "FastAPI router returning htmx HTML fragments",
+      "language": "python",
+      "file": "fastapi/catalog_fragments.py",
+      "kind": "safe",
+      "pairedWith": "fastapi-catalog-search-fragment-reflection",
+      "runtimeVerifiable": true,
+      "why": "The search term is passed through html.escape before it is placed in the HTML fragment, and product names are escaped as well."
+    },
+    {
+      "id": "flask-customer-lookup-percent-format",
+      "family": "flask",
+      "architecture": "Flask Blueprint with flask-login and a psycopg2 connection",
+      "language": "python",
+      "file": "flask/customer_lookup.py",
+      "kind": "vulnerable",
+      "category": "sql_injection",
+      "cwe": "CWE-89",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "GET /customers/lookup",
+      "line": 24,
+      "lineRange": [
+        24,
+        27
+      ],
+      "runtimeVerifiable": true,
+      "why": "The email query parameter is %-formatted into a quoted literal in the SQL string before cursor.execute receives it, so a quote in the address injects SQL and can read other tenants' customers."
+    },
+    {
+      "id": "flask-customer-lookup-driver-params",
+      "family": "flask",
+      "architecture": "Flask Blueprint with flask-login and a psycopg2 connection",
+      "language": "python",
+      "file": "flask/customer_directory.py",
+      "kind": "safe",
+      "pairedWith": "flask-customer-lookup-percent-format",
+      "runtimeVerifiable": true,
+      "why": "The %s markers are psycopg2 placeholders bound from a separate tuple; the only Python-side % formatting inserts a constant column list at import time."
+    },
+    {
+      "id": "flask-ticket-queue-filter-values",
+      "family": "flask",
+      "architecture": "Flask Blueprint with flask-login and sqlite3",
+      "language": "python",
+      "file": "flask/ticket_filters.py",
+      "kind": "vulnerable",
+      "category": "sql_injection",
+      "cwe": "CWE-89",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "GET /tickets",
+      "line": 37,
+      "lineRange": [
+        22,
+        37
+      ],
+      "runtimeVerifiable": true,
+      "why": "Filter column names are allowlisted but each filter value from request.args is quoted into a clause, the clauses are joined and concatenated into the query, and the result is executed, so any filter value injects SQL."
+    },
+    {
+      "id": "flask-ticket-queue-filter-bound",
+      "family": "flask",
+      "architecture": "Flask Blueprint with flask-login and sqlite3",
+      "language": "python",
+      "file": "flask/ticket_queue.py",
+      "kind": "safe",
+      "pairedWith": "flask-ticket-queue-filter-values",
+      "runtimeVerifiable": true,
+      "why": "Only allowlisted column names and constants are interpolated into the f-string; every filter value and the team id are passed as ? parameters in the params list."
+    },
+    {
+      "id": "flask-thumbnail-os-system",
+      "family": "flask",
+      "architecture": "Flask Blueprint with flask-login and Flask-SQLAlchemy models",
+      "language": "python",
+      "file": "flask/media_thumbnails.py",
+      "kind": "vulnerable",
+      "category": "command_injection",
+      "cwe": "CWE-78",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "POST /media/:asset_id/thumbnail",
+      "line": 26,
+      "lineRange": [
+        24,
+        28
+      ],
+      "runtimeVerifiable": true,
+      "why": "The geometry form field is interpolated unquoted into a shell command run by os.system, so a value such as `1x1; id` executes arbitrary commands."
+    },
+    {
+      "id": "flask-thumbnail-argv",
+      "family": "flask",
+      "architecture": "Flask Blueprint with flask-login and Flask-SQLAlchemy models",
+      "language": "python",
+      "file": "flask/media_previews.py",
+      "kind": "safe",
+      "pairedWith": "flask-thumbnail-os-system",
+      "runtimeVerifiable": true,
+      "why": "geometry must fully match a digits-x-digits pattern and is passed as one element of an argv list to subprocess.run without a shell."
+    },
+    {
+      "id": "flask-ops-status-constant-shell",
+      "family": "flask",
+      "architecture": "Flask Blueprint with flask-login and a role decorator",
+      "language": "python",
+      "file": "flask/maintenance_status.py",
+      "kind": "safe",
+      "pairedWith": "flask-thumbnail-os-system",
+      "runtimeVerifiable": true,
+      "why": "shell=True is used only with module-level constant command strings; nothing from the request reaches the command."
+    },
+    {
+      "id": "flask-attachment-send-file-join",
+      "family": "flask",
+      "architecture": "Flask Blueprint with flask-login serving files with send_file",
+      "language": "python",
+      "file": "flask/attachments.py",
+      "kind": "vulnerable",
+      "category": "path_traversal",
+      "cwe": "CWE-22",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "GET /attachments/download",
+      "line": 28,
+      "lineRange": [
+        24,
+        33
+      ],
+      "runtimeVerifiable": true,
+      "why": "The path query parameter is joined onto the attachment root with os.path.join and handed to send_file with no containment check, so ../ or an absolute path downloads any readable file."
+    },
+    {
+      "id": "flask-attachment-send-from-directory",
+      "family": "flask",
+      "architecture": "Flask Blueprint with flask-login serving files with send_from_directory",
+      "language": "python",
+      "file": "flask/attachment_store.py",
+      "kind": "safe",
+      "pairedWith": "flask-attachment-send-file-join",
+      "runtimeVerifiable": true,
+      "why": "send_from_directory resolves the user path with werkzeug's safe_join and returns 404 for anything that escapes the attachment root."
+    },
+    {
+      "id": "flask-avatar-import-any-url",
+      "family": "flask",
+      "architecture": "Flask Blueprint with flask-login and requests",
+      "language": "python",
+      "file": "flask/avatar_import.py",
+      "kind": "vulnerable",
+      "category": "server_side_request_forgery",
+      "cwe": "CWE-918",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "POST /profile/avatar/import",
+      "line": 27,
+      "lineRange": [
+        23,
+        27
+      ],
+      "runtimeVerifiable": true,
+      "why": "image_url from the JSON body is fetched server-side with requests.get with no scheme, host or address restriction, so a user can make the server request internal services and metadata endpoints."
+    },
+    {
+      "id": "flask-avatar-import-photo-hosts",
+      "family": "flask",
+      "architecture": "Flask Blueprint with flask-login and requests",
+      "language": "python",
+      "file": "flask/avatar_fetch.py",
+      "kind": "safe",
+      "pairedWith": "flask-avatar-import-any-url",
+      "runtimeVerifiable": true,
+      "why": "The URL must be https to a hostname in a fixed set of photo services with no userinfo or explicit port, and redirects are disabled, so the server cannot be pointed at internal hosts."
+    },
+    {
+      "id": "flask-card-preview-template-string",
+      "family": "flask",
+      "architecture": "Flask Blueprint rendering with render_template_string",
+      "language": "python",
+      "file": "flask/greeting_cards.py",
+      "kind": "vulnerable",
+      "category": "template_injection",
+      "cwe": "CWE-1336",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "GET /cards/preview",
+      "line": 29,
+      "lineRange": [
+        19,
+        33
+      ],
+      "runtimeVerifiable": true,
+      "why": "The message and to query parameters are baked into the template source with an f-string before render_template_string compiles it, so {{ ... }} in either parameter is evaluated by Jinja2 on the server."
+    },
+    {
+      "id": "flask-card-preview-template-context",
+      "family": "flask",
+      "architecture": "Flask Blueprint rendering with render_template_string",
+      "language": "python",
+      "file": "flask/greeting_render.py",
+      "kind": "safe",
+      "pairedWith": "flask-card-preview-template-string",
+      "runtimeVerifiable": true,
+      "why": "render_template_string compiles a constant template; the request values are passed only as context variables, which Jinja2 autoescapes and never evaluates."
+    },
+    {
+      "id": "flask-guest-cart-cookie-pickle",
+      "family": "flask",
+      "architecture": "Flask Blueprint keeping state in a client cookie",
+      "language": "python",
+      "file": "flask/cart_state.py",
+      "kind": "vulnerable",
+      "category": "unsafe_deserialization",
+      "cwe": "CWE-502",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "GET /cart",
+      "line": 31,
+      "lineRange": [
+        27,
+        31
+      ],
+      "runtimeVerifiable": true,
+      "why": "The guest_cart cookie is base64-decoded and passed straight to pickle.loads with no signature, so any visitor can send a crafted pickle and execute code on the server."
+    },
+    {
+      "id": "flask-guest-cart-cookie-hmac",
+      "family": "flask",
+      "architecture": "Flask Blueprint keeping state in a client cookie",
+      "language": "python",
+      "file": "flask/cart_session.py",
+      "kind": "safe",
+      "pairedWith": "flask-guest-cart-cookie-pickle",
+      "runtimeVerifiable": true,
+      "why": "pickle.loads only runs after an HMAC-SHA256 tag over the blob, keyed with a server-side secret, has been verified with compare_digest, so only bytes the server itself produced are unpickled."
+    },
+    {
+      "id": "flask-app-factory-secret-literal",
+      "family": "flask",
+      "architecture": "Flask application factory with flask-login",
+      "language": "python",
+      "file": "flask/app_factory.py",
+      "kind": "vulnerable",
+      "category": "hardcoded_secret",
+      "cwe": "CWE-798",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "line": 31,
+      "lineRange": [
+        31,
+        31
+      ],
+      "runtimeVerifiable": false,
+      "why": "The Flask SECRET_KEY that signs session cookies is a committed literal, so anyone with the source can forge a session for any user."
+    },
+    {
+      "id": "flask-app-factory-secret-env",
+      "family": "flask",
+      "architecture": "Flask application factory with flask-login",
+      "language": "python",
+      "file": "flask/app_setup.py",
+      "kind": "safe",
+      "pairedWith": "flask-app-factory-secret-literal",
+      "runtimeVerifiable": false,
+      "why": "SECRET_KEY is read from an environment variable and startup fails if it is unset; the string constants are only the variable's name and the cookie name."
+    },
+    {
+      "id": "flask-entrypoint-debug-true",
+      "family": "flask",
+      "architecture": "Flask production entry point run with app.run",
+      "language": "python",
+      "file": "flask/serve.py",
+      "kind": "vulnerable",
+      "category": "debug_endpoint_exposure",
+      "cwe": "CWE-489",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "line": 25,
+      "lineRange": [
+        24,
+        25
+      ],
+      "runtimeVerifiable": true,
+      "why": "The file the production container runs starts the app on 0.0.0.0 with debug=True, which enables the Werkzeug interactive debugger and lets anyone who triggers an error execute code via the console."
+    },
+    {
+      "id": "flask-entrypoint-debug-env-default-off",
+      "family": "flask",
+      "architecture": "Flask production entry point run with app.run",
+      "language": "python",
+      "file": "flask/runserver.py",
+      "kind": "safe",
+      "pairedWith": "flask-entrypoint-debug-true",
+      "runtimeVerifiable": true,
+      "why": "debug is taken from an environment flag that defaults to False when unset, so the production container runs without the debugger."
+    },
+    {
+      "id": "flask-billing-statements-no-login",
+      "family": "flask",
+      "architecture": "Flask Blueprint with per-view @login_required",
+      "language": "python",
+      "file": "flask/billing_portal.py",
+      "kind": "vulnerable",
+      "category": "missing_authentication",
+      "cwe": "CWE-306",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "route": "GET /billing/customers/:customer_id/statements",
+      "line": 40,
+      "lineRange": [
+        39,
+        40
+      ],
+      "runtimeVerifiable": true,
+      "why": "Every other billing view carries @login_required, but the statements view does not and selects by a customer_id from the URL, so anonymous callers can read any customer's statements, billing e-mail and VAT number."
+    },
+    {
+      "id": "flask-billing-statements-before-request",
+      "family": "flask",
+      "architecture": "Flask Blueprint with a before_request authentication hook",
+      "language": "python",
+      "file": "flask/billing_account.py",
+      "kind": "safe",
+      "pairedWith": "flask-billing-statements-no-login",
+      "runtimeVerifiable": true,
+      "why": "No view has a decorator, but the blueprint's before_request hook aborts with 401 for unauthenticated users on every route, and statements are resolved from the signed-in user's own customer record."
+    },
+    {
+      "id": "flask-invoice-void-any-shop",
+      "family": "flask",
+      "architecture": "Flask Blueprint with flask-login and Flask-SQLAlchemy",
+      "language": "python",
+      "file": "flask/invoice_admin.py",
+      "kind": "vulnerable",
+      "category": "broken_object_level_authorization",
+      "cwe": "CWE-639",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "route": "POST /invoices/:invoice_id/void",
+      "line": 32,
+      "lineRange": [
+        31,
+        33
+      ],
+      "runtimeVerifiable": true,
+      "why": "The user is signed in, but the invoice is loaded by id alone and voided without checking it belongs to current_user.shop_id, so any shop owner can void other shops' invoices."
+    },
+    {
+      "id": "flask-invoice-void-shop-scoped",
+      "family": "flask",
+      "architecture": "Flask Blueprint with flask-login and Flask-SQLAlchemy",
+      "language": "python",
+      "file": "flask/invoice_actions.py",
+      "kind": "safe",
+      "pairedWith": "flask-invoice-void-any-shop",
+      "runtimeVerifiable": true,
+      "why": "The invoice is looked up with filter_by(id=..., shop_id=current_user.shop_id).first_or_404(), so another shop's invoice id returns 404."
+    },
+    {
+      "id": "flask-device-token-cookie-flags",
+      "family": "flask",
+      "architecture": "Flask Blueprint login view with flask-login",
+      "language": "python",
+      "file": "flask/remember_me.py",
+      "kind": "vulnerable",
+      "category": "insecure_cookie_configuration",
+      "cwe": "CWE-1004",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "route": "POST /login",
+      "line": 30,
+      "lineRange": [
+        28,
+        30
+      ],
+      "runtimeVerifiable": true,
+      "why": "A 30-day device token that re-authenticates the user is set with set_cookie defaults, i.e. without httponly, secure or samesite, so it is readable by script and sent over plain HTTP and cross-site."
+    },
+    {
+      "id": "flask-device-token-cookie-hardened",
+      "family": "flask",
+      "architecture": "Flask Blueprint login view with flask-login",
+      "language": "python",
+      "file": "flask/login_views.py",
+      "kind": "safe",
+      "pairedWith": "flask-device-token-cookie-flags",
+      "runtimeVerifiable": true,
+      "why": "The device token cookie is set with secure=True, httponly=True and samesite=Strict."
+    },
+    {
+      "id": "flask-sign-in-next-unchecked",
+      "family": "flask",
+      "architecture": "Flask Blueprint login view with flask-login and Flask-WTF",
+      "language": "python",
+      "file": "flask/auth_redirects.py",
+      "kind": "vulnerable",
+      "category": "open_redirect",
+      "cwe": "CWE-601",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "route": "POST /session/new",
+      "line": 26,
+      "lineRange": [
+        25,
+        26
+      ],
+      "runtimeVerifiable": true,
+      "why": "After a successful sign-in the view redirects to request.args['next'] verbatim, so a sign-in link with next=https://other.site sends the authenticated user off-site."
+    },
+    {
+      "id": "flask-sign-in-next-same-host",
+      "family": "flask",
+      "architecture": "Flask Blueprint login view with flask-login and Flask-WTF",
+      "language": "python",
+      "file": "flask/login_flow.py",
+      "kind": "safe",
+      "pairedWith": "flask-sign-in-next-unchecked",
+      "runtimeVerifiable": true,
+      "why": "next is only used when it contains no backslash or control characters and, resolved against host_url, keeps an http(s) scheme and this request's own host; otherwise the view falls back to the portal home."
+    },
+    {
+      "id": "flask-kb-search-markup-fstring",
+      "family": "flask",
+      "architecture": "Flask Blueprint rendering Jinja2 templates with markupsafe",
+      "language": "python",
+      "file": "flask/search_views.py",
+      "kind": "vulnerable",
+      "category": "reflected_cross_site_scripting",
+      "cwe": "CWE-79",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "route": "GET /help/search",
+      "line": 21,
+      "lineRange": [
+        21,
+        24
+      ],
+      "runtimeVerifiable": true,
+      "why": "The q parameter is interpolated into an f-string that is then wrapped in Markup, which marks it safe and disables Jinja2 autoescaping, so markup in the search term is rendered as HTML."
+    },
+    {
+      "id": "flask-kb-search-markup-format",
+      "family": "flask",
+      "architecture": "Flask Blueprint rendering Jinja2 templates with markupsafe",
+      "language": "python",
+      "file": "flask/search_pages.py",
+      "kind": "safe",
+      "pairedWith": "flask-kb-search-markup-fstring",
+      "runtimeVerifiable": true,
+      "why": "The Markup wraps only a constant string; the query is inserted with Markup.format, which escapes its arguments."
+    }
+  ]
+}

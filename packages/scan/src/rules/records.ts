@@ -1,8 +1,11 @@
 import ts from "typescript";
 import { collect, calleeTail, expressionName, walk } from "../ast/helpers.js";
 import { lineOf, snippetAround, type ParsedFile } from "../ast/parse.js";
-import { locationOf, routeHintFor, sourceEvidence, type Rule, type RuleContext } from "./context.js";
+import { formatRoute, locationOf, routeHintFor, sourceEvidence, type Rule, type RuleContext } from "./context.js";
+import { registrationGate } from "../engine/handlers.js";
 import {
+  BUILDER_READ,
+  FILTERED_READ,
   IDENTITY_EVIDENCE,
   IDENTITY_SEGMENT,
   IN_MEMORY_LOOKUP,
@@ -24,9 +27,12 @@ import {
   enclosingFunctions,
   enclosingIf,
   isFunctionLike,
+  isStoreCall,
   pathSegments,
   propertyKey,
   rootIdentifier,
+  identityEstablished,
+  storeReceiver,
   unwrap,
   type Scope
 } from "./records-origin.js";
@@ -80,11 +86,36 @@ interface Predicate {
   keyValues: ts.Expression[];
   /** Values compared to an owner column. */
   ownerValues: ts.Expression[];
+  /**
+   * Every value the predicate constrains that is not the primary key.
+   *
+   * This is the row's scope, whatever the column is called. `OWNER_COLUMN` knows the
+   * words the industry settled on, and a project that files records under
+   * `projectId` or `siteId` is scoping them just as firmly under a word no list
+   * contains — so the values are kept separately from the recognised owner columns
+   * and asked about rather than assumed.
+   */
+  scopeValues: ts.Expression[];
   /** An owner column appears among the conditions. */
+  /**
+   * Does this predicate constrain a column that names who a row belongs to?
+   *
+   * Read from the parsed **columns**. It used to be `OWNER_COLUMN.test(text)` over the
+   * predicate's own source, which meant a predicate named an owner whenever the
+   * characters of an owner column appeared anywhere in it — **including inside a value
+   * the caller supplied**. Combined with `predicateIsScoped`, which returns true when
+   * `namesOwner` holds and `ownerValues` is empty, that excused a real defect:
+   *
+   *     Asset.findOne({ _id: assetId, $or: Asset.visibilityFilter(ctx.request.body.viewerId) })
+   *
+   * `viewerId` matches `viewer_?id`, no column named an owner so `ownerValues` was
+   * empty, and the lookup read as scoped — while the application was letting the caller
+   * nominate whose visibility to apply, which is the defect one level up.
+   */
   namesOwner: boolean;
 }
 
-const EMPTY_PREDICATE: Predicate = { text: "", keyValues: [], ownerValues: [], namesOwner: false };
+const EMPTY_PREDICATE: Predicate = { text: "", keyValues: [], ownerValues: [], scopeValues: [], namesOwner: false };
 
 /** The full call chain a builder lookup belongs to: `db.update(x).set(y).where(z)`. */
 function chainRoot(call: ts.CallExpression): ts.Node {
@@ -115,6 +146,45 @@ function comparisonPairs(node: ts.Node, file: ParsedFile): Array<{ column: strin
 }
 
 /**
+ * Operators that still address one row when they compare a primary key.
+ *
+ * `where("id", ">", cursor)` is a page boundary, not a record address: a row that
+ * satisfies it is one of many, so counting it as a key predicate would report every
+ * keyset-paginated list as an object-ownership defect.
+ */
+const IDENTIFYING_OPERATOR = new Set(["=", "==", "===", "is"]);
+
+/**
+ * A builder condition written as separate column and value arguments.
+ *
+ * Knex spells the commonest filter in Node as `where("id", value)`, and the
+ * three-argument `where("id", "=", value)` beside it. Neither is an object literal
+ * and neither is a `:placeholder` fragment, so both walk straight past
+ * `filterPairs` and `fragmentPairs` and the lookup vanishes — which switches this
+ * rule off for Knex, and for Adonis Lucid, which is built on it.
+ *
+ * Only a bare column name answers. A first argument containing an operator or a
+ * space is a SQL fragment, which `fragmentPairs` reads with its bindings, and
+ * treating it as a column here would pair the whole fragment with the bag.
+ */
+const BARE_COLUMN = /^[A-Za-z_][\w$]*(?:\.[A-Za-z_][\w$]*)?$/;
+
+function argumentPairs(call: ts.CallExpression, file: ParsedFile): Array<{ column: string; value: ts.Expression }> {
+  const [first, second, third] = call.arguments;
+  if (!first || !second) return [];
+  const resolved = unwrap(first);
+  if (!ts.isStringLiteralLike(resolved) || !BARE_COLUMN.test(resolved.text)) return [];
+  const column = resolved.text.split(".").pop() ?? "";
+
+  if (!third) return [{ column, value: second }];
+
+  const operator = unwrap(second);
+  if (!ts.isStringLiteralLike(operator)) return [];
+  if (!IDENTIFYING_OPERATOR.has(operator.text.trim().toLowerCase())) return [];
+  return [{ column, value: third }];
+}
+
+/**
  * Filter properties, at any depth, paired with the value they constrain.
  *
  * The node handed in may be a whole filter object (`{ id, workspaceId }`), a single
@@ -134,6 +204,43 @@ function filterPairs(node: ts.Node, file: ParsedFile): Array<{ column: string; v
     }
   });
   return [...pairs, ...comparisonPairs(node, file)];
+}
+
+/**
+ * A builder condition written as text, paired with the bag that fills it in.
+ *
+ * `where("m.id = :manifestId", { manifestId })` states the column in the fragment
+ * and the value in the object beside it, and the two are joined by a name that
+ * matches neither on its own: reading the object alone sees a property called
+ * `manifestId`, which is not a primary key by any spelling, so the lookup vanishes.
+ * Resolving the placeholder is what makes the fragment mean what it says — and it
+ * cuts both ways, because the owner column an application adds in a second fragment
+ * is just as invisible until the same join is made.
+ */
+function fragmentPairs(conditions: ts.Node[], file: ParsedFile): Array<{ column: string; value: ts.Expression }> {
+  const fragments = conditions.map(unwrap).filter((node): node is ts.StringLiteralLike => ts.isStringLiteralLike(node));
+  if (fragments.length === 0) return [];
+
+  const bag = new Map<string, ts.Expression>();
+  for (const node of conditions) {
+    const resolved = unwrap(node);
+    if (!ts.isObjectLiteralExpression(resolved)) continue;
+    for (const property of resolved.properties) {
+      if (ts.isShorthandPropertyAssignment(property)) bag.set(property.name.text, property.name);
+      else if (ts.isPropertyAssignment(property)) bag.set(propertyKey(property, file), property.initializer);
+    }
+  }
+  if (bag.size === 0) return [];
+
+  const pairs: Array<{ column: string; value: ts.Expression }> = [];
+  for (const fragment of fragments) {
+    const condition = /\b(?:\w+\.)?(\w+)\s*=\s*:(\w+)/g;
+    for (let match = condition.exec(fragment.text); match; match = condition.exec(fragment.text)) {
+      const value = bag.get(match[2] ?? "");
+      if (value) pairs.push({ column: match[1] ?? "", value });
+    }
+  }
+  return pairs;
 }
 
 /** Property names a filter object uses for projection rather than for selection. */
@@ -172,6 +279,7 @@ function callbackPredicate(call: ts.CallExpression, file: ParsedFile): Predicate
 
   const keyValues: ts.Expression[] = [];
   const ownerValues: ts.Expression[] = [];
+  const scopeValues: ts.Expression[] = [];
   for (const comparison of collect(callback, ts.isBinaryExpression)) {
     const kind = comparison.operatorToken.kind;
     if (kind !== ts.SyntaxKind.EqualsEqualsEqualsToken && kind !== ts.SyntaxKind.EqualsEqualsToken) continue;
@@ -183,8 +291,12 @@ function callbackPredicate(call: ts.CallExpression, file: ParsedFile): Predicate
       if (!ts.isPropertyAccessExpression(side)) continue;
       if (rootIdentifier(side) !== element) continue;
       const column = side.name.text;
-      if (PRIMARY_KEY_COLUMN.test(column)) keyValues.push(other);
-      else if (OWNER_COLUMN.test(column)) ownerValues.push(other);
+      if (PRIMARY_KEY_COLUMN.test(column)) {
+        keyValues.push(other);
+        continue;
+      }
+      scopeValues.push(other);
+      if (OWNER_COLUMN.test(column)) ownerValues.push(other);
     }
   }
   if (keyValues.length === 0) return null;
@@ -192,6 +304,7 @@ function callbackPredicate(call: ts.CallExpression, file: ParsedFile): Predicate
     text: callback.getText(file.source),
     keyValues,
     ownerValues,
+    scopeValues,
     namesOwner: ownerValues.length > 0
   };
 }
@@ -246,22 +359,53 @@ function sqlPredicate(sql: string, values: ts.Expression[]): Predicate | null {
 
   const keyValues: ts.Expression[] = [];
   const ownerValues: ts.Expression[] = [];
+  const scopeValues: ts.Expression[] = [];
   let addressesOneRow = false;
+  let namesOwnerColumn = false;
 
   const condition = new RegExp(String.raw`\b(?:\w+\.)?(?<column>\w+)\s*=\s*${PLACEHOLDER}`, "gi");
   for (let match = condition.exec(where.text); match; match = condition.exec(where.text)) {
     const column = match.groups?.column ?? "";
     const value = boundValue(sql, where, match, values);
+    // Set from the column itself, before the value is resolved: a predicate that
+    // constrains `account_id` names an owner whether or not the binding for it can be
+    // followed, and pretending otherwise reads an unresolvable owner clause as no
+    // owner clause at all.
+    if (OWNER_COLUMN.test(column)) namesOwnerColumn = true;
     if (PRIMARY_KEY_COLUMN.test(column)) {
       addressesOneRow = true;
       if (value) keyValues.push(value);
-    } else if (OWNER_COLUMN.test(column) && value) {
-      ownerValues.push(value);
+      continue;
     }
+    if (!value) continue;
+    scopeValues.push(value);
+    if (OWNER_COLUMN.test(column)) ownerValues.push(value);
+  }
+
+  /*
+   * A read whose only condition is an owner column the caller filled in.
+   *
+   *   WHERE customer_id = ?1 AND period = ?2   -- bind(c.req.param('customerId'), …)
+   *
+   * There is no primary key here, so nothing "addresses one row" and this used to
+   * return null — the rule never ran. But the caller has named whose rows to return
+   * and the authenticated tenant appears nowhere in the predicate, which is the
+   * multi-tenant boundary failing in its plainest form. It addresses *an owner's*
+   * rows rather than one row, and that is the same defect a page wider.
+   *
+   * The owner value becomes the addressing identifier, so the checks downstream do
+   * the rest of the work unchanged: `lookupAt` only proceeds when one of them is
+   * caller-supplied, and `predicateIsScoped` still clears the predicate when the
+   * owner column is filled from the session. `WHERE user_id = ?` bound to
+   * `session.user.id` therefore stays silent, as it must.
+   */
+  if (!addressesOneRow && ownerValues.length > 0) {
+    keyValues.push(...ownerValues);
+    addressesOneRow = true;
   }
 
   if (!addressesOneRow) return null;
-  return { text: where.text, keyValues, ownerValues, namesOwner: OWNER_COLUMN.test(where.text) };
+  return { text: where.text, keyValues, ownerValues, scopeValues, namesOwner: namesOwnerColumn };
 }
 
 /* ------------------------------------------------------------------- the sink */
@@ -278,11 +422,136 @@ interface Lookup {
   statement: string;
 }
 
+/**
+ * Links a fluent query builder uses to name the table it addresses.
+ *
+ * Drizzle and Kysely put the table in `.from(orders)` or `.update(orders)`, not in
+ * the call that runs the query. `insert` is deliberately absent: an insert names
+ * no existing row, so there is no ownership question to ask about it.
+ */
+const BUILDER_TABLE_LINK = new Set([
+  "from",
+  "update",
+  "delete",
+  "deletefrom",
+  "updatetable",
+  // Kysely's own table link. The comment above named Kysely as supported and this set
+  // did not contain the link Kysely uses, so every `selectFrom("scorecards as s")` chain
+  // read as a builder with no table and was declined. `insertInto` stays out for the
+  // same reason `insert` does: an insert names no existing row to own.
+  "selectfrom"
+]);
+
+/**
+ * Does this call name its table by calling the store itself?
+ *
+ * Knex addresses a table as `db("invoices").where(…)` rather than through a
+ * `.from(…)` link, so a rule that only reads `BUILDER_TABLE_LINK` sees a chain with
+ * no table and declines to treat it as a lookup. The store-shaped callee is what
+ * separates it from an ordinary one-argument function call.
+ */
+function namesTheTableItself(call: ts.CallExpression): boolean {
+  if (call.arguments.length !== 1) return false;
+  const callee = call.expression;
+  // Read the callee's own name rather than its source text: this runs for every
+  // call in every chain, and `getText()` re-slices the file each time — enough to
+  // quadruple the cost of scanning a large file.
+  const name = ts.isIdentifier(callee) ? callee.text : ts.isPropertyAccessExpression(callee) ? callee.name.text : undefined;
+  if (!name || !STORE_RECEIVER.test(name)) return false;
+  const table = unwrap(call.arguments[0] as ts.Expression);
+  return ts.isStringLiteralLike(table);
+}
+
+/** Is this call itself the receiver of a further link in the same chain? */
+function isChainedFurther(call: ts.CallExpression): boolean {
+  let node: ts.Node = call;
+  while (node.parent && (ts.isParenthesizedExpression(node.parent) || ts.isAwaitExpression(node.parent))) {
+    node = node.parent;
+  }
+  const parent = node.parent;
+  if (!parent || !ts.isPropertyAccessExpression(parent) || parent.expression !== node) return false;
+  return Boolean(parent.parent && ts.isCallExpression(parent.parent) && parent.parent.expression === parent);
+}
+
+/**
+ * A fluent query-builder chain that addresses rows of one table.
+ *
+ * `db.select().from(orders).where(eq(orders.id, params.id)).limit(1)` contains no
+ * method name this rule already knows. The table arrives through `.from`, the
+ * filter through `.where`, and the terminal link is whichever modifier the
+ * developer happened to write last — `limit`, `orderBy`, `execute`, `returning`,
+ * or nothing at all. Keying on the terminal name therefore switches the whole rule
+ * off for Drizzle and Kysely, which is most of the TypeScript ORM population, and
+ * the shape it switches off for is the commonest form object-ownership defects
+ * take.
+ *
+ * Recognised by shape instead: a store-shaped receiver, a link that names a table,
+ * and a `where`. Only the outermost link answers, so one statement yields one
+ * lookup rather than one per link. `orderBy` and `limit` on an array cannot reach
+ * here, because an array has neither a store receiver nor a `.from(table)`.
+ */
+function isFluentBuilderLookup(call: ts.CallExpression, file: ParsedFile): boolean {
+  if (isChainedFurther(call)) return false;
+  if (!ts.isPropertyAccessExpression(call.expression)) return false;
+  if (!storeReceiver(call, file)) return false;
+
+  const chain = chainRoot(call);
+  let namesTable = false;
+  let filters = false;
+  for (const inner of collect(chain, ts.isCallExpression)) {
+    const tail = calleeTail(inner).toLowerCase();
+    if (BUILDER_TABLE_LINK.has(tail) && inner.arguments.length > 0) namesTable = true;
+    if (namesTheTableItself(inner)) namesTable = true;
+    if (/^(and)?where$/.test(tail) && inner.arguments.length > 0) filters = true;
+  }
+  return namesTable && filters;
+}
+
+/** Methods that hand back at most one row, whatever the predicate matched. */
+const SINGLE_ROW_METHOD = new Set([
+  ...READ_ONE,
+  "first",
+  "get",
+  "one",
+  "single",
+  "singleorthrow",
+  "getone",
+  "getoneorfail",
+  // Kysely terminates a single-row read with these rather than with `limit(1)`, so a
+  // chain ending in one looked like a listing and a listing is deliberately not this
+  // rule's finding.
+  "executetakefirst",
+  "executetakefirstorthrow"
+]);
+
+/**
+ * Does this read return a single row?
+ *
+ * Either the method says so, or the chain caps it with `limit(1)` / `take(1)`. A
+ * read of many rows filtered by one caller value is a listing, and reporting it as
+ * an object-ownership defect would report every search endpoint.
+ */
+function returnsOneRow(call: ts.CallExpression, chain: ts.Node): boolean {
+  if (SINGLE_ROW_METHOD.has(calleeTail(call).toLowerCase())) return true;
+  for (const inner of collect(chain, ts.isCallExpression)) {
+    const tail = calleeTail(inner).toLowerCase();
+    if (tail !== "limit" && tail !== "take") continue;
+    const argument = inner.arguments[0];
+    if (argument && ts.isNumericLiteral(argument) && argument.text === "1") return true;
+  }
+  return false;
+}
+
 /** The table or collection this statement addresses, as a reader would name it. */
 function collectionOf(call: ts.CallExpression, statement: string, file: ParsedFile): string {
   if (ts.isPropertyAccessExpression(call.expression)) {
-    const receiver = expressionName(call.expression.expression);
-    const tail = receiver.split(".").pop() ?? receiver;
+    // `this.invoices.createQueryBuilder("i").where(…).getOne()` names the table two
+    // links back: the segments in between are the builder assembling the query, and
+    // naming a finding after one of them tells the reader nothing they can act on.
+    const segments = expressionName(call.expression.expression)
+      .split(".")
+      .filter((segment) => segment.length > 0 && !segment.endsWith("()") && segment !== "this");
+    const tail = segments[segments.length - 1];
     if (tail && !STORE_RECEIVER.test(tail) && !/^query$/i.test(tail)) return tail;
   }
   const table = /\b(?:from|into|update|join)\s+["'`]?([a-z_][a-z0-9_]*)/i.exec(statement);
@@ -304,27 +573,86 @@ function isMutating(call: ts.CallExpression, statement: string, sql: string | nu
  * The lookup this call performs, or null when it does not address one record by a
  * value the caller chose.
  */
+/** Links that carry the statement text and the bound values of a prepared chain. */
+const PREPARE_LINK = new Set(["prepare", "preparestatement", "createstatement"]);
+const BIND_LINK = new Set(["bind", "bindvalues", "values", "params"]);
+
+/**
+ * The statement and bindings of a prepared-statement chain.
+ *
+ * Cloudflare D1 and better-sqlite3 both spell a query as
+ *
+ *   db.prepare("SELECT … WHERE customer_id = ?1").bind(customerId, period).all()
+ *
+ * where the terminal call takes **no arguments at all**. `lookupAt` reads the SQL
+ * out of the call it is looking at, finds nothing, and gives up — so the whole
+ * ownership rule was switched off for every D1 query, on a platform this engine
+ * ships an adapter for. The text is one link back and the values are two.
+ */
+function preparedStatement(chain: ts.Node, scope: Scope): { sql: string; values: ts.Expression[] } | null {
+  let sql: string | null = null;
+  const values: ts.Expression[] = [];
+  for (const inner of collect(chain, ts.isCallExpression)) {
+    const tail = calleeTail(inner).toLowerCase();
+    if (PREPARE_LINK.has(tail) && inner.arguments[0]) {
+      const text = statementTextOf(inner.arguments[0], scope);
+      if (text) sql = text;
+      continue;
+    }
+    if (BIND_LINK.has(tail)) {
+      for (const argument of inner.arguments) {
+        const resolved = unwrap(argument);
+        if (ts.isArrayLiteralExpression(resolved)) values.push(...resolved.elements);
+        else values.push(argument);
+      }
+    }
+  }
+  return sql === null ? null : { sql, values };
+}
+
 function lookupAt(call: ts.CallExpression, context: RuleContext, scope: Scope): Lookup | null {
   const file = context.file;
   const tail = calleeTail(call).toLowerCase();
   const isRecordMethod = READ_ONE.has(tail) || WRITE_ONE.has(tail);
   const isRawStatement = RAW_STATEMENT.has(tail);
   const isInMemory = IN_MEMORY_LOOKUP.has(tail);
-  if (!isRecordMethod && !isRawStatement && !isInMemory) return null;
-  if (!isInMemory && !UNAMBIGUOUS_STORE_METHOD.has(tail) && !STORE_RECEIVER.test(call.expression.getText(file.source))) {
+  const chain = chainRoot(call);
+  // Two shapes that answer with rows and hand back the one row the caller named.
+  // `repository.find({ where: { id } })` states its filter as an argument; a builder
+  // states it in earlier links of the chain, so the terminal `getOne()` taking no
+  // arguments says nothing about whether it addresses a record. Both are only read
+  // as lookups when a store answers them and the filter is an object rather than a
+  // callback, which is what keeps `array.find` out.
+  const isFilteredRead =
+    (storeReceiver(call, file) &&
+      ((FILTERED_READ.has(tail) && call.arguments.some((argument) => ts.isObjectLiteralExpression(unwrap(argument)))) ||
+        (BUILDER_READ.has(tail) && chain !== call))) ||
+    isFluentBuilderLookup(call, file);
+  if (!isRecordMethod && !isRawStatement && !isInMemory && !isFilteredRead) return null;
+  if (!isInMemory && !isFilteredRead && !UNAMBIGUOUS_STORE_METHOD.has(tail) && !storeReceiver(call, file)) {
     // Without a store-shaped receiver, `map.get(key)` and `set.delete(value)` are
     // indistinguishable from a query by name alone.
     if (!isRawStatement) return null;
   }
 
-  const chain = chainRoot(call);
   const statement = chain.getText(file.source);
   let predicate: Predicate | null = null;
   let sql: string | null = null;
 
   if (isInMemory) {
     predicate = callbackPredicate(call, file);
-    if (!predicate) return null;
+    // `find` is both an array method and a repository method. With no element
+    // predicate the filter object below is the only reading left that makes sense.
+    if (!predicate && !isFilteredRead) return null;
+  }
+
+  // A prepared chain states the SQL a link or two back rather than here.
+  if (!predicate && call.arguments.length === 0 && (isRawStatement || isFilteredRead)) {
+    const prepared = preparedStatement(chain, scope);
+    if (prepared && /\b(select|update|delete|insert|from|where)\b/i.test(prepared.sql)) {
+      sql = prepared.sql;
+      predicate = sqlPredicate(prepared.sql, prepared.values);
+    }
   }
 
   for (const argument of predicate ? [] : call.arguments) {
@@ -341,30 +669,120 @@ function lookupAt(call: ts.CallExpression, context: RuleContext, scope: Scope): 
 
   if (!predicate) {
     const conditions: ts.Node[] = [];
+    // Column-and-value arguments are read per call, because the pairing is
+    // positional: flattening them into `conditions` would lose which value
+    // belonged to which column.
+    const separated: Array<{ column: string; value: ts.Expression }> = [];
     for (const argument of call.arguments) {
       const resolved = unwrap(argument);
       if (ts.isObjectLiteralExpression(resolved)) conditions.push(...objectFilter(resolved, file));
     }
+    if (/^(and)?where$/.test(tail)) separated.push(...argumentPairs(call, file));
     // A builder chain states its conditions in `.where(...)`, away from the call
     // that names the table.
     if (chain !== call) {
       for (const inner of collect(chain, ts.isCallExpression)) {
-        if (calleeTail(inner).toLowerCase() !== "where") continue;
+        // `andWhere` narrows the same way `where` does. `orWhere` does not — a row
+        // that satisfies either side is still returned — so counting one as a scope
+        // would excuse a query that never constrained anything.
+        if (!/^(and)?where$/.test(calleeTail(inner).toLowerCase())) continue;
         conditions.push(...inner.arguments);
+        separated.push(...argumentPairs(inner, file));
+      }
+    }
+    /*
+     * A record addressed positionally, with no filter object anywhere in the chain.
+     *
+     *     db.collection("children").doc(childId).get()                 // Firestore
+     *     container("permits").item(permitId, siteId).read()           // Cosmos DB
+     *
+     * A document store does not have a `where`. It names the collection, then names the
+     * document, and both are arguments rather than properties — so `conditions` is empty,
+     * this function returned null, and object-level authorization was structurally
+     * unreachable for the two most widely deployed document databases there are. Run 7
+     * missed both, in handlers where the entry point, the caller's data and the store
+     * were all recognised.
+     *
+     * Read by shape and not by method name: a link whose only argument is a **string
+     * literal** names a collection, and the next link that takes a **non-literal**
+     * argument names one record inside it. `.doc`, `.item`, `.document`, `.child`, `.key`
+     * and whatever the next SDK calls it all satisfy that without being listed. The
+     * terminal call still has to return a single row, and `lookupAt` below still discards
+     * the whole thing unless the addressing value is caller-controlled — so
+     * `collection("rates").doc("gbp").get()` and a document keyed from the session are
+     * both unaffected.
+     */
+    if (conditions.length === 0 && separated.length === 0) {
+      const positional = positionalAddress(chain, call, file);
+      // The addressing value must be the caller's, exactly as it must be for every other
+      // shape: a document keyed from the session, or from a constant, is not this defect.
+      if (positional && classify(positional.key, scope) === "caller") {
+        return {
+          call,
+          scope,
+          predicate: {
+            text: positional.text,
+            keyValues: [positional.key],
+            ownerValues: [],
+            scopeValues: positional.rest,
+            namesOwner: false
+          },
+          identifier: positional.key,
+          mutating: isMutating(call, statement, sql),
+          collection: positional.collection,
+          statement
+        };
       }
     }
     if (conditions.length === 0) return null;
 
-    const pairs = conditions.flatMap((node) => filterPairs(node, file));
+    const pairs = [
+      ...conditions.flatMap((node) => filterPairs(node, file)),
+      ...fragmentPairs(conditions, file),
+      ...separated
+    ];
     const keyValues = pairs.filter((pair) => PRIMARY_KEY_COLUMN.test(pair.column)).map((pair) => pair.value);
+    /*
+     * A row addressed by its business reference rather than by `id`.
+     *
+     *     .from(consignments).where(eq(consignments.reference, ref)).limit(1)
+     *
+     * `PRIMARY_KEY_COLUMN` is `/^(id|_id|uuid|guid|pk|objectid)$/i`, so this
+     * addresses no row as far as the rule is concerned and it never runs. Real
+     * applications address rows by `reference`, `slug`, `code`, `waybill`,
+     * `invoice_number` — the corpus brief handed to this project's own blind authors
+     * uses `:reference` as its example — and holdout-6 lost an object-ownership case
+     * to exactly this.
+     *
+     * Answered by shape rather than by a longer list of column names, because the
+     * list would need every noun: **a read that returns a single row, whose only
+     * non-owner condition is one value the caller supplied, addresses a record —
+     * whatever that column is called.** All three parts are required. `limit(1)` or a
+     * single-row method is what makes it an address rather than a filter; one
+     * condition is what makes it *the* address; and `lookupAt` below still discards
+     * it unless the value is caller-controlled, so `where(status, "open").limit(1)`
+     * and a lookup keyed from the session are both unaffected.
+     */
+    if (keyValues.length === 0 && returnsOneRow(call, chain)) {
+      const addressing = pairs.filter((pair) => !OWNER_COLUMN.test(pair.column));
+      if (addressing.length === 1) keyValues.push(addressing[0]!.value);
+    }
     const ownerValues = pairs.filter((pair) => OWNER_COLUMN.test(pair.column)).map((pair) => pair.value);
+    const scopeValues = pairs.filter((pair) => !PRIMARY_KEY_COLUMN.test(pair.column)).map((pair) => pair.value);
     if (keyValues.length === 0) return null;
     const text = conditions.map((node) => node.getText(file.source)).join(", ");
-    predicate = { text, keyValues, ownerValues, namesOwner: OWNER_COLUMN.test(text) };
+    predicate = {
+      text,
+      keyValues,
+      ownerValues,
+      scopeValues,
+      namesOwner: pairs.some((pair) => OWNER_COLUMN.test(pair.column))
+    };
   }
 
   const identifier = predicate.keyValues.find((value) => classify(value, scope) === "caller");
   if (!identifier) return null;
+
 
   return {
     call,
@@ -375,6 +793,52 @@ function lookupAt(call: ts.CallExpression, context: RuleContext, scope: Scope): 
     collection: collectionOf(call, statement, file),
     statement
   };
+}
+
+/**
+ * The collection and the document a positional chain addresses.
+ *
+ * Walks the chain in source order. The first link whose sole argument is a string
+ * literal names the collection; the first link after it whose first argument is not a
+ * literal names the record. Requires the chain to end in a single-row operation, which is
+ * what separates addressing one document from listing a collection.
+ */
+function positionalAddress(
+  chain: ts.Node,
+  terminal: ts.CallExpression,
+  file: ParsedFile
+): { collection: string; key: ts.Expression; rest: ts.Expression[]; text: string } | null {
+  if (!returnsOneRow(terminal, chain) && !WRITE_ONE.has(calleeTail(terminal).toLowerCase())) return null;
+  if (!storeReceiver(terminal, file) && !isFluentBuilderLookup(terminal, file)) return null;
+
+  /*
+   * Innermost link first, ordered by where each one *ends*.
+   *
+   * Every call in `a.b(x).c(y).d()` begins at `a`, so ordering by start is a tie and the
+   * traversal order was whatever `collect` happened to produce. The end position is what
+   * distinguishes them: `a.b(x)` closes before `a.b(x).c(y)`, which closes before the
+   * whole expression. Getting this wrong reads the terminal call as the collection.
+   */
+  const links = collect(chain, ts.isCallExpression).sort((a, b) => a.getEnd() - b.getEnd());
+  let collection: string | null = null;
+  for (const link of links) {
+    const first = link.arguments[0] ? unwrap(link.arguments[0]) : null;
+    if (collection === null) {
+      if (link.arguments.length === 1 && first && ts.isStringLiteralLike(first) && first.text.length > 0) {
+        collection = first.text;
+      }
+      continue;
+    }
+    if (!first || ts.isStringLiteralLike(first) || ts.isObjectLiteralExpression(first)) continue;
+    if (ts.isFunctionLike(first) || ts.isArrowFunction(first)) continue;
+    return {
+      collection,
+      key: link.arguments[0] as ts.Expression,
+      rest: link.arguments.slice(1) as ts.Expression[],
+      text: link.getText(file.source)
+    };
+  }
+  return null;
 }
 
 /* -------------------------------------------------------------- scoping checks */
@@ -414,6 +878,35 @@ function collectionScopedToCaller(call: ts.CallExpression, scope: Scope): boolea
 
 /** Is this expression the authenticated subject, rather than something named after it? */
 function identityValue(node: ts.Node, scope: Scope): boolean {
+  /*
+   * A predicate computed *from* the caller's identity is the caller's identity.
+   *
+   *   { _id: assetId, $or: Asset.visibilityFilter(ctx.state.user.id) }
+   *
+   * The `$or` value is a call, so nothing about it is identity-shaped by name —
+   * the receiver is `Asset` and the method is `visibilityFilter`. What makes it a
+   * scope is its argument. Refusing to look one level in reports a Mongo query
+   * that filters by exactly who is asking, which is the shape any non-trivial
+   * visibility model has.
+   *
+   * One level only, and the argument must be identity-shaped *by segment* rather
+   * than by the whole path's text. That is deliberately stricter than the test
+   * below: `OWNER_COLUMN` is matched against the full expression there, so
+   * `req.body.viewerId` reads as owner-shaped, and recursing into the general test
+   * would let `visibilityFilter(req.body.viewerId)` — an application letting the
+   * caller nominate whose visibility to use — excuse itself. A segment named
+   * `session`, `user`, `auth` or `claims` cannot be spelled by a request body.
+   */
+  const call = unwrap(node);
+  if (ts.isCallExpression(call)) {
+    return call.arguments.some((argument) => {
+      const root = rootIdentifier(argument);
+      const shaped =
+        (root !== null && IDENTITY_SEGMENT.test(root)) ||
+        pathSegments(argument, scope).some((segment) => IDENTITY_SEGMENT.test(segment));
+      return shaped && classify(argument, scope) !== "caller";
+    });
+  }
   const root = rootIdentifier(node);
   const name = expressionName(node as ts.Expression);
   const shaped =
@@ -455,10 +948,93 @@ function governs(node: ts.Node, sink: ts.Node, outer: ts.Node): boolean {
 
 /** Does the predicate itself constrain the row to the caller's own? */
 function predicateIsScoped(lookup: Lookup): boolean {
-  if (!lookup.predicate.namesOwner) return false;
-  if (lookup.predicate.ownerValues.length === 0) return true;
-  // An owner column compared to something the caller supplied is not a scope.
-  return lookup.predicate.ownerValues.some((value) => classify(value, lookup.scope) !== "caller");
+  if (lookup.predicate.namesOwner) {
+    if (lookup.predicate.ownerValues.length === 0) return true;
+    // An owner column compared to something the caller supplied is not a scope.
+    return lookup.predicate.ownerValues.some((value) => classify(value, lookup.scope) !== "caller");
+  }
+  /*
+   * A column this analysis does not recognise, constrained by the caller's own
+   * identity, is an ownership predicate regardless of what it is called.
+   *
+   * `OWNER_COLUMN` is a list of names, and a list of names cannot keep up with
+   * what applications call their tenants. holdout-5 reported
+   *
+   *   WHERE id = $1 AND merchant_id = $2      -- [refundId, session.merchantId]
+   *
+   * as an object-ownership defect because `merchant_id` is not on the list, and no
+   * plausible list contains `merchant_id`, `practice_id`, `landlord_id`,
+   * `shop_id` and whatever the next domain calls its boundary.
+   *
+   * The value answers where the name cannot: `identityValue` requires something
+   * rooted in the caller's identity that the caller did not choose, which is the
+   * definition of a scope. A predicate filtered by who is asking is scoped to who
+   * is asking.
+   */
+  return lookup.predicate.scopeValues.some((value) => identityValue(value, lookup.scope));
+}
+
+/**
+ * Was the scope this row is filtered by already proved to be the caller's?
+ *
+ * The most careful multi-tenant code there is reads
+ *
+ *   const membership = await db.membership.findFirst({ where: { orgId, userId: viewer.id } });
+ *   if (!membership) throw new NotFound();
+ *   const row = await db.record.findFirst({ where: { orgId, id } });
+ *
+ * and every value in the second predicate came out of the URL. Judged one statement
+ * at a time that is a primary-key lookup with a caller-supplied tenant beside it —
+ * the exact shape this rule reports — and reporting it would be wrong twice over:
+ * the caller cannot reach another tenant's row, and a tool that cannot tell this
+ * apart from the defect is a tool that gets switched off.
+ *
+ * What separates them is a proof standing between the two statements: a store read
+ * that pairs the same scope value with the authenticated subject and whose answer
+ * stops the handler. That is an ownership check written as a membership lookup, and
+ * it holds however the column is spelled — which matters, because half of these
+ * columns are called `projectId` or `siteId` and no vocabulary of owner names will
+ * ever contain them all.
+ */
+function scopeProvenForCaller(lookup: Lookup, chain: ts.Node[]): boolean {
+  const roots = new Set<string>();
+  for (const value of lookup.predicate.scopeValues) {
+    const root = rootIdentifier(value);
+    if (root) roots.add(root);
+  }
+  if (roots.size === 0) return false;
+  return chain.some((outer) => scopeProvenWithin(lookup, outer, roots));
+}
+
+function scopeProvenWithin(lookup: Lookup, outer: ts.Node, roots: Set<string>): boolean {
+  const file = lookup.scope.file;
+
+  for (const call of collect(outer, ts.isCallExpression)) {
+    if (call === lookup.call) continue;
+    if (!isStoreCall(call, file)) continue;
+    // A proof has to run before the statement it protects, and on a path that
+    // actually reaches it.
+    if (call.getEnd() > lookup.call.getStart()) continue;
+    if (!governs(call, lookup.call, outer)) continue;
+
+    const constrainsScope = collect(call, ts.isIdentifier).some((identifier) => roots.has(identifier.text));
+    if (!constrainsScope) continue;
+
+    let namesIdentity = false;
+    for (const argument of call.arguments) {
+      if (namesIdentity) break;
+      for (const inner of collect(argument, ts.isPropertyAccessExpression)) {
+        if (identityValue(inner, lookup.scope)) namesIdentity = true;
+      }
+      for (const inner of collect(argument, ts.isIdentifier)) {
+        if (identityValue(inner, lookup.scope)) namesIdentity = true;
+      }
+    }
+    if (!namesIdentity) continue;
+
+    if (resultGatesHandler(call, outer, file)) return true;
+  }
+  return false;
 }
 
 /** The names that hold this lookup's result, following straight aliasing. */
@@ -478,7 +1054,45 @@ function resultNames(lookup: Lookup, outer: ts.Node): Set<string> {
     let changed = false;
     for (const declaration of collect(outer, ts.isVariableDeclaration)) {
       if (!declaration.initializer) continue;
-      const source = unwrap(declaration.initializer);
+      /*
+       * `const rows = result.results ?? []` still holds the rows.
+       *
+       * A defaulting operator is the ordinary way to unwrap a driver's result, and
+       * reading only plain access chains lost the trail at the first `??`. The
+       * consequence is not a missed name, it is the whole rule switching off: with
+       * `rows` unlinked from the lookup, nothing the handler returns is recognised
+       * as the record, `recordReachesCaller` answers false, and a query returning
+       * any tenant's rows is reported as nothing at all.
+       *
+       * Only the left side is followed. The fallback is a literal the developer
+       * supplied and holds no record.
+       */
+      let source = unwrap(declaration.initializer);
+      if (
+        ts.isBinaryExpression(source) &&
+        (source.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken ||
+          source.operatorToken.kind === ts.SyntaxKind.BarBarToken)
+      ) {
+        source = unwrap(source.left);
+      }
+      /*
+       * `const enrolment = snapshot.data()` still holds the record.
+       *
+       * A document store hands back a wrapper and the payload is obtained by *calling*
+       * it — `snapshot.data()` in Firestore, `.toObject()` in Mongoose, `.toJSON()`
+       * elsewhere — so the trail ended at the first such call and the row was judged
+       * never to reach the caller. The whole handler then read as a lookup nobody looks
+       * at, which is the one shape this rule deliberately ignores, so a cross-account
+       * document read produced nothing.
+       *
+       * Only an argument-less call on something already known to hold the row counts.
+       * That is what separates unwrapping from transforming: `snapshot.data()` is the same
+       * record under a new name, while `rows.filter(fn)` or `pick(row, fields)` are
+       * decisions the handler made and are followed by the ordinary rules below.
+       */
+      if (ts.isCallExpression(source) && source.arguments.length === 0 && ts.isPropertyAccessExpression(source.expression)) {
+        source = unwrap(source.expression.expression);
+      }
       const isAccessChain =
         ts.isIdentifier(source) || ts.isPropertyAccessExpression(source) || ts.isElementAccessExpression(source);
       if (!isAccessChain) continue;
@@ -575,7 +1189,39 @@ function isBodyAssignment(node: ts.Node): node is ts.BinaryExpression {
  */
 function recordReachesCaller(lookup: Lookup, chain: ts.Node[]): boolean {
   if (lookup.mutating) return true;
-  return chain.some((fn) => reachesCallerWithin(lookup, fn));
+  if (chain.some((fn) => reachesCallerWithin(lookup, fn))) return true;
+  return chain.some((fn) => rowKeysAWrite(lookup, fn));
+}
+
+/**
+ * The row was not returned — it chose which row gets written.
+ *
+ *   const ticket = await prisma.ticket.findUnique({ where: { id: params.ticketId } })
+ *   …
+ *   await prisma.ticket.update({ where: { id: ticket.id }, data: { ownerId: recipient.id } })
+ *
+ * Nothing about the ticket reaches the response, so "does the record reach the caller"
+ * answered no and a transfer of somebody else's ticket read as clean. The read is the
+ * authorization decision: it fixes which row the write lands on, and a caller who can
+ * choose the identifier can choose the row. That is a strictly worse outcome than a
+ * disclosure, and it was the one shape this rule's two escape routes — the row is
+ * returned, or the lookup itself mutates — both missed, because the read and the write
+ * are separate calls.
+ *
+ * `ownershipChecked` still applies, so the correct two-step form (fetch, compare the
+ * owner against the caller, then write) stays silent.
+ */
+function rowKeysAWrite(lookup: Lookup, outer: ts.Node): boolean {
+  const names = resultNames(lookup, outer);
+  if (names.size === 0) return false;
+  const file = lookup.scope.file;
+  for (const call of collect(outer, ts.isCallExpression)) {
+    if (call === lookup.call) continue;
+    if (!WRITE_ONE.has(calleeTail(call).toLowerCase())) continue;
+    if (!isStoreCall(call, file)) continue;
+    if (collect(call, ts.isIdentifier).some((identifier) => names.has(identifier.text))) return true;
+  }
+  return false;
 }
 
 function reachesCallerWithin(lookup: Lookup, outer: ts.Node): boolean {
@@ -664,6 +1310,29 @@ function ownershipCheckedWithin(lookup: Lookup, outer: ts.Node): boolean {
     if (!mentionsRecord) continue;
     const sides = [comparison.left, comparison.right];
     if (!sides.some((side) => classify(side, lookup.scope) === "server")) continue;
+    /*
+     * The other side has to be the caller, not merely something the caller did not type.
+     *
+     * `classify` calls a row the store handed back "server", and it is right to: an id
+     * fetched under an ownership predicate and reused is the correct two-step pattern.
+     * But a row fetched under a predicate the *caller* supplied is server-origin and
+     * still caller-chosen, so comparing the record's owner against it constrains nothing:
+     *
+     *   const recipient = await prisma.account.upsert({ where: { email: body.email } });
+     *   if (recipient.id === ticket.ownerId) return status(409);
+     *
+     * That reads as an ownership check and is a duplicate-transfer check. The caller
+     * picks both sides, so it can never fail for the ticket they are stealing. This
+     * rule's own description is "compares an owner field of *this* record to the
+     * identity", and that is what is required here — the same `IDENTITY_SEGMENT` test
+     * the guard-call branch below already applies to its arguments.
+     */
+    const comparedToIdentity = sides.some((side) => {
+      const root = rootIdentifier(side);
+      if (root && IDENTITY_SEGMENT.test(root)) return true;
+      return pathSegments(side, lookup.scope).some((segment) => IDENTITY_SEGMENT.test(segment));
+    });
+    if (!comparedToIdentity) continue;
     const guard = enclosingIf(comparison, outer);
     if (guard) {
       if (branchTerminates(guard.thenStatement) || (guard.elseStatement && branchTerminates(guard.elseStatement))) {
@@ -679,11 +1348,32 @@ function ownershipCheckedWithin(lookup: Lookup, outer: ts.Node): boolean {
     if (call === lookup.call) continue;
     if (!governs(call, lookup.call, outer)) continue;
     const name = expressionName(call.expression);
-    const takesIdentifier = call.arguments.some((argument) => {
+    /*
+     * The check may be handed the key, or the row the key fetched.
+     *
+     * Reading only the key misses the commonest correct shape there is: fetch the
+     * row, learn which tenant it belongs to, then ask whether the caller belongs to
+     * that tenant.
+     *
+     *   const folder = await prisma.folder.findUnique({ where: { id } });
+     *   const membership = await getMembership(session.user.id, folder.workspaceId);
+     *   if (!membership) return NextResponse.json({ … }, { status: 404 });
+     *
+     * `getMembership` receives no argument rooted in `id`, so the old condition
+     * rejected it and the rule reported code that enforces the boundary twice.
+     * Check-after-fetch is not a weaker pattern than filtering by owner in the
+     * query — for a tenant derived from the row it is the only way to write it.
+     *
+     * Nothing else is relaxed: the call still has to govern the lookup, still has
+     * to receive the caller's identity, and still has to either be named as an
+     * authorization guard or gate the handler on its result.
+     */
+    const takesSubject = call.arguments.some((argument) => {
       const root = rootIdentifier(argument);
-      return Boolean(root && identifierRoot && root === identifierRoot);
+      if (!root) return false;
+      return (identifierRoot !== undefined && root === identifierRoot) || names.has(root);
     });
-    if (!takesIdentifier) continue;
+    if (!takesSubject) continue;
     const takesIdentity = call.arguments.some((argument) => {
       const root = rootIdentifier(argument);
       const segments = pathSegments(argument, lookup.scope);
@@ -694,6 +1384,56 @@ function ownershipCheckedWithin(lookup: Lookup, outer: ts.Node): boolean {
     if (!takesIdentity) continue;
     if (OBJECT_AUTHZ_GUARD.test(name)) return true;
     if (resultGatesHandler(call, outer, file)) return true;
+  }
+
+  /*
+   * A membership lookup: prove the caller belongs to the thing, then gate on the row.
+   *
+   *     const membership = await db.query.memberships.findFirst({
+   *       where: and(eq(memberships.workspaceId, workspaceId),
+   *                  eq(memberships.userId, session.userId)),
+   *     });
+   *     if (!membership) return { ok: false, message: "Workspace not found" };
+   *
+   * This is the canonical ownership check in a multi-tenant application, and none of
+   * the tests above see it: the guard is not a call *taking* the identity, it is a
+   * query *constraining* on it, so `rootIdentifier` of the sole argument is an object
+   * literal and answers nothing.
+   *
+   * It was invisible and the corpus did not show it, because the case that exercises it
+   * was silent for an unrelated reason — `namesOwner` was read off the predicate's raw
+   * text and the value happened to be called `workspaceId`, which matched
+   * `workspace_?id`. Fixing that revealed this. The luck was doing the work.
+   *
+   * Recognised by shape, and all four parts are required: a query that governs the
+   * statement, constraining one column with the caller's own identity **and** another
+   * with the value the statement addresses, whose falsy result stops the handler. The
+   * table's name is irrelevant — `memberships`, `collaborators`, `team_members`, or
+   * whatever the next application calls it.
+   */
+  const identifierRootName = identifierRoot;
+  for (const call of collect(outer, ts.isCallExpression)) {
+    if (call === lookup.call) continue;
+    if (!governs(call, lookup.call, outer)) continue;
+    if (!resultGatesHandler(call, outer, file)) continue;
+
+    const conditions: ts.Node[] = [];
+    for (const argument of call.arguments) {
+      const resolved = unwrap(argument);
+      if (ts.isObjectLiteralExpression(resolved)) conditions.push(...objectFilter(resolved, file));
+    }
+    if (conditions.length === 0) continue;
+    const pairs = conditions.flatMap((node) => filterPairs(node, file));
+    if (pairs.length < 2) continue;
+
+    const provesCaller = pairs.some((pair) => identityValue(pair.value, lookup.scope));
+    if (!provesCaller) continue;
+    const provesSubject = pairs.some((pair) => {
+      const root = rootIdentifier(pair.value);
+      if (!root) return false;
+      return (identifierRootName !== undefined && root === identifierRootName) || names.has(root);
+    });
+    if (provesSubject) return true;
   }
 
   return false;
@@ -732,12 +1472,39 @@ function resultGatesHandler(call: ts.CallExpression, outer: ts.Node, file: Parse
  * reads only the handler body cannot tell an authenticated route from an anonymous
  * one — and cannot tell an authorised one from either.
  */
-function surroundingText(context: RuleContext, chain: ts.Node[]): string {
+/**
+ * Text around a handler that might carry its guard.
+ *
+ * `includeImports` decides whether the file's import statements count, and the two
+ * callers want opposite answers.
+ *
+ * An import proves that a name is *available*, never that this handler used it. Fed
+ * to `OBJECT_AUTHZ_GUARD` it silences the rule for every handler in the file as soon
+ * as any one line imports `requireMembership` — which is the single commonest shape
+ * a real object-ownership defect takes: one route in the file checks membership, the
+ * route next to it forgot, and the file imports the helper because the careful route
+ * needs it. holdout-5 contains exactly that, its author said so in as many words,
+ * and this engine was silent on it.
+ *
+ * Fed to `IDENTITY_EVIDENCE` the same text is harmless, because that test only ever
+ * *enables* a report: it establishes that the file is authenticated code at all, and
+ * an import of `requireSession` is fair evidence of that. So imports go to the
+ * enabling test and not to the suppressing one.
+ */
+function surroundingText(context: RuleContext, chain: ts.Node[], includeImports: boolean): string {
   const parts: string[] = [];
   // Every level of the chain, because the guard can sit on any of them: a Fastify
   // route options object wraps the handler, a tRPC builder wraps the resolver, and
   // an Express registration wraps both inside an outer plugin function.
   for (const fn of chain) {
+    // A decorator-routed handler declares its middleware above itself rather than
+    // around itself: `@UseGuards(WorkspaceMemberGuard)` on the method or on the
+    // class is the same statement Express writes as `app.use(...)`, and a walk that
+    // only goes outwards through calls never sees it.
+    for (const node of [fn, ...enclosingClasses(fn)]) {
+      const decorators = (ts.canHaveDecorators(node) ? ts.getDecorators(node) : undefined) ?? [];
+      for (const decorator of decorators) parts.push(decorator.getText(context.file.source));
+    }
     let current: ts.Node | undefined = fn.parent;
     while (current && !ts.isSourceFile(current)) {
       if (ts.isCallExpression(current)) {
@@ -753,9 +1520,22 @@ function surroundingText(context: RuleContext, chain: ts.Node[]): string {
   for (const statement of context.file.source.statements) {
     const text = statement.getText(context.file.source);
     if (text.length > 400) continue;
-    if (ts.isImportDeclaration(statement) || /\.\s*(use|addHook|register|decorate)\s*\(/.test(text)) parts.push(text);
+    // A registration applies the guard; an import only makes it reachable.
+    if (/\.\s*(use|addHook|register|decorate)\s*\(/.test(text)) parts.push(text);
+    else if (includeImports && ts.isImportDeclaration(statement)) parts.push(text);
   }
   return parts.join("  ");
+}
+
+/** The class declarations a handler sits inside, innermost first. */
+function enclosingClasses(node: ts.Node): ts.Node[] {
+  const found: ts.Node[] = [];
+  let current: ts.Node | undefined = node.parent;
+  while (current) {
+    if (ts.isClassLike(current)) found.push(current);
+    current = current.parent;
+  }
+  return found;
 }
 
 /**
@@ -768,8 +1548,7 @@ function surroundingText(context: RuleContext, chain: ts.Node[]): string {
 function routeOf(context: RuleContext, node: ts.Node): string | undefined {
   const hint = routeHintFor(context, node);
   if (!hint) return undefined;
-  if (hint.method === "ANY" || !hint.path.startsWith("/")) return hint.path;
-  return `${hint.method} ${hint.path}`;
+  return formatRoute(hint.method, hint.path);
 }
 
 /* ---------------------------------------------------------------- corroboration */
@@ -809,7 +1588,7 @@ export const recordScopedToCaller: Rule = {
     const reported = new Set<number>();
 
     for (const call of collect(context.file.source, ts.isCallExpression)) {
-      const scope = buildScope(context.file, call);
+      const scope = buildScope(context.file, call, context.taintedParameters);
       const chain = scope.functions;
       // A statement at module scope is initialisation, not a request handler.
       if (chain.length === 0) continue;
@@ -817,17 +1596,33 @@ export const recordScopedToCaller: Rule = {
       const lookup = lookupAt(call, context, scope);
       if (!lookup) continue;
       if (predicateIsScoped(lookup)) continue;
+      if (scopeProvenForCaller(lookup, chain)) continue;
       if (collectionScopedToCaller(call, scope)) continue;
+
+      /*
+       * The middleware the route was registered behind, wherever the registration is
+       * written. A layered application puts `router.get(path, requireAuth, show)` in one
+       * module and `show` in another, and read one file at a time the controller has no
+       * identity and no guard. `engine/handlers.ts` carries both across.
+       */
+      const gate = registrationGate(context.file, chain);
+      const gateNames = gate ? gate.names.join("  ") : "";
 
       // Without an established identity there is no ownership relationship to get
       // wrong: an anonymous endpoint is a different finding, from a different rule.
-      const around = surroundingText(context, chain);
       const handlers = chain.map((fn) => fn.getText(context.file.source)).join("  ");
-      if (!IDENTITY_EVIDENCE.test(`${handlers}  ${around}`)) continue;
+      if (
+        !IDENTITY_EVIDENCE.test(`${handlers}  ${surroundingText(context, chain, true)}  ${gateNames}`) &&
+        !identityEstablished(scope) &&
+        !gate?.authenticates
+      ) {
+        continue;
+      }
 
       // A route that declares an object-level guard has done this check outside the
-      // query. `requireUser` is not one of those; `requireProjectMember` is.
-      if (OBJECT_AUTHZ_GUARD.test(around)) continue;
+      // query. `requireUser` is not one of those; `requireProjectMember` is. Imports
+      // are excluded here: see `surroundingText`.
+      if (OBJECT_AUTHZ_GUARD.test(`${surroundingText(context, chain, false)}  ${gateNames}`)) continue;
 
       if (!recordReachesCaller(lookup, chain)) continue;
       if (ownershipChecked(lookup, chain)) continue;

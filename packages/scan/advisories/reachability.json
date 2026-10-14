@@ -1,0 +1,155 @@
+{
+  "description": "Curated reachability for advisories in the offline snapshot. For each advisory (GHSA id), the module exports whose code is vulnerable (`exports`, named as an application imports them: `merge` for `import { merge } from \"lodash\"` or `_.merge`, `default` for a module that is itself the function), the subpath modules that are the same code (`subpaths`), or, where the vulnerable code is a method on an object the package returns, the method names (`members`, a weaker signal reported at lower severity). An advisory with none of these is never reported as reached: reachability for it is unknown, and it is listed as present instead. Every key must match an advisory in the snapshot; `pnpm advisories:update` names any that do not.",
+  "advisories": {
+    "GHSA-29mw-wpgm-hmr9": { "package": "lodash", "exports": ["toNumber", "trim", "trimEnd"], "subpaths": ["lodash/toNumber", "lodash/trim", "lodash/trimEnd"] },
+    "GHSA-35jh-r3h4-6jhm": { "package": "lodash", "exports": ["template"], "subpaths": ["lodash/template"] },
+    "GHSA-r5fr-rjxr-66jc": { "package": "lodash", "exports": ["template"], "subpaths": ["lodash/template"] },
+    "GHSA-4xc9-xhrj-v574": { "package": "lodash", "exports": ["merge", "mergeWith", "defaultsDeep"], "subpaths": ["lodash/merge", "lodash/mergeWith", "lodash/defaultsDeep"] },
+    "GHSA-fvqr-27wr-82fm": { "package": "lodash", "exports": ["merge", "mergeWith", "defaultsDeep"], "subpaths": ["lodash/merge", "lodash/mergeWith", "lodash/defaultsDeep"] },
+    "GHSA-jf85-cpcp-j695": { "package": "lodash", "exports": ["defaultsDeep", "merge", "mergeWith"], "subpaths": ["lodash/defaultsDeep", "lodash/merge", "lodash/mergeWith"] },
+    "GHSA-p6mc-m468-83gw": { "package": "lodash", "exports": ["zipObjectDeep", "set", "setWith"], "subpaths": ["lodash/zipObjectDeep", "lodash/set", "lodash/setWith"] },
+    "GHSA-xxjr-mmjv-4gpg": { "package": "lodash", "exports": ["unset", "omit"], "subpaths": ["lodash/unset", "lodash/omit"] },
+
+    "GHSA-2m96-9w4j-wgv7": { "package": "lodash.merge", "exports": ["default"] },
+    "GHSA-h726-x36v-rx45": { "package": "lodash.merge", "exports": ["default"] },
+
+    "GHSA-vh95-rmgr-6w4m": { "package": "minimist", "exports": ["default"] },
+    "GHSA-xvch-5gv4-984h": { "package": "minimist", "exports": ["default"] },
+
+    "GHSA-8cf7-32gw-wr33": { "package": "jsonwebtoken", "exports": ["verify", "sign"] },
+    "GHSA-hjrf-2m68-5959": { "package": "jsonwebtoken", "exports": ["verify"] },
+    "GHSA-qwph-4952-7xr6": { "package": "jsonwebtoken", "exports": ["verify"] },
+    "GHSA-c7hr-j4mj-j2w6": { "package": "jsonwebtoken", "exports": ["verify"] },
+
+    "GHSA-4w2v-q235-vp99": { "package": "axios", "exports": ["default", "get", "post", "put", "patch", "delete", "head", "options", "request", "create"] },
+    "GHSA-8hc4-vh64-cxmj": { "package": "axios", "exports": ["default", "get", "post", "put", "patch", "delete", "head", "options", "request", "create"] },
+    "GHSA-jr5f-v2jv-69x6": { "package": "axios", "exports": ["default", "get", "post", "put", "patch", "delete", "head", "options", "request", "create"] },
+    "GHSA-cph5-m8f7-6c5x": { "package": "axios", "exports": ["default", "get", "post", "put", "patch", "delete", "head", "options", "request", "create"] },
+    "GHSA-42xw-2xvc-qx8m": { "package": "axios", "exports": ["default", "get", "post", "put", "patch", "delete", "head", "options", "request", "create"] },
+    "GHSA-4hjh-wcwx-xvwj": { "package": "axios", "exports": ["default", "get", "post", "put", "patch", "delete", "head", "options", "request", "create"] },
+
+    "GHSA-r683-j2x4-v87g": { "package": "node-fetch", "exports": ["default"] },
+    "GHSA-vp56-6g26-6827": { "package": "node-fetch", "exports": ["default"] },
+    "GHSA-w7rc-rwvf-8q5r": { "package": "node-fetch", "exports": ["default"] },
+
+    "GHSA-qw6h-vgh9-j6wx": { "package": "express", "members": ["redirect"] },
+    "GHSA-rv95-896h-c2vc": { "package": "express", "members": ["redirect", "location"] },
+
+    "GHSA-hrpp-h998-j3pp": { "package": "qs", "exports": ["parse"] },
+    "GHSA-gqgv-6jq5-jjj9": { "package": "qs", "exports": ["parse"] },
+    "GHSA-6rw7-vpxm-498p": { "package": "qs", "exports": ["parse"] },
+    "GHSA-w7fw-mjwx-w883": { "package": "qs", "exports": ["parse"] },
+    "GHSA-x5fp-wj9c-mxmx": { "package": "qs", "exports": ["parse"] },
+    "GHSA-q8mj-m7cp-5q26": { "package": "qs", "exports": ["stringify"] },
+
+    "GHSA-c2qf-rxjj-qqgw": { "package": "semver", "exports": ["Range", "satisfies", "validRange", "maxSatisfying", "minSatisfying", "minVersion", "outside", "gtr", "ltr", "intersects", "subset", "simplifyRange"] },
+
+    "GHSA-3jfq-g458-7qm9": { "package": "tar", "exports": ["extract", "x", "Unpack", "UnpackSync"] },
+    "GHSA-5955-9wpr-37jh": { "package": "tar", "exports": ["extract", "x", "Unpack", "UnpackSync"] },
+    "GHSA-9r2w-394v-53qc": { "package": "tar", "exports": ["extract", "x", "Unpack", "UnpackSync"] },
+    "GHSA-qq89-hq3f-393p": { "package": "tar", "exports": ["extract", "x", "Unpack", "UnpackSync"] },
+    "GHSA-r628-mhmh-qjhw": { "package": "tar", "exports": ["extract", "x", "Unpack", "UnpackSync"] },
+    "GHSA-j44m-qm6p-hp7m": { "package": "tar", "exports": ["extract", "x", "Unpack", "UnpackSync"] },
+    "GHSA-34x7-hfp2-rc4v": { "package": "tar", "exports": ["extract", "x", "Unpack", "UnpackSync"] },
+    "GHSA-83g3-92jg-28cx": { "package": "tar", "exports": ["extract", "x", "Unpack", "UnpackSync"] },
+    "GHSA-8qq5-rm4j-mr97": { "package": "tar", "exports": ["extract", "x", "Unpack", "UnpackSync"] },
+    "GHSA-9ppj-qmqm-q256": { "package": "tar", "exports": ["extract", "x", "Unpack", "UnpackSync"] },
+    "GHSA-qffp-2rhf-9h96": { "package": "tar", "exports": ["extract", "x", "Unpack", "UnpackSync"] },
+    "GHSA-r6q2-hw4h-h46w": { "package": "tar", "exports": ["extract", "x", "Unpack", "UnpackSync"] },
+    "GHSA-f5x3-32g6-xq36": { "package": "tar", "exports": ["extract", "x", "list", "t", "Parse", "Unpack", "UnpackSync"] },
+
+    "GHSA-3h5v-q93c-6h6q": { "package": "ws", "exports": ["Server", "WebSocketServer"] },
+    "GHSA-6fc8-4gx4-v693": { "package": "ws", "exports": ["Server", "WebSocketServer"] },
+    "GHSA-96hv-2xvq-fx4p": { "package": "ws", "exports": ["default", "WebSocket", "Server", "WebSocketServer"] },
+
+    "GHSA-q4v7-4rhw-9hqm": { "package": "node-serialize", "exports": ["unserialize"] },
+
+    "GHSA-xxvw-45rp-3mj2": { "package": "js-yaml", "exports": ["load"] },
+    "GHSA-8j8c-7jfh-h6hx": { "package": "js-yaml", "exports": ["load", "safeLoad"] },
+    "GHSA-mh29-5h37-fv8m": { "package": "js-yaml", "exports": ["load", "loadAll"] },
+
+    "GHSA-f2jv-r9rf-7988": { "package": "handlebars", "exports": ["compile", "precompile"] },
+    "GHSA-765h-qjxv-5f44": { "package": "handlebars", "exports": ["compile", "precompile"] },
+    "GHSA-3cqr-58rm-57f8": { "package": "handlebars", "exports": ["compile", "precompile"] },
+    "GHSA-2cf5-4w76-r9qv": { "package": "handlebars", "exports": ["compile", "precompile"] },
+    "GHSA-q2c6-c6pm-g3gh": { "package": "handlebars", "exports": ["compile", "precompile"] },
+    "GHSA-g9r4-xpmj-mj65": { "package": "handlebars", "exports": ["compile", "precompile"] },
+    "GHSA-q42p-pg8m-cqh6": { "package": "handlebars", "exports": ["compile", "precompile"] },
+    "GHSA-w457-6q6x-cgp9": { "package": "handlebars", "exports": ["compile", "precompile"] },
+    "GHSA-2w6w-674q-4c4q": { "package": "handlebars", "exports": ["compile", "precompile"] },
+    "GHSA-8r5x-fm3f-whwj": { "package": "handlebars", "exports": ["compile", "precompile"] },
+    "GHSA-p8wg-vrv2-v86f": { "package": "handlebars", "exports": ["compile", "precompile"] },
+    "GHSA-xhpv-hc6g-r9c6": { "package": "handlebars", "exports": ["compile", "precompile"] },
+    "GHSA-3mfm-83xf-c92r": { "package": "handlebars", "exports": ["compile", "precompile"] },
+    "GHSA-2qvq-rjwj-gvw9": { "package": "handlebars", "exports": ["compile", "precompile"] },
+    "GHSA-62gr-4qp9-h98f": { "package": "handlebars", "exports": ["compile", "precompile"] },
+
+    "GHSA-cf4h-3jhx-xvhq": { "package": "underscore", "exports": ["template"] },
+    "GHSA-qpx9-hpmf-5gmw": { "package": "underscore", "exports": ["flatten", "isEqual"] },
+
+    "GHSA-776f-qx25-q3cc": { "package": "xml2js", "exports": ["parseString", "parseStringPromise", "Parser"] },
+    "GHSA-9c47-m6qq-7p4h": { "package": "json5", "exports": ["parse"] },
+
+    "GHSA-4g88-fppr-53pp": { "package": "set-value", "exports": ["default"] },
+    "GHSA-4jqc-8m5r-9rpr": { "package": "set-value", "exports": ["default"] },
+    "GHSA-ff7x-qrg7-qggm": { "package": "dot-prop", "exports": ["set", "setProperty"] },
+    "GHSA-3mpr-hq3p-49h9": { "package": "mixin-deep", "exports": ["default"] },
+    "GHSA-fhjf-83wg-r2j9": { "package": "mixin-deep", "exports": ["default"] },
+    "GHSA-8v63-cqqc-6r2c": { "package": "object-path", "exports": ["set", "ensureExists", "insert", "push"] },
+    "GHSA-cwx2-736x-mf6w": { "package": "object-path", "exports": ["set", "ensureExists", "insert", "push"] },
+    "GHSA-v39p-96qg-c8rf": { "package": "object-path", "exports": ["set", "ensureExists", "insert", "push"] },
+    "GHSA-2j2x-2gpw-g8fm": { "package": "flat", "exports": ["unflatten"] },
+
+    "GHSA-g4rg-993r-mgx7": { "package": "shell-quote", "exports": ["quote"] },
+    "GHSA-pqg4-j6r4-53mv": { "package": "shell-quote", "exports": ["quote"] },
+    "GHSA-qg8p-v9q4-gh34": { "package": "shell-quote", "exports": ["quote"] },
+    "GHSA-w7jw-789q-3m8p": { "package": "shell-quote", "exports": ["quote"] },
+    "GHSA-395f-4hp3-45gv": { "package": "shell-quote", "exports": ["parse"] },
+
+    "GHSA-hxcc-f52p-wc94": { "package": "serialize-javascript", "exports": ["default"] },
+    "GHSA-5c6j-r48x-rmvq": { "package": "serialize-javascript", "exports": ["default"] },
+    "GHSA-h9rv-jmmf-4pgx": { "package": "serialize-javascript", "exports": ["default"] },
+    "GHSA-76p7-773f-r4q5": { "package": "serialize-javascript", "exports": ["default"] },
+
+    "GHSA-phwq-j96m-2c2q": { "package": "ejs", "exports": ["render", "renderFile", "compile"] },
+    "GHSA-3w5v-p54c-f74x": { "package": "ejs", "exports": ["render", "renderFile", "compile"] },
+    "GHSA-p493-635q-r6gr": { "package": "pug", "exports": ["compile", "compileFile", "render", "renderFile"] },
+    "GHSA-3965-hpx2-q597": { "package": "pug", "exports": ["compile", "compileClient", "compileFileClient", "compileClientWithDependenciesTracked"] },
+
+    "GHSA-8hfj-j24r-96c4": { "package": "moment", "exports": ["locale"] },
+    "GHSA-wc69-rhjr-hc9g": { "package": "moment", "exports": ["default"] },
+
+    "GHSA-pppg-cpfq-h7wr": { "package": "jsonpath-plus", "exports": ["JSONPath"] },
+    "GHSA-hw8r-x6gr-5gjp": { "package": "jsonpath-plus", "exports": ["JSONPath"] },
+
+    "GHSA-xwcq-pm8m-c4vf": { "package": "crypto-js", "exports": ["PBKDF2"], "subpaths": ["crypto-js/pbkdf2"] },
+    "GHSA-2p57-rm9w-gvfp": { "package": "ip", "exports": ["isPublic", "isPrivate"] },
+    "GHSA-78xj-cgh5-2h22": { "package": "ip", "exports": ["isPublic", "isPrivate"] },
+
+    "GHSA-jv3g-j58f-9mq9": { "package": "jose", "exports": ["compactDecrypt", "flattenedDecrypt", "generalDecrypt", "jwtDecrypt"] },
+    "GHSA-hhhv-q57g-882q": { "package": "jose", "exports": ["compactDecrypt", "flattenedDecrypt", "generalDecrypt", "jwtDecrypt"] },
+
+    "GHSA-v923-w3x8-wh69": { "package": "passport", "members": ["logIn", "login"] },
+    "GHSA-9wcg-jrwf-8gg7": { "package": "express-fileupload", "exports": ["default"] },
+
+    "GHSA-6w63-h3fj-q4vw": { "package": "fast-xml-parser", "exports": ["XMLParser"] },
+    "GHSA-jmr7-xgp7-cmfj": { "package": "fast-xml-parser", "exports": ["XMLParser"] },
+    "GHSA-8gc5-j5rx-235r": { "package": "fast-xml-parser", "exports": ["XMLParser"] },
+    "GHSA-m7jm-9gc2-mpf2": { "package": "fast-xml-parser", "exports": ["XMLParser"] },
+    "GHSA-mpg4-rc92-vx8v": { "package": "fast-xml-parser", "exports": ["XMLParser"] },
+    "GHSA-x3cc-x39p-42qx": { "package": "fast-xml-parser", "exports": ["parse", "XMLParser"] },
+
+    "GHSA-36fh-84j7-cv5h": { "package": "jszip", "members": ["loadAsync"] },
+    "GHSA-jg8v-48h5-wgxg": { "package": "jszip", "members": ["loadAsync"] },
+    "GHSA-3v6h-hqm4-2rg6": { "package": "adm-zip", "members": ["extractAllTo", "extractEntryTo"] },
+    "GHSA-vwc7-r8mq-g2x9": { "package": "adm-zip", "members": ["extractAllTo", "extractEntryTo"] },
+
+    "GHSA-9m93-w8w6-76hh": { "package": "mongoose", "members": ["findByIdAndUpdate", "findOneAndUpdate", "updateOne", "updateMany"] },
+    "GHSA-m7xq-9374-9rvx": { "package": "mongoose", "members": ["populate"] },
+    "GHSA-vg7j-7cwx-8wgw": { "package": "mongoose", "members": ["populate"] },
+
+    "GHSA-qwcr-r2fm-qrc7": { "package": "body-parser", "exports": ["urlencoded"] },
+    "GHSA-pxg6-pf52-xh8x": { "package": "cookie", "exports": ["serialize"] },
+    "GHSA-cgfm-xwp7-2cvr": { "package": "sanitize-html", "exports": ["default"] }
+  }
+}

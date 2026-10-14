@@ -241,6 +241,30 @@
       "kind": "safe",
       "pairedWith": "fastify-notification-preferences-save",
       "why": "Every route in the file, the write included, runs authenticate and requireSelf in its preHandler chain and keys the statement on request.user.accountId rather than the path parameter, so an anonymous or third-party caller cannot reach the record."
+    },
+    {
+      "id": "fastify-order-insights-status",
+      "family": "fastify",
+      "architecture": "Fastify 4 plugin modules exporting `async function (fastify, options)`, with preHandler authentication decorators, JSON schema validation, @fastify/multipart uploads, @fastify/cookie sessions, and MongoDB collections or a Postgres pool for storage",
+      "language": "javascript",
+      "file": "fastify/order-insights.js",
+      "kind": "vulnerable",
+      "category": "nosql_injection",
+      "severityBand": ["medium", "high"],
+      "route": "POST /insights/orders",
+      "line": 17,
+      "lineRange": [13, 17],
+      "runtimeVerifiable": true,
+      "why": "The status from the JSON body goes into the $match stage unchecked. A body of {\"status\": {\"$ne\": null}} or a $regex operator replaces the equality test, so the filter the dashboard promises is whatever the caller sends."
+    },
+    {
+      "id": "fastify-order-trends-status",
+      "family": "fastify",
+      "language": "javascript",
+      "file": "fastify/order-trends.js",
+      "kind": "safe",
+      "pairedWith": "fastify-order-insights-status",
+      "why": "The same aggregation, but the status is coerced to a string and must be one of the known statuses, so no operator object can reach the $match stage."
     }
   ]
 }

@@ -117,6 +117,61 @@ export interface Finding {
   fixHistory?: FixHistoryEntry[];
   firstSeenAt?: string;
   tags?: string[];
+  /** Standard references derived from the category when the report was built. */
+  compliance?: FindingCompliance;
+  /** Present only when the scan was compared against a committed baseline. */
+  baselineState?: BaselineState;
+}
+
+export interface FindingCompliance {
+  /** `CWE-89`, primary first. */
+  cwe: string[];
+  /** `A03:2021`. */
+  owasp2021: string[];
+  /** `A05:2025`. */
+  owasp2025: string[];
+  /** ASVS's versioned notation: `v4.0.3-5.3.4`, `v5.0.0-1.2.4`. */
+  asvs: string[];
+}
+
+export type BaselineState = "new" | "unchanged";
+
+export interface VerdictFixItem {
+  findingId: string;
+  title: string;
+  severity: Severity;
+  verification: Verification;
+  location: string;
+  route?: string;
+  why: string;
+  fixPrompt: string;
+}
+
+export interface ReportVerdictRecord {
+  tone: "verified_risk" | "unverified_risk" | "clear" | "settled" | "withheld";
+  headline: string;
+  detail?: string;
+  runMode: "agent" | "static_only" | "unattributed";
+  nextStep?: string;
+  caveat: string;
+  fixFirst: VerdictFixItem[];
+}
+
+export interface BaselineEntryRecord {
+  fingerprint: string;
+  category: string;
+  title: string;
+  severity: Severity;
+  file?: string;
+  route?: string;
+}
+
+export interface ReportBaselineRecord {
+  createdAt: string;
+  fromReportId?: string;
+  counts: { new: number; unchanged: number; fixed: number };
+  /** Known at baseline and not present in this scan. */
+  fixed: BaselineEntryRecord[];
 }
 
 export type ScanPhase =
@@ -222,6 +277,9 @@ export interface ScanReport {
   coverageAreas?: CoverageArea[];
   limitations: string[];
   methodologyVersion?: string;
+  /** Verdict-first summary; renderers recompute it and never trust this copy. */
+  verdict?: ReportVerdictRecord;
+  baseline?: ReportBaselineRecord;
 }
 
 export type ScanEventType =

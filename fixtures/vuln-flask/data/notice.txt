@@ -1,0 +1,1 @@
+This directory is served by the fixture file endpoint. Nothing here is sensitive.

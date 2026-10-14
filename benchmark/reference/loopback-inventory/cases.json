@@ -1,0 +1,601 @@
+{
+  "family": "loopback-inventory",
+  "cases": [
+    {
+      "id": "ref-loopback-inventory-stock-search-filter",
+      "family": "loopback-inventory",
+      "architecture": "LoopBack 4 application in TypeScript: one controller class per screen, routes declared with @get/@post/@patch decorators and parameters bound by @param.path, @param.query, @param.filter and @requestBody; data access through DefaultCrudRepository over a PostgreSQL juggler datasource, with a raw `execute` escape hatch for the two aggregate reports; authentication is @authenticate('jwt') applied either on a class or on individual methods, and the caller is injected as @inject(SecurityBindings.USER), carrying roles and the operating company every stored row belongs to.",
+      "language": "typescript",
+      "file": "loopback-inventory/src/controllers/stock-search.controller.ts",
+      "scanAs": "src/controllers/stock-search.controller.ts",
+      "kind": "vulnerable",
+      "runtimeVerifiable": true,
+      "why": "`@param.filter` hands the caller's whole LoopBack filter to `repository.find` unchanged. Authentication proves the caller is a user of the product and nothing narrows the query to their company, so any token reads every company's SKUs, costs and supplier references — and the filter's own `where` can search them.",
+      "packageJson": {
+        "name": "northgate-warehouse",
+        "version": "3.2.0",
+        "private": true,
+        "scripts": {
+          "build": "lb-tsc",
+          "start": "node -r source-map-support/register .",
+          "migrate": "node ./dist/migrate"
+        },
+        "dependencies": {
+          "@loopback/authentication": "^11.0.9",
+          "@loopback/authentication-jwt": "^0.15.9",
+          "@loopback/boot": "^7.0.9",
+          "@loopback/core": "^6.1.6",
+          "@loopback/repository": "^7.0.9",
+          "@loopback/rest": "^14.0.9",
+          "@loopback/rest-explorer": "^7.0.9",
+          "@loopback/security": "^0.11.9",
+          "@loopback/service-proxy": "^7.0.9",
+          "loopback-connector-postgresql": "^7.1.6",
+          "tslib": "^2.8.1"
+        },
+        "devDependencies": {
+          "@loopback/build": "^11.0.8",
+          "@types/node": "^22.13.0",
+          "source-map-support": "^0.5.21",
+          "typescript": "~5.7.3"
+        }
+      },
+      "extraFiles": {
+        "src/lib/tenancy.ts": "import {HttpErrors} from '@loopback/rest';\nimport type {Filter, Where} from '@loopback/repository';\n\n/**\n * The caller LoopBack's authentication component resolved from the bearer token.\n *\n * Injected with `@inject(SecurityBindings.USER)`. It is the token's verified subject, never\n * a field from the request body or a header.\n */\nexport interface WarehouseUser {\n  id: string;\n  email: string;\n  roles: string[];\n  /** The operating company this account belongs to. Every stored row carries one. */\n  companyId: string;\n}\n\n/** A caller with no company cannot be scoped, so no query is built for them. */\nexport function companyOf(user: WarehouseUser | undefined): string {\n  if (!user) {\n    throw new HttpErrors.Unauthorized('Authentication required.');\n  }\n  if (!user.companyId) {\n    throw new HttpErrors.Forbidden('Your account is not attached to a company.');\n  }\n  return user.companyId;\n}\n\n/**\n * Pin a client-supplied filter to one company.\n *\n * The company clause is `and`-ed on top rather than merged into the caller's `where`, so a\n * caller cannot displace it by sending their own `companyId` — the two clauses both have to\n * hold. `include` is dropped: a relation traversal is a second query this function cannot\n * bound, and the controllers that need one ask for it explicitly.\n */\nexport function scopeFilter<T extends object>(\n  filter: Filter<T> | undefined,\n  companyId: string,\n): Filter<T> {\n  const callerWhere = filter?.where as Where<T> | undefined;\n  const scoped: Where<T> = (callerWhere\n    ? {and: [callerWhere, {companyId}]}\n    : {companyId}) as Where<T>;\n  const {include: _dropped, ...rest} = filter ?? {};\n  return {...rest, where: scoped} as Filter<T>;\n}\n\n/** Roles permitted to administer another account's record. */\nconst ADMIN_ROLES = new Set(['company-admin', 'platform-admin']);\n\nexport function requireAdmin(user: WarehouseUser | undefined): WarehouseUser {\n  if (!user) {\n    throw new HttpErrors.Unauthorized('Authentication required.');\n  }\n  if (!user.roles.some(role => ADMIN_ROLES.has(role))) {\n    throw new HttpErrors.Forbidden('Administrator role required.');\n  }\n  return user;\n}\n",
+        "src/repositories/stock.repository.ts": "import {DefaultCrudRepository, juggler} from '@loopback/repository';\nimport {inject} from '@loopback/core';\n\nexport interface StockItem {\n  id: string;\n  companyId: string;\n  sku: string;\n  description: string;\n  onHand: number;\n  unitCostCents: number;\n  supplierRef: string;\n}\n\nexport interface StockItemRelations {}\n\n/** Plain CRUD over the `stock_item` table on the PostgreSQL datasource. */\nexport class StockRepository extends DefaultCrudRepository<\n  StockItem,\n  typeof StockItem.prototype.id,\n  StockItemRelations\n> {\n  constructor(@inject('datasources.warehouse') dataSource: juggler.DataSource) {\n    super(Object.assign({}, {name: 'StockItem'}) as never, dataSource);\n  }\n\n  /** Escape hatch for the two reports whose shape the query builder cannot express. */\n  async raw<T>(sql: string, params: unknown[] = []): Promise<T[]> {\n    return this.dataSource.execute(sql, params) as Promise<T[]>;\n  }\n}\n\ndeclare namespace StockItem {\n  const prototype: {id: string};\n}\n"
+      },
+      "category": "cross_company_read_via_unscoped_client_filter",
+      "cwe": "CWE-639",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 31,
+      "lineRange": [
+        24,
+        33
+      ]
+    },
+    {
+      "id": "ref-loopback-inventory-catalogue-search-filter",
+      "family": "loopback-inventory",
+      "architecture": "LoopBack 4 application in TypeScript: one controller class per screen, routes declared with @get/@post/@patch decorators and parameters bound by @param.path, @param.query, @param.filter and @requestBody; data access through DefaultCrudRepository over a PostgreSQL juggler datasource, with a raw `execute` escape hatch for the two aggregate reports; authentication is @authenticate('jwt') applied either on a class or on individual methods, and the caller is injected as @inject(SecurityBindings.USER), carrying roles and the operating company every stored row belongs to.",
+      "language": "typescript",
+      "file": "loopback-inventory/src/controllers/catalogue-search.controller.ts",
+      "scanAs": "src/controllers/catalogue-search.controller.ts",
+      "kind": "safe",
+      "runtimeVerifiable": true,
+      "why": "The same client-supplied filter for the same kind of search, passed through `scopeFilter`, which `and`-s a company clause on top of the caller's `where` so the two must both hold and a caller-sent `companyId` cannot displace it. `include` is dropped because a relation traversal is a second query the helper cannot bound, and `companyOf` throws when the caller has no company rather than returning an unnarrowed filter.",
+      "packageJson": {
+        "name": "northgate-warehouse",
+        "version": "3.2.0",
+        "private": true,
+        "scripts": {
+          "build": "lb-tsc",
+          "start": "node -r source-map-support/register .",
+          "migrate": "node ./dist/migrate"
+        },
+        "dependencies": {
+          "@loopback/authentication": "^11.0.9",
+          "@loopback/authentication-jwt": "^0.15.9",
+          "@loopback/boot": "^7.0.9",
+          "@loopback/core": "^6.1.6",
+          "@loopback/repository": "^7.0.9",
+          "@loopback/rest": "^14.0.9",
+          "@loopback/rest-explorer": "^7.0.9",
+          "@loopback/security": "^0.11.9",
+          "@loopback/service-proxy": "^7.0.9",
+          "loopback-connector-postgresql": "^7.1.6",
+          "tslib": "^2.8.1"
+        },
+        "devDependencies": {
+          "@loopback/build": "^11.0.8",
+          "@types/node": "^22.13.0",
+          "source-map-support": "^0.5.21",
+          "typescript": "~5.7.3"
+        }
+      },
+      "extraFiles": {
+        "src/lib/tenancy.ts": "import {HttpErrors} from '@loopback/rest';\nimport type {Filter, Where} from '@loopback/repository';\n\n/**\n * The caller LoopBack's authentication component resolved from the bearer token.\n *\n * Injected with `@inject(SecurityBindings.USER)`. It is the token's verified subject, never\n * a field from the request body or a header.\n */\nexport interface WarehouseUser {\n  id: string;\n  email: string;\n  roles: string[];\n  /** The operating company this account belongs to. Every stored row carries one. */\n  companyId: string;\n}\n\n/** A caller with no company cannot be scoped, so no query is built for them. */\nexport function companyOf(user: WarehouseUser | undefined): string {\n  if (!user) {\n    throw new HttpErrors.Unauthorized('Authentication required.');\n  }\n  if (!user.companyId) {\n    throw new HttpErrors.Forbidden('Your account is not attached to a company.');\n  }\n  return user.companyId;\n}\n\n/**\n * Pin a client-supplied filter to one company.\n *\n * The company clause is `and`-ed on top rather than merged into the caller's `where`, so a\n * caller cannot displace it by sending their own `companyId` — the two clauses both have to\n * hold. `include` is dropped: a relation traversal is a second query this function cannot\n * bound, and the controllers that need one ask for it explicitly.\n */\nexport function scopeFilter<T extends object>(\n  filter: Filter<T> | undefined,\n  companyId: string,\n): Filter<T> {\n  const callerWhere = filter?.where as Where<T> | undefined;\n  const scoped: Where<T> = (callerWhere\n    ? {and: [callerWhere, {companyId}]}\n    : {companyId}) as Where<T>;\n  const {include: _dropped, ...rest} = filter ?? {};\n  return {...rest, where: scoped} as Filter<T>;\n}\n\n/** Roles permitted to administer another account's record. */\nconst ADMIN_ROLES = new Set(['company-admin', 'platform-admin']);\n\nexport function requireAdmin(user: WarehouseUser | undefined): WarehouseUser {\n  if (!user) {\n    throw new HttpErrors.Unauthorized('Authentication required.');\n  }\n  if (!user.roles.some(role => ADMIN_ROLES.has(role))) {\n    throw new HttpErrors.Forbidden('Administrator role required.');\n  }\n  return user;\n}\n",
+        "src/repositories/stock.repository.ts": "import {DefaultCrudRepository, juggler} from '@loopback/repository';\nimport {inject} from '@loopback/core';\n\nexport interface StockItem {\n  id: string;\n  companyId: string;\n  sku: string;\n  description: string;\n  onHand: number;\n  unitCostCents: number;\n  supplierRef: string;\n}\n\nexport interface StockItemRelations {}\n\n/** Plain CRUD over the `stock_item` table on the PostgreSQL datasource. */\nexport class StockRepository extends DefaultCrudRepository<\n  StockItem,\n  typeof StockItem.prototype.id,\n  StockItemRelations\n> {\n  constructor(@inject('datasources.warehouse') dataSource: juggler.DataSource) {\n    super(Object.assign({}, {name: 'StockItem'}) as never, dataSource);\n  }\n\n  /** Escape hatch for the two reports whose shape the query builder cannot express. */\n  async raw<T>(sql: string, params: unknown[] = []): Promise<T[]> {\n    return this.dataSource.execute(sql, params) as Promise<T[]>;\n  }\n}\n\ndeclare namespace StockItem {\n  const prototype: {id: string};\n}\n"
+      },
+      "pairedWith": "ref-loopback-inventory-stock-search-filter"
+    },
+    {
+      "id": "ref-loopback-inventory-account-admin-patch",
+      "family": "loopback-inventory",
+      "architecture": "LoopBack 4 application in TypeScript: one controller class per screen, routes declared with @get/@post/@patch decorators and parameters bound by @param.path, @param.query, @param.filter and @requestBody; data access through DefaultCrudRepository over a PostgreSQL juggler datasource, with a raw `execute` escape hatch for the two aggregate reports; authentication is @authenticate('jwt') applied either on a class or on individual methods, and the caller is injected as @inject(SecurityBindings.USER), carrying roles and the operating company every stored row belongs to.",
+      "language": "typescript",
+      "file": "loopback-inventory/src/controllers/account-admin.controller.ts",
+      "scanAs": "src/controllers/account-admin.controller.ts",
+      "kind": "vulnerable",
+      "runtimeVerifiable": true,
+      "why": "`@requestBody()` binds the whole account shape and the object is merged into the stored row, so a company administrator can send `{\"roles\": [\"platform-admin\"]}` and leave their own company's scope entirely, or move an account into another company by sending `companyId`. The role check gates who reaches the route, not what they may write, and the update matches on id alone so the id need not belong to the administrator's company.",
+      "packageJson": {
+        "name": "northgate-warehouse",
+        "version": "3.2.0",
+        "private": true,
+        "scripts": {
+          "build": "lb-tsc",
+          "start": "node -r source-map-support/register .",
+          "migrate": "node ./dist/migrate"
+        },
+        "dependencies": {
+          "@loopback/authentication": "^11.0.9",
+          "@loopback/authentication-jwt": "^0.15.9",
+          "@loopback/boot": "^7.0.9",
+          "@loopback/core": "^6.1.6",
+          "@loopback/repository": "^7.0.9",
+          "@loopback/rest": "^14.0.9",
+          "@loopback/rest-explorer": "^7.0.9",
+          "@loopback/security": "^0.11.9",
+          "@loopback/service-proxy": "^7.0.9",
+          "loopback-connector-postgresql": "^7.1.6",
+          "tslib": "^2.8.1"
+        },
+        "devDependencies": {
+          "@loopback/build": "^11.0.8",
+          "@types/node": "^22.13.0",
+          "source-map-support": "^0.5.21",
+          "typescript": "~5.7.3"
+        }
+      },
+      "extraFiles": {
+        "src/lib/tenancy.ts": "import {HttpErrors} from '@loopback/rest';\nimport type {Filter, Where} from '@loopback/repository';\n\n/**\n * The caller LoopBack's authentication component resolved from the bearer token.\n *\n * Injected with `@inject(SecurityBindings.USER)`. It is the token's verified subject, never\n * a field from the request body or a header.\n */\nexport interface WarehouseUser {\n  id: string;\n  email: string;\n  roles: string[];\n  /** The operating company this account belongs to. Every stored row carries one. */\n  companyId: string;\n}\n\n/** A caller with no company cannot be scoped, so no query is built for them. */\nexport function companyOf(user: WarehouseUser | undefined): string {\n  if (!user) {\n    throw new HttpErrors.Unauthorized('Authentication required.');\n  }\n  if (!user.companyId) {\n    throw new HttpErrors.Forbidden('Your account is not attached to a company.');\n  }\n  return user.companyId;\n}\n\n/**\n * Pin a client-supplied filter to one company.\n *\n * The company clause is `and`-ed on top rather than merged into the caller's `where`, so a\n * caller cannot displace it by sending their own `companyId` — the two clauses both have to\n * hold. `include` is dropped: a relation traversal is a second query this function cannot\n * bound, and the controllers that need one ask for it explicitly.\n */\nexport function scopeFilter<T extends object>(\n  filter: Filter<T> | undefined,\n  companyId: string,\n): Filter<T> {\n  const callerWhere = filter?.where as Where<T> | undefined;\n  const scoped: Where<T> = (callerWhere\n    ? {and: [callerWhere, {companyId}]}\n    : {companyId}) as Where<T>;\n  const {include: _dropped, ...rest} = filter ?? {};\n  return {...rest, where: scoped} as Filter<T>;\n}\n\n/** Roles permitted to administer another account's record. */\nconst ADMIN_ROLES = new Set(['company-admin', 'platform-admin']);\n\nexport function requireAdmin(user: WarehouseUser | undefined): WarehouseUser {\n  if (!user) {\n    throw new HttpErrors.Unauthorized('Authentication required.');\n  }\n  if (!user.roles.some(role => ADMIN_ROLES.has(role))) {\n    throw new HttpErrors.Forbidden('Administrator role required.');\n  }\n  return user;\n}\n",
+        "src/repositories/stock.repository.ts": "import {DefaultCrudRepository, juggler} from '@loopback/repository';\nimport {inject} from '@loopback/core';\n\nexport interface StockItem {\n  id: string;\n  companyId: string;\n  sku: string;\n  description: string;\n  onHand: number;\n  unitCostCents: number;\n  supplierRef: string;\n}\n\nexport interface StockItemRelations {}\n\n/** Plain CRUD over the `stock_item` table on the PostgreSQL datasource. */\nexport class StockRepository extends DefaultCrudRepository<\n  StockItem,\n  typeof StockItem.prototype.id,\n  StockItemRelations\n> {\n  constructor(@inject('datasources.warehouse') dataSource: juggler.DataSource) {\n    super(Object.assign({}, {name: 'StockItem'}) as never, dataSource);\n  }\n\n  /** Escape hatch for the two reports whose shape the query builder cannot express. */\n  async raw<T>(sql: string, params: unknown[] = []): Promise<T[]> {\n    return this.dataSource.execute(sql, params) as Promise<T[]>;\n  }\n}\n\ndeclare namespace StockItem {\n  const prototype: {id: string};\n}\n"
+      },
+      "category": "privilege_escalation_via_unfiltered_admin_patch",
+      "cwe": "CWE-915",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 40,
+      "lineRange": [
+        33,
+        43
+      ]
+    },
+    {
+      "id": "ref-loopback-inventory-profile-admin-patch",
+      "family": "loopback-inventory",
+      "architecture": "LoopBack 4 application in TypeScript: one controller class per screen, routes declared with @get/@post/@patch decorators and parameters bound by @param.path, @param.query, @param.filter and @requestBody; data access through DefaultCrudRepository over a PostgreSQL juggler datasource, with a raw `execute` escape hatch for the two aggregate reports; authentication is @authenticate('jwt') applied either on a class or on individual methods, and the caller is injected as @inject(SecurityBindings.USER), carrying roles and the operating company every stored row belongs to.",
+      "language": "typescript",
+      "file": "loopback-inventory/src/controllers/profile-admin.controller.ts",
+      "scanAs": "src/controllers/profile-admin.controller.ts",
+      "kind": "safe",
+      "runtimeVerifiable": true,
+      "why": "Same administrative patch behind the same role check, but the payload is reduced to the two administrable fields before it reaches the database, so neither `roles` nor `companyId` can be written, and the row is additionally matched on the administrator's own company so the id has to belong to it.",
+      "packageJson": {
+        "name": "northgate-warehouse",
+        "version": "3.2.0",
+        "private": true,
+        "scripts": {
+          "build": "lb-tsc",
+          "start": "node -r source-map-support/register .",
+          "migrate": "node ./dist/migrate"
+        },
+        "dependencies": {
+          "@loopback/authentication": "^11.0.9",
+          "@loopback/authentication-jwt": "^0.15.9",
+          "@loopback/boot": "^7.0.9",
+          "@loopback/core": "^6.1.6",
+          "@loopback/repository": "^7.0.9",
+          "@loopback/rest": "^14.0.9",
+          "@loopback/rest-explorer": "^7.0.9",
+          "@loopback/security": "^0.11.9",
+          "@loopback/service-proxy": "^7.0.9",
+          "loopback-connector-postgresql": "^7.1.6",
+          "tslib": "^2.8.1"
+        },
+        "devDependencies": {
+          "@loopback/build": "^11.0.8",
+          "@types/node": "^22.13.0",
+          "source-map-support": "^0.5.21",
+          "typescript": "~5.7.3"
+        }
+      },
+      "extraFiles": {
+        "src/lib/tenancy.ts": "import {HttpErrors} from '@loopback/rest';\nimport type {Filter, Where} from '@loopback/repository';\n\n/**\n * The caller LoopBack's authentication component resolved from the bearer token.\n *\n * Injected with `@inject(SecurityBindings.USER)`. It is the token's verified subject, never\n * a field from the request body or a header.\n */\nexport interface WarehouseUser {\n  id: string;\n  email: string;\n  roles: string[];\n  /** The operating company this account belongs to. Every stored row carries one. */\n  companyId: string;\n}\n\n/** A caller with no company cannot be scoped, so no query is built for them. */\nexport function companyOf(user: WarehouseUser | undefined): string {\n  if (!user) {\n    throw new HttpErrors.Unauthorized('Authentication required.');\n  }\n  if (!user.companyId) {\n    throw new HttpErrors.Forbidden('Your account is not attached to a company.');\n  }\n  return user.companyId;\n}\n\n/**\n * Pin a client-supplied filter to one company.\n *\n * The company clause is `and`-ed on top rather than merged into the caller's `where`, so a\n * caller cannot displace it by sending their own `companyId` — the two clauses both have to\n * hold. `include` is dropped: a relation traversal is a second query this function cannot\n * bound, and the controllers that need one ask for it explicitly.\n */\nexport function scopeFilter<T extends object>(\n  filter: Filter<T> | undefined,\n  companyId: string,\n): Filter<T> {\n  const callerWhere = filter?.where as Where<T> | undefined;\n  const scoped: Where<T> = (callerWhere\n    ? {and: [callerWhere, {companyId}]}\n    : {companyId}) as Where<T>;\n  const {include: _dropped, ...rest} = filter ?? {};\n  return {...rest, where: scoped} as Filter<T>;\n}\n\n/** Roles permitted to administer another account's record. */\nconst ADMIN_ROLES = new Set(['company-admin', 'platform-admin']);\n\nexport function requireAdmin(user: WarehouseUser | undefined): WarehouseUser {\n  if (!user) {\n    throw new HttpErrors.Unauthorized('Authentication required.');\n  }\n  if (!user.roles.some(role => ADMIN_ROLES.has(role))) {\n    throw new HttpErrors.Forbidden('Administrator role required.');\n  }\n  return user;\n}\n",
+        "src/repositories/stock.repository.ts": "import {DefaultCrudRepository, juggler} from '@loopback/repository';\nimport {inject} from '@loopback/core';\n\nexport interface StockItem {\n  id: string;\n  companyId: string;\n  sku: string;\n  description: string;\n  onHand: number;\n  unitCostCents: number;\n  supplierRef: string;\n}\n\nexport interface StockItemRelations {}\n\n/** Plain CRUD over the `stock_item` table on the PostgreSQL datasource. */\nexport class StockRepository extends DefaultCrudRepository<\n  StockItem,\n  typeof StockItem.prototype.id,\n  StockItemRelations\n> {\n  constructor(@inject('datasources.warehouse') dataSource: juggler.DataSource) {\n    super(Object.assign({}, {name: 'StockItem'}) as never, dataSource);\n  }\n\n  /** Escape hatch for the two reports whose shape the query builder cannot express. */\n  async raw<T>(sql: string, params: unknown[] = []): Promise<T[]> {\n    return this.dataSource.execute(sql, params) as Promise<T[]>;\n  }\n}\n\ndeclare namespace StockItem {\n  const prototype: {id: string};\n}\n"
+      },
+      "pairedWith": "ref-loopback-inventory-account-admin-patch"
+    },
+    {
+      "id": "ref-loopback-inventory-valuation-grouping",
+      "family": "loopback-inventory",
+      "architecture": "LoopBack 4 application in TypeScript: one controller class per screen, routes declared with @get/@post/@patch decorators and parameters bound by @param.path, @param.query, @param.filter and @requestBody; data access through DefaultCrudRepository over a PostgreSQL juggler datasource, with a raw `execute` escape hatch for the two aggregate reports; authentication is @authenticate('jwt') applied either on a class or on individual methods, and the caller is injected as @inject(SecurityBindings.USER), carrying roles and the operating company every stored row belongs to.",
+      "language": "typescript",
+      "file": "loopback-inventory/src/controllers/valuation-report.controller.ts",
+      "scanAs": "src/controllers/valuation-report.controller.ts",
+      "kind": "vulnerable",
+      "runtimeVerifiable": true,
+      "why": "`groupBy` and `direction` arrive as query parameters and are interpolated into the statement text, while only the company id is bound. A caller controls part of the SQL, so the grouping column can carry a subquery or a `UNION` that reads any table the datasource user can see — the `WHERE company_id = $1` clause bounds the rows this statement scans, not the statement.",
+      "packageJson": {
+        "name": "northgate-warehouse",
+        "version": "3.2.0",
+        "private": true,
+        "scripts": {
+          "build": "lb-tsc",
+          "start": "node -r source-map-support/register .",
+          "migrate": "node ./dist/migrate"
+        },
+        "dependencies": {
+          "@loopback/authentication": "^11.0.9",
+          "@loopback/authentication-jwt": "^0.15.9",
+          "@loopback/boot": "^7.0.9",
+          "@loopback/core": "^6.1.6",
+          "@loopback/repository": "^7.0.9",
+          "@loopback/rest": "^14.0.9",
+          "@loopback/rest-explorer": "^7.0.9",
+          "@loopback/security": "^0.11.9",
+          "@loopback/service-proxy": "^7.0.9",
+          "loopback-connector-postgresql": "^7.1.6",
+          "tslib": "^2.8.1"
+        },
+        "devDependencies": {
+          "@loopback/build": "^11.0.8",
+          "@types/node": "^22.13.0",
+          "source-map-support": "^0.5.21",
+          "typescript": "~5.7.3"
+        }
+      },
+      "extraFiles": {
+        "src/lib/tenancy.ts": "import {HttpErrors} from '@loopback/rest';\nimport type {Filter, Where} from '@loopback/repository';\n\n/**\n * The caller LoopBack's authentication component resolved from the bearer token.\n *\n * Injected with `@inject(SecurityBindings.USER)`. It is the token's verified subject, never\n * a field from the request body or a header.\n */\nexport interface WarehouseUser {\n  id: string;\n  email: string;\n  roles: string[];\n  /** The operating company this account belongs to. Every stored row carries one. */\n  companyId: string;\n}\n\n/** A caller with no company cannot be scoped, so no query is built for them. */\nexport function companyOf(user: WarehouseUser | undefined): string {\n  if (!user) {\n    throw new HttpErrors.Unauthorized('Authentication required.');\n  }\n  if (!user.companyId) {\n    throw new HttpErrors.Forbidden('Your account is not attached to a company.');\n  }\n  return user.companyId;\n}\n\n/**\n * Pin a client-supplied filter to one company.\n *\n * The company clause is `and`-ed on top rather than merged into the caller's `where`, so a\n * caller cannot displace it by sending their own `companyId` — the two clauses both have to\n * hold. `include` is dropped: a relation traversal is a second query this function cannot\n * bound, and the controllers that need one ask for it explicitly.\n */\nexport function scopeFilter<T extends object>(\n  filter: Filter<T> | undefined,\n  companyId: string,\n): Filter<T> {\n  const callerWhere = filter?.where as Where<T> | undefined;\n  const scoped: Where<T> = (callerWhere\n    ? {and: [callerWhere, {companyId}]}\n    : {companyId}) as Where<T>;\n  const {include: _dropped, ...rest} = filter ?? {};\n  return {...rest, where: scoped} as Filter<T>;\n}\n\n/** Roles permitted to administer another account's record. */\nconst ADMIN_ROLES = new Set(['company-admin', 'platform-admin']);\n\nexport function requireAdmin(user: WarehouseUser | undefined): WarehouseUser {\n  if (!user) {\n    throw new HttpErrors.Unauthorized('Authentication required.');\n  }\n  if (!user.roles.some(role => ADMIN_ROLES.has(role))) {\n    throw new HttpErrors.Forbidden('Administrator role required.');\n  }\n  return user;\n}\n",
+        "src/repositories/stock.repository.ts": "import {DefaultCrudRepository, juggler} from '@loopback/repository';\nimport {inject} from '@loopback/core';\n\nexport interface StockItem {\n  id: string;\n  companyId: string;\n  sku: string;\n  description: string;\n  onHand: number;\n  unitCostCents: number;\n  supplierRef: string;\n}\n\nexport interface StockItemRelations {}\n\n/** Plain CRUD over the `stock_item` table on the PostgreSQL datasource. */\nexport class StockRepository extends DefaultCrudRepository<\n  StockItem,\n  typeof StockItem.prototype.id,\n  StockItemRelations\n> {\n  constructor(@inject('datasources.warehouse') dataSource: juggler.DataSource) {\n    super(Object.assign({}, {name: 'StockItem'}) as never, dataSource);\n  }\n\n  /** Escape hatch for the two reports whose shape the query builder cannot express. */\n  async raw<T>(sql: string, params: unknown[] = []): Promise<T[]> {\n    return this.dataSource.execute(sql, params) as Promise<T[]>;\n  }\n}\n\ndeclare namespace StockItem {\n  const prototype: {id: string};\n}\n"
+      },
+      "category": "sql_injection_via_interpolated_grouping_column",
+      "cwe": "CWE-89",
+      "severityBand": [
+        "critical"
+      ],
+      "line": 39,
+      "lineRange": [
+        34,
+        43
+      ]
+    },
+    {
+      "id": "ref-loopback-inventory-turnover-grouping",
+      "family": "loopback-inventory",
+      "architecture": "LoopBack 4 application in TypeScript: one controller class per screen, routes declared with @get/@post/@patch decorators and parameters bound by @param.path, @param.query, @param.filter and @requestBody; data access through DefaultCrudRepository over a PostgreSQL juggler datasource, with a raw `execute` escape hatch for the two aggregate reports; authentication is @authenticate('jwt') applied either on a class or on individual methods, and the caller is injected as @inject(SecurityBindings.USER), carrying roles and the operating company every stored row belongs to.",
+      "language": "typescript",
+      "file": "loopback-inventory/src/controllers/turnover-report.controller.ts",
+      "scanAs": "src/controllers/turnover-report.controller.ts",
+      "kind": "safe",
+      "runtimeVerifiable": true,
+      "why": "The same two toolbar parameters for the same hand-written aggregate, but each one selects an entry from a table declared in this file, so the SQL that reaches the query is the file's and never the caller's. A value that is not a key is refused rather than defaulted, so an unexpected string cannot silently select a different column.",
+      "packageJson": {
+        "name": "northgate-warehouse",
+        "version": "3.2.0",
+        "private": true,
+        "scripts": {
+          "build": "lb-tsc",
+          "start": "node -r source-map-support/register .",
+          "migrate": "node ./dist/migrate"
+        },
+        "dependencies": {
+          "@loopback/authentication": "^11.0.9",
+          "@loopback/authentication-jwt": "^0.15.9",
+          "@loopback/boot": "^7.0.9",
+          "@loopback/core": "^6.1.6",
+          "@loopback/repository": "^7.0.9",
+          "@loopback/rest": "^14.0.9",
+          "@loopback/rest-explorer": "^7.0.9",
+          "@loopback/security": "^0.11.9",
+          "@loopback/service-proxy": "^7.0.9",
+          "loopback-connector-postgresql": "^7.1.6",
+          "tslib": "^2.8.1"
+        },
+        "devDependencies": {
+          "@loopback/build": "^11.0.8",
+          "@types/node": "^22.13.0",
+          "source-map-support": "^0.5.21",
+          "typescript": "~5.7.3"
+        }
+      },
+      "extraFiles": {
+        "src/lib/tenancy.ts": "import {HttpErrors} from '@loopback/rest';\nimport type {Filter, Where} from '@loopback/repository';\n\n/**\n * The caller LoopBack's authentication component resolved from the bearer token.\n *\n * Injected with `@inject(SecurityBindings.USER)`. It is the token's verified subject, never\n * a field from the request body or a header.\n */\nexport interface WarehouseUser {\n  id: string;\n  email: string;\n  roles: string[];\n  /** The operating company this account belongs to. Every stored row carries one. */\n  companyId: string;\n}\n\n/** A caller with no company cannot be scoped, so no query is built for them. */\nexport function companyOf(user: WarehouseUser | undefined): string {\n  if (!user) {\n    throw new HttpErrors.Unauthorized('Authentication required.');\n  }\n  if (!user.companyId) {\n    throw new HttpErrors.Forbidden('Your account is not attached to a company.');\n  }\n  return user.companyId;\n}\n\n/**\n * Pin a client-supplied filter to one company.\n *\n * The company clause is `and`-ed on top rather than merged into the caller's `where`, so a\n * caller cannot displace it by sending their own `companyId` — the two clauses both have to\n * hold. `include` is dropped: a relation traversal is a second query this function cannot\n * bound, and the controllers that need one ask for it explicitly.\n */\nexport function scopeFilter<T extends object>(\n  filter: Filter<T> | undefined,\n  companyId: string,\n): Filter<T> {\n  const callerWhere = filter?.where as Where<T> | undefined;\n  const scoped: Where<T> = (callerWhere\n    ? {and: [callerWhere, {companyId}]}\n    : {companyId}) as Where<T>;\n  const {include: _dropped, ...rest} = filter ?? {};\n  return {...rest, where: scoped} as Filter<T>;\n}\n\n/** Roles permitted to administer another account's record. */\nconst ADMIN_ROLES = new Set(['company-admin', 'platform-admin']);\n\nexport function requireAdmin(user: WarehouseUser | undefined): WarehouseUser {\n  if (!user) {\n    throw new HttpErrors.Unauthorized('Authentication required.');\n  }\n  if (!user.roles.some(role => ADMIN_ROLES.has(role))) {\n    throw new HttpErrors.Forbidden('Administrator role required.');\n  }\n  return user;\n}\n",
+        "src/repositories/stock.repository.ts": "import {DefaultCrudRepository, juggler} from '@loopback/repository';\nimport {inject} from '@loopback/core';\n\nexport interface StockItem {\n  id: string;\n  companyId: string;\n  sku: string;\n  description: string;\n  onHand: number;\n  unitCostCents: number;\n  supplierRef: string;\n}\n\nexport interface StockItemRelations {}\n\n/** Plain CRUD over the `stock_item` table on the PostgreSQL datasource. */\nexport class StockRepository extends DefaultCrudRepository<\n  StockItem,\n  typeof StockItem.prototype.id,\n  StockItemRelations\n> {\n  constructor(@inject('datasources.warehouse') dataSource: juggler.DataSource) {\n    super(Object.assign({}, {name: 'StockItem'}) as never, dataSource);\n  }\n\n  /** Escape hatch for the two reports whose shape the query builder cannot express. */\n  async raw<T>(sql: string, params: unknown[] = []): Promise<T[]> {\n    return this.dataSource.execute(sql, params) as Promise<T[]>;\n  }\n}\n\ndeclare namespace StockItem {\n  const prototype: {id: string};\n}\n"
+      },
+      "pairedWith": "ref-loopback-inventory-valuation-grouping"
+    },
+    {
+      "id": "ref-loopback-inventory-goods-receipt-book",
+      "family": "loopback-inventory",
+      "architecture": "LoopBack 4 application in TypeScript: one controller class per screen, routes declared with @get/@post/@patch decorators and parameters bound by @param.path, @param.query, @param.filter and @requestBody; data access through DefaultCrudRepository over a PostgreSQL juggler datasource, with a raw `execute` escape hatch for the two aggregate reports; authentication is @authenticate('jwt') applied either on a class or on individual methods, and the caller is injected as @inject(SecurityBindings.USER), carrying roles and the operating company every stored row belongs to.",
+      "language": "typescript",
+      "file": "loopback-inventory/src/controllers/goods-receipt.controller.ts",
+      "scanAs": "src/controllers/goods-receipt.controller.ts",
+      "kind": "vulnerable",
+      "runtimeVerifiable": true,
+      "why": "The class carries no `@authenticate` because the health probe has to answer the load balancer, so each route is decorated individually — and the booking route was not. An unauthenticated POST increments on-hand quantities for any SKU in any company, and the statement matches on `sku` alone with no company clause and no caller to derive one from.",
+      "packageJson": {
+        "name": "northgate-warehouse",
+        "version": "3.2.0",
+        "private": true,
+        "scripts": {
+          "build": "lb-tsc",
+          "start": "node -r source-map-support/register .",
+          "migrate": "node ./dist/migrate"
+        },
+        "dependencies": {
+          "@loopback/authentication": "^11.0.9",
+          "@loopback/authentication-jwt": "^0.15.9",
+          "@loopback/boot": "^7.0.9",
+          "@loopback/core": "^6.1.6",
+          "@loopback/repository": "^7.0.9",
+          "@loopback/rest": "^14.0.9",
+          "@loopback/rest-explorer": "^7.0.9",
+          "@loopback/security": "^0.11.9",
+          "@loopback/service-proxy": "^7.0.9",
+          "loopback-connector-postgresql": "^7.1.6",
+          "tslib": "^2.8.1"
+        },
+        "devDependencies": {
+          "@loopback/build": "^11.0.8",
+          "@types/node": "^22.13.0",
+          "source-map-support": "^0.5.21",
+          "typescript": "~5.7.3"
+        }
+      },
+      "extraFiles": {
+        "src/lib/tenancy.ts": "import {HttpErrors} from '@loopback/rest';\nimport type {Filter, Where} from '@loopback/repository';\n\n/**\n * The caller LoopBack's authentication component resolved from the bearer token.\n *\n * Injected with `@inject(SecurityBindings.USER)`. It is the token's verified subject, never\n * a field from the request body or a header.\n */\nexport interface WarehouseUser {\n  id: string;\n  email: string;\n  roles: string[];\n  /** The operating company this account belongs to. Every stored row carries one. */\n  companyId: string;\n}\n\n/** A caller with no company cannot be scoped, so no query is built for them. */\nexport function companyOf(user: WarehouseUser | undefined): string {\n  if (!user) {\n    throw new HttpErrors.Unauthorized('Authentication required.');\n  }\n  if (!user.companyId) {\n    throw new HttpErrors.Forbidden('Your account is not attached to a company.');\n  }\n  return user.companyId;\n}\n\n/**\n * Pin a client-supplied filter to one company.\n *\n * The company clause is `and`-ed on top rather than merged into the caller's `where`, so a\n * caller cannot displace it by sending their own `companyId` — the two clauses both have to\n * hold. `include` is dropped: a relation traversal is a second query this function cannot\n * bound, and the controllers that need one ask for it explicitly.\n */\nexport function scopeFilter<T extends object>(\n  filter: Filter<T> | undefined,\n  companyId: string,\n): Filter<T> {\n  const callerWhere = filter?.where as Where<T> | undefined;\n  const scoped: Where<T> = (callerWhere\n    ? {and: [callerWhere, {companyId}]}\n    : {companyId}) as Where<T>;\n  const {include: _dropped, ...rest} = filter ?? {};\n  return {...rest, where: scoped} as Filter<T>;\n}\n\n/** Roles permitted to administer another account's record. */\nconst ADMIN_ROLES = new Set(['company-admin', 'platform-admin']);\n\nexport function requireAdmin(user: WarehouseUser | undefined): WarehouseUser {\n  if (!user) {\n    throw new HttpErrors.Unauthorized('Authentication required.');\n  }\n  if (!user.roles.some(role => ADMIN_ROLES.has(role))) {\n    throw new HttpErrors.Forbidden('Administrator role required.');\n  }\n  return user;\n}\n",
+        "src/repositories/stock.repository.ts": "import {DefaultCrudRepository, juggler} from '@loopback/repository';\nimport {inject} from '@loopback/core';\n\nexport interface StockItem {\n  id: string;\n  companyId: string;\n  sku: string;\n  description: string;\n  onHand: number;\n  unitCostCents: number;\n  supplierRef: string;\n}\n\nexport interface StockItemRelations {}\n\n/** Plain CRUD over the `stock_item` table on the PostgreSQL datasource. */\nexport class StockRepository extends DefaultCrudRepository<\n  StockItem,\n  typeof StockItem.prototype.id,\n  StockItemRelations\n> {\n  constructor(@inject('datasources.warehouse') dataSource: juggler.DataSource) {\n    super(Object.assign({}, {name: 'StockItem'}) as never, dataSource);\n  }\n\n  /** Escape hatch for the two reports whose shape the query builder cannot express. */\n  async raw<T>(sql: string, params: unknown[] = []): Promise<T[]> {\n    return this.dataSource.execute(sql, params) as Promise<T[]>;\n  }\n}\n\ndeclare namespace StockItem {\n  const prototype: {id: string};\n}\n"
+      },
+      "category": "unauthenticated_stock_write_on_undecorated_route",
+      "cwe": "CWE-306",
+      "severityBand": [
+        "critical"
+      ],
+      "line": 50,
+      "lineRange": [
+        45,
+        64
+      ]
+    },
+    {
+      "id": "ref-loopback-inventory-goods-issue-book",
+      "family": "loopback-inventory",
+      "architecture": "LoopBack 4 application in TypeScript: one controller class per screen, routes declared with @get/@post/@patch decorators and parameters bound by @param.path, @param.query, @param.filter and @requestBody; data access through DefaultCrudRepository over a PostgreSQL juggler datasource, with a raw `execute` escape hatch for the two aggregate reports; authentication is @authenticate('jwt') applied either on a class or on individual methods, and the caller is injected as @inject(SecurityBindings.USER), carrying roles and the operating company every stored row belongs to.",
+      "language": "typescript",
+      "file": "loopback-inventory/src/controllers/goods-issue.controller.ts",
+      "scanAs": "src/controllers/goods-issue.controller.ts",
+      "kind": "safe",
+      "runtimeVerifiable": true,
+      "why": "The same per-method decoration around the same deliberately open health probe, with `@authenticate('jwt')` present on the write route, and the decrement matched on the caller's company as well as the sku so a valid token still cannot reach another company's row.",
+      "packageJson": {
+        "name": "northgate-warehouse",
+        "version": "3.2.0",
+        "private": true,
+        "scripts": {
+          "build": "lb-tsc",
+          "start": "node -r source-map-support/register .",
+          "migrate": "node ./dist/migrate"
+        },
+        "dependencies": {
+          "@loopback/authentication": "^11.0.9",
+          "@loopback/authentication-jwt": "^0.15.9",
+          "@loopback/boot": "^7.0.9",
+          "@loopback/core": "^6.1.6",
+          "@loopback/repository": "^7.0.9",
+          "@loopback/rest": "^14.0.9",
+          "@loopback/rest-explorer": "^7.0.9",
+          "@loopback/security": "^0.11.9",
+          "@loopback/service-proxy": "^7.0.9",
+          "loopback-connector-postgresql": "^7.1.6",
+          "tslib": "^2.8.1"
+        },
+        "devDependencies": {
+          "@loopback/build": "^11.0.8",
+          "@types/node": "^22.13.0",
+          "source-map-support": "^0.5.21",
+          "typescript": "~5.7.3"
+        }
+      },
+      "extraFiles": {
+        "src/lib/tenancy.ts": "import {HttpErrors} from '@loopback/rest';\nimport type {Filter, Where} from '@loopback/repository';\n\n/**\n * The caller LoopBack's authentication component resolved from the bearer token.\n *\n * Injected with `@inject(SecurityBindings.USER)`. It is the token's verified subject, never\n * a field from the request body or a header.\n */\nexport interface WarehouseUser {\n  id: string;\n  email: string;\n  roles: string[];\n  /** The operating company this account belongs to. Every stored row carries one. */\n  companyId: string;\n}\n\n/** A caller with no company cannot be scoped, so no query is built for them. */\nexport function companyOf(user: WarehouseUser | undefined): string {\n  if (!user) {\n    throw new HttpErrors.Unauthorized('Authentication required.');\n  }\n  if (!user.companyId) {\n    throw new HttpErrors.Forbidden('Your account is not attached to a company.');\n  }\n  return user.companyId;\n}\n\n/**\n * Pin a client-supplied filter to one company.\n *\n * The company clause is `and`-ed on top rather than merged into the caller's `where`, so a\n * caller cannot displace it by sending their own `companyId` — the two clauses both have to\n * hold. `include` is dropped: a relation traversal is a second query this function cannot\n * bound, and the controllers that need one ask for it explicitly.\n */\nexport function scopeFilter<T extends object>(\n  filter: Filter<T> | undefined,\n  companyId: string,\n): Filter<T> {\n  const callerWhere = filter?.where as Where<T> | undefined;\n  const scoped: Where<T> = (callerWhere\n    ? {and: [callerWhere, {companyId}]}\n    : {companyId}) as Where<T>;\n  const {include: _dropped, ...rest} = filter ?? {};\n  return {...rest, where: scoped} as Filter<T>;\n}\n\n/** Roles permitted to administer another account's record. */\nconst ADMIN_ROLES = new Set(['company-admin', 'platform-admin']);\n\nexport function requireAdmin(user: WarehouseUser | undefined): WarehouseUser {\n  if (!user) {\n    throw new HttpErrors.Unauthorized('Authentication required.');\n  }\n  if (!user.roles.some(role => ADMIN_ROLES.has(role))) {\n    throw new HttpErrors.Forbidden('Administrator role required.');\n  }\n  return user;\n}\n",
+        "src/repositories/stock.repository.ts": "import {DefaultCrudRepository, juggler} from '@loopback/repository';\nimport {inject} from '@loopback/core';\n\nexport interface StockItem {\n  id: string;\n  companyId: string;\n  sku: string;\n  description: string;\n  onHand: number;\n  unitCostCents: number;\n  supplierRef: string;\n}\n\nexport interface StockItemRelations {}\n\n/** Plain CRUD over the `stock_item` table on the PostgreSQL datasource. */\nexport class StockRepository extends DefaultCrudRepository<\n  StockItem,\n  typeof StockItem.prototype.id,\n  StockItemRelations\n> {\n  constructor(@inject('datasources.warehouse') dataSource: juggler.DataSource) {\n    super(Object.assign({}, {name: 'StockItem'}) as never, dataSource);\n  }\n\n  /** Escape hatch for the two reports whose shape the query builder cannot express. */\n  async raw<T>(sql: string, params: unknown[] = []): Promise<T[]> {\n    return this.dataSource.execute(sql, params) as Promise<T[]>;\n  }\n}\n\ndeclare namespace StockItem {\n  const prototype: {id: string};\n}\n"
+      },
+      "pairedWith": "ref-loopback-inventory-goods-receipt-book"
+    },
+    {
+      "id": "ref-loopback-inventory-label-download",
+      "family": "loopback-inventory",
+      "architecture": "LoopBack 4 application in TypeScript: one controller class per screen, routes declared with @get/@post/@patch decorators and parameters bound by @param.path, @param.query, @param.filter and @requestBody; data access through DefaultCrudRepository over a PostgreSQL juggler datasource, with a raw `execute` escape hatch for the two aggregate reports; authentication is @authenticate('jwt') applied either on a class or on individual methods, and the caller is injected as @inject(SecurityBindings.USER), carrying roles and the operating company every stored row belongs to.",
+      "language": "typescript",
+      "file": "loopback-inventory/src/controllers/label-download.controller.ts",
+      "scanAs": "src/controllers/label-download.controller.ts",
+      "kind": "vulnerable",
+      "runtimeVerifiable": true,
+      "why": "The path parameter is joined onto the company's label directory with no check, so a name containing `..` resolves outside it and is streamed to the caller. The company segment gives the appearance of isolation while the caller controls the segment after it.",
+      "packageJson": {
+        "name": "northgate-warehouse",
+        "version": "3.2.0",
+        "private": true,
+        "scripts": {
+          "build": "lb-tsc",
+          "start": "node -r source-map-support/register .",
+          "migrate": "node ./dist/migrate"
+        },
+        "dependencies": {
+          "@loopback/authentication": "^11.0.9",
+          "@loopback/authentication-jwt": "^0.15.9",
+          "@loopback/boot": "^7.0.9",
+          "@loopback/core": "^6.1.6",
+          "@loopback/repository": "^7.0.9",
+          "@loopback/rest": "^14.0.9",
+          "@loopback/rest-explorer": "^7.0.9",
+          "@loopback/security": "^0.11.9",
+          "@loopback/service-proxy": "^7.0.9",
+          "loopback-connector-postgresql": "^7.1.6",
+          "tslib": "^2.8.1"
+        },
+        "devDependencies": {
+          "@loopback/build": "^11.0.8",
+          "@types/node": "^22.13.0",
+          "source-map-support": "^0.5.21",
+          "typescript": "~5.7.3"
+        }
+      },
+      "extraFiles": {
+        "src/lib/tenancy.ts": "import {HttpErrors} from '@loopback/rest';\nimport type {Filter, Where} from '@loopback/repository';\n\n/**\n * The caller LoopBack's authentication component resolved from the bearer token.\n *\n * Injected with `@inject(SecurityBindings.USER)`. It is the token's verified subject, never\n * a field from the request body or a header.\n */\nexport interface WarehouseUser {\n  id: string;\n  email: string;\n  roles: string[];\n  /** The operating company this account belongs to. Every stored row carries one. */\n  companyId: string;\n}\n\n/** A caller with no company cannot be scoped, so no query is built for them. */\nexport function companyOf(user: WarehouseUser | undefined): string {\n  if (!user) {\n    throw new HttpErrors.Unauthorized('Authentication required.');\n  }\n  if (!user.companyId) {\n    throw new HttpErrors.Forbidden('Your account is not attached to a company.');\n  }\n  return user.companyId;\n}\n\n/**\n * Pin a client-supplied filter to one company.\n *\n * The company clause is `and`-ed on top rather than merged into the caller's `where`, so a\n * caller cannot displace it by sending their own `companyId` — the two clauses both have to\n * hold. `include` is dropped: a relation traversal is a second query this function cannot\n * bound, and the controllers that need one ask for it explicitly.\n */\nexport function scopeFilter<T extends object>(\n  filter: Filter<T> | undefined,\n  companyId: string,\n): Filter<T> {\n  const callerWhere = filter?.where as Where<T> | undefined;\n  const scoped: Where<T> = (callerWhere\n    ? {and: [callerWhere, {companyId}]}\n    : {companyId}) as Where<T>;\n  const {include: _dropped, ...rest} = filter ?? {};\n  return {...rest, where: scoped} as Filter<T>;\n}\n\n/** Roles permitted to administer another account's record. */\nconst ADMIN_ROLES = new Set(['company-admin', 'platform-admin']);\n\nexport function requireAdmin(user: WarehouseUser | undefined): WarehouseUser {\n  if (!user) {\n    throw new HttpErrors.Unauthorized('Authentication required.');\n  }\n  if (!user.roles.some(role => ADMIN_ROLES.has(role))) {\n    throw new HttpErrors.Forbidden('Administrator role required.');\n  }\n  return user;\n}\n"
+      },
+      "category": "path_traversal_in_label_download",
+      "cwe": "CWE-22",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 32,
+      "lineRange": [
+        27,
+        40
+      ]
+    },
+    {
+      "id": "ref-loopback-inventory-manifest-download",
+      "family": "loopback-inventory",
+      "architecture": "LoopBack 4 application in TypeScript: one controller class per screen, routes declared with @get/@post/@patch decorators and parameters bound by @param.path, @param.query, @param.filter and @requestBody; data access through DefaultCrudRepository over a PostgreSQL juggler datasource, with a raw `execute` escape hatch for the two aggregate reports; authentication is @authenticate('jwt') applied either on a class or on individual methods, and the caller is injected as @inject(SecurityBindings.USER), carrying roles and the operating company every stored row belongs to.",
+      "language": "typescript",
+      "file": "loopback-inventory/src/controllers/manifest-download.controller.ts",
+      "scanAs": "src/controllers/manifest-download.controller.ts",
+      "kind": "safe",
+      "runtimeVerifiable": true,
+      "why": "The same join onto the same kind of per-company root, but the name must first match a pattern admitting a single path segment ending in `.pdf`, and `..` is refused explicitly because the character class allows a dot. Both checks run before the join.",
+      "packageJson": {
+        "name": "northgate-warehouse",
+        "version": "3.2.0",
+        "private": true,
+        "scripts": {
+          "build": "lb-tsc",
+          "start": "node -r source-map-support/register .",
+          "migrate": "node ./dist/migrate"
+        },
+        "dependencies": {
+          "@loopback/authentication": "^11.0.9",
+          "@loopback/authentication-jwt": "^0.15.9",
+          "@loopback/boot": "^7.0.9",
+          "@loopback/core": "^6.1.6",
+          "@loopback/repository": "^7.0.9",
+          "@loopback/rest": "^14.0.9",
+          "@loopback/rest-explorer": "^7.0.9",
+          "@loopback/security": "^0.11.9",
+          "@loopback/service-proxy": "^7.0.9",
+          "loopback-connector-postgresql": "^7.1.6",
+          "tslib": "^2.8.1"
+        },
+        "devDependencies": {
+          "@loopback/build": "^11.0.8",
+          "@types/node": "^22.13.0",
+          "source-map-support": "^0.5.21",
+          "typescript": "~5.7.3"
+        }
+      },
+      "extraFiles": {
+        "src/lib/tenancy.ts": "import {HttpErrors} from '@loopback/rest';\nimport type {Filter, Where} from '@loopback/repository';\n\n/**\n * The caller LoopBack's authentication component resolved from the bearer token.\n *\n * Injected with `@inject(SecurityBindings.USER)`. It is the token's verified subject, never\n * a field from the request body or a header.\n */\nexport interface WarehouseUser {\n  id: string;\n  email: string;\n  roles: string[];\n  /** The operating company this account belongs to. Every stored row carries one. */\n  companyId: string;\n}\n\n/** A caller with no company cannot be scoped, so no query is built for them. */\nexport function companyOf(user: WarehouseUser | undefined): string {\n  if (!user) {\n    throw new HttpErrors.Unauthorized('Authentication required.');\n  }\n  if (!user.companyId) {\n    throw new HttpErrors.Forbidden('Your account is not attached to a company.');\n  }\n  return user.companyId;\n}\n\n/**\n * Pin a client-supplied filter to one company.\n *\n * The company clause is `and`-ed on top rather than merged into the caller's `where`, so a\n * caller cannot displace it by sending their own `companyId` — the two clauses both have to\n * hold. `include` is dropped: a relation traversal is a second query this function cannot\n * bound, and the controllers that need one ask for it explicitly.\n */\nexport function scopeFilter<T extends object>(\n  filter: Filter<T> | undefined,\n  companyId: string,\n): Filter<T> {\n  const callerWhere = filter?.where as Where<T> | undefined;\n  const scoped: Where<T> = (callerWhere\n    ? {and: [callerWhere, {companyId}]}\n    : {companyId}) as Where<T>;\n  const {include: _dropped, ...rest} = filter ?? {};\n  return {...rest, where: scoped} as Filter<T>;\n}\n\n/** Roles permitted to administer another account's record. */\nconst ADMIN_ROLES = new Set(['company-admin', 'platform-admin']);\n\nexport function requireAdmin(user: WarehouseUser | undefined): WarehouseUser {\n  if (!user) {\n    throw new HttpErrors.Unauthorized('Authentication required.');\n  }\n  if (!user.roles.some(role => ADMIN_ROLES.has(role))) {\n    throw new HttpErrors.Forbidden('Administrator role required.');\n  }\n  return user;\n}\n"
+      },
+      "pairedWith": "ref-loopback-inventory-label-download"
+    },
+    {
+      "id": "ref-loopback-inventory-stock-import-errors",
+      "family": "loopback-inventory",
+      "architecture": "LoopBack 4 application in TypeScript: one controller class per screen, routes declared with @get/@post/@patch decorators and parameters bound by @param.path, @param.query, @param.filter and @requestBody; data access through DefaultCrudRepository over a PostgreSQL juggler datasource, with a raw `execute` escape hatch for the two aggregate reports; authentication is @authenticate('jwt') applied either on a class or on individual methods, and the caller is injected as @inject(SecurityBindings.USER), carrying roles and the operating company every stored row belongs to.",
+      "language": "typescript",
+      "file": "loopback-inventory/src/controllers/stock-import.controller.ts",
+      "scanAs": "src/controllers/stock-import.controller.ts",
+      "kind": "vulnerable",
+      "runtimeVerifiable": true,
+      "why": "The PostgreSQL driver's own message is interpolated into the 422 body. That message carries the failing statement, the table and column names, the constraint name and the conflicting value, so anyone able to post a malformed row can read the schema back one error at a time.",
+      "packageJson": {
+        "name": "northgate-warehouse",
+        "version": "3.2.0",
+        "private": true,
+        "scripts": {
+          "build": "lb-tsc",
+          "start": "node -r source-map-support/register .",
+          "migrate": "node ./dist/migrate"
+        },
+        "dependencies": {
+          "@loopback/authentication": "^11.0.9",
+          "@loopback/authentication-jwt": "^0.15.9",
+          "@loopback/boot": "^7.0.9",
+          "@loopback/core": "^6.1.6",
+          "@loopback/repository": "^7.0.9",
+          "@loopback/rest": "^14.0.9",
+          "@loopback/rest-explorer": "^7.0.9",
+          "@loopback/security": "^0.11.9",
+          "@loopback/service-proxy": "^7.0.9",
+          "loopback-connector-postgresql": "^7.1.6",
+          "tslib": "^2.8.1"
+        },
+        "devDependencies": {
+          "@loopback/build": "^11.0.8",
+          "@types/node": "^22.13.0",
+          "source-map-support": "^0.5.21",
+          "typescript": "~5.7.3"
+        }
+      },
+      "extraFiles": {
+        "src/lib/tenancy.ts": "import {HttpErrors} from '@loopback/rest';\nimport type {Filter, Where} from '@loopback/repository';\n\n/**\n * The caller LoopBack's authentication component resolved from the bearer token.\n *\n * Injected with `@inject(SecurityBindings.USER)`. It is the token's verified subject, never\n * a field from the request body or a header.\n */\nexport interface WarehouseUser {\n  id: string;\n  email: string;\n  roles: string[];\n  /** The operating company this account belongs to. Every stored row carries one. */\n  companyId: string;\n}\n\n/** A caller with no company cannot be scoped, so no query is built for them. */\nexport function companyOf(user: WarehouseUser | undefined): string {\n  if (!user) {\n    throw new HttpErrors.Unauthorized('Authentication required.');\n  }\n  if (!user.companyId) {\n    throw new HttpErrors.Forbidden('Your account is not attached to a company.');\n  }\n  return user.companyId;\n}\n\n/**\n * Pin a client-supplied filter to one company.\n *\n * The company clause is `and`-ed on top rather than merged into the caller's `where`, so a\n * caller cannot displace it by sending their own `companyId` — the two clauses both have to\n * hold. `include` is dropped: a relation traversal is a second query this function cannot\n * bound, and the controllers that need one ask for it explicitly.\n */\nexport function scopeFilter<T extends object>(\n  filter: Filter<T> | undefined,\n  companyId: string,\n): Filter<T> {\n  const callerWhere = filter?.where as Where<T> | undefined;\n  const scoped: Where<T> = (callerWhere\n    ? {and: [callerWhere, {companyId}]}\n    : {companyId}) as Where<T>;\n  const {include: _dropped, ...rest} = filter ?? {};\n  return {...rest, where: scoped} as Filter<T>;\n}\n\n/** Roles permitted to administer another account's record. */\nconst ADMIN_ROLES = new Set(['company-admin', 'platform-admin']);\n\nexport function requireAdmin(user: WarehouseUser | undefined): WarehouseUser {\n  if (!user) {\n    throw new HttpErrors.Unauthorized('Authentication required.');\n  }\n  if (!user.roles.some(role => ADMIN_ROLES.has(role))) {\n    throw new HttpErrors.Forbidden('Administrator role required.');\n  }\n  return user;\n}\n",
+        "src/repositories/stock.repository.ts": "import {DefaultCrudRepository, juggler} from '@loopback/repository';\nimport {inject} from '@loopback/core';\n\nexport interface StockItem {\n  id: string;\n  companyId: string;\n  sku: string;\n  description: string;\n  onHand: number;\n  unitCostCents: number;\n  supplierRef: string;\n}\n\nexport interface StockItemRelations {}\n\n/** Plain CRUD over the `stock_item` table on the PostgreSQL datasource. */\nexport class StockRepository extends DefaultCrudRepository<\n  StockItem,\n  typeof StockItem.prototype.id,\n  StockItemRelations\n> {\n  constructor(@inject('datasources.warehouse') dataSource: juggler.DataSource) {\n    super(Object.assign({}, {name: 'StockItem'}) as never, dataSource);\n  }\n\n  /** Escape hatch for the two reports whose shape the query builder cannot express. */\n  async raw<T>(sql: string, params: unknown[] = []): Promise<T[]> {\n    return this.dataSource.execute(sql, params) as Promise<T[]>;\n  }\n}\n\ndeclare namespace StockItem {\n  const prototype: {id: string};\n}\n"
+      },
+      "category": "schema_disclosure_via_driver_error_message",
+      "cwe": "CWE-209",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "line": 41,
+      "lineRange": [
+        35,
+        45
+      ]
+    },
+    {
+      "id": "ref-loopback-inventory-stock-upload-errors",
+      "family": "loopback-inventory",
+      "architecture": "LoopBack 4 application in TypeScript: one controller class per screen, routes declared with @get/@post/@patch decorators and parameters bound by @param.path, @param.query, @param.filter and @requestBody; data access through DefaultCrudRepository over a PostgreSQL juggler datasource, with a raw `execute` escape hatch for the two aggregate reports; authentication is @authenticate('jwt') applied either on a class or on individual methods, and the caller is injected as @inject(SecurityBindings.USER), carrying roles and the operating company every stored row belongs to.",
+      "language": "typescript",
+      "file": "loopback-inventory/src/controllers/stock-upload.controller.ts",
+      "scanAs": "src/controllers/stock-upload.controller.ts",
+      "kind": "safe",
+      "runtimeVerifiable": true,
+      "why": "The same per-row failure reporting for the same import feature, but the response is chosen from advice keyed by the driver's SQLSTATE code, and the driver's message is logged server-side instead. The operator still learns what to fix; the caller learns nothing about the schema.",
+      "packageJson": {
+        "name": "northgate-warehouse",
+        "version": "3.2.0",
+        "private": true,
+        "scripts": {
+          "build": "lb-tsc",
+          "start": "node -r source-map-support/register .",
+          "migrate": "node ./dist/migrate"
+        },
+        "dependencies": {
+          "@loopback/authentication": "^11.0.9",
+          "@loopback/authentication-jwt": "^0.15.9",
+          "@loopback/boot": "^7.0.9",
+          "@loopback/core": "^6.1.6",
+          "@loopback/repository": "^7.0.9",
+          "@loopback/rest": "^14.0.9",
+          "@loopback/rest-explorer": "^7.0.9",
+          "@loopback/security": "^0.11.9",
+          "@loopback/service-proxy": "^7.0.9",
+          "loopback-connector-postgresql": "^7.1.6",
+          "tslib": "^2.8.1"
+        },
+        "devDependencies": {
+          "@loopback/build": "^11.0.8",
+          "@types/node": "^22.13.0",
+          "source-map-support": "^0.5.21",
+          "typescript": "~5.7.3"
+        }
+      },
+      "extraFiles": {
+        "src/lib/tenancy.ts": "import {HttpErrors} from '@loopback/rest';\nimport type {Filter, Where} from '@loopback/repository';\n\n/**\n * The caller LoopBack's authentication component resolved from the bearer token.\n *\n * Injected with `@inject(SecurityBindings.USER)`. It is the token's verified subject, never\n * a field from the request body or a header.\n */\nexport interface WarehouseUser {\n  id: string;\n  email: string;\n  roles: string[];\n  /** The operating company this account belongs to. Every stored row carries one. */\n  companyId: string;\n}\n\n/** A caller with no company cannot be scoped, so no query is built for them. */\nexport function companyOf(user: WarehouseUser | undefined): string {\n  if (!user) {\n    throw new HttpErrors.Unauthorized('Authentication required.');\n  }\n  if (!user.companyId) {\n    throw new HttpErrors.Forbidden('Your account is not attached to a company.');\n  }\n  return user.companyId;\n}\n\n/**\n * Pin a client-supplied filter to one company.\n *\n * The company clause is `and`-ed on top rather than merged into the caller's `where`, so a\n * caller cannot displace it by sending their own `companyId` — the two clauses both have to\n * hold. `include` is dropped: a relation traversal is a second query this function cannot\n * bound, and the controllers that need one ask for it explicitly.\n */\nexport function scopeFilter<T extends object>(\n  filter: Filter<T> | undefined,\n  companyId: string,\n): Filter<T> {\n  const callerWhere = filter?.where as Where<T> | undefined;\n  const scoped: Where<T> = (callerWhere\n    ? {and: [callerWhere, {companyId}]}\n    : {companyId}) as Where<T>;\n  const {include: _dropped, ...rest} = filter ?? {};\n  return {...rest, where: scoped} as Filter<T>;\n}\n\n/** Roles permitted to administer another account's record. */\nconst ADMIN_ROLES = new Set(['company-admin', 'platform-admin']);\n\nexport function requireAdmin(user: WarehouseUser | undefined): WarehouseUser {\n  if (!user) {\n    throw new HttpErrors.Unauthorized('Authentication required.');\n  }\n  if (!user.roles.some(role => ADMIN_ROLES.has(role))) {\n    throw new HttpErrors.Forbidden('Administrator role required.');\n  }\n  return user;\n}\n",
+        "src/repositories/stock.repository.ts": "import {DefaultCrudRepository, juggler} from '@loopback/repository';\nimport {inject} from '@loopback/core';\n\nexport interface StockItem {\n  id: string;\n  companyId: string;\n  sku: string;\n  description: string;\n  onHand: number;\n  unitCostCents: number;\n  supplierRef: string;\n}\n\nexport interface StockItemRelations {}\n\n/** Plain CRUD over the `stock_item` table on the PostgreSQL datasource. */\nexport class StockRepository extends DefaultCrudRepository<\n  StockItem,\n  typeof StockItem.prototype.id,\n  StockItemRelations\n> {\n  constructor(@inject('datasources.warehouse') dataSource: juggler.DataSource) {\n    super(Object.assign({}, {name: 'StockItem'}) as never, dataSource);\n  }\n\n  /** Escape hatch for the two reports whose shape the query builder cannot express. */\n  async raw<T>(sql: string, params: unknown[] = []): Promise<T[]> {\n    return this.dataSource.execute(sql, params) as Promise<T[]>;\n  }\n}\n\ndeclare namespace StockItem {\n  const prototype: {id: string};\n}\n"
+      },
+      "pairedWith": "ref-loopback-inventory-stock-import-errors"
+    }
+  ]
+}

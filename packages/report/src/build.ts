@@ -3,12 +3,17 @@ import type {
   AuthorizationSummary,
   CoverageArea,
   Finding,
+  ReportVerdictRecord,
   ScanMetadata,
   ScanReport,
   WorkspaceKind
 } from "@myrqen/contracts";
 import { formatIssues, validateReport } from "@myrqen/contracts";
 import { DEFAULT_PROHIBITED_ACTIONS } from "@myrqen/policy";
+import { compareToBaseline, type BaselineFile } from "./baseline.js";
+import { complianceFor } from "./compliance.js";
+import { countFindings } from "./facts.js";
+import { buildVerdict, type ReportVerdict } from "./verdict.js";
 
 export const METHODOLOGY_VERSION = "1.0.0";
 
@@ -24,18 +29,19 @@ export interface BuildReportInput {
   limitations: string[];
   candidateCount?: number;
   duplicateCount?: number;
+  /** A parsed `.myrqen/baseline.json`, when the project has one. */
+  baseline?: BaselineFile;
 }
 
-function summarize(findings: Finding[]) {
-  const severityCounts = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
-  const verificationCounts = { verified: 0, strong_evidence: 0, needs_review: 0 };
-  let fixedCount = 0;
-  for (const finding of findings) {
-    severityCounts[finding.severity] += 1;
-    verificationCounts[finding.verification] += 1;
-    if (finding.status === "fixed_verified") fixedCount += 1;
-  }
-  return { findingCount: findings.length, severityCounts, verificationCounts, fixedCount };
+/** The stored summary, counted by the same function every renderer counts with. */
+function summarize(findings: Finding[]): ScanReport["summary"] {
+  const counts = countFindings(findings);
+  return {
+    findingCount: counts.total,
+    severityCounts: counts.severity,
+    verificationCounts: counts.verification,
+    fixedCount: counts.fixed
+  };
 }
 
 function authorizationSummary(scan: ScanMetadata): AuthorizationSummary {
@@ -62,14 +68,45 @@ function authorizationSummary(scan: ScanMetadata): AuthorizationSummary {
 const NO_FINDING_LIMITATION =
   "No findings were reported. That is not evidence that the application is secure; see coverage for what was and was not assessed.";
 
+function verdictRecord(verdict: ReportVerdict): ReportVerdictRecord {
+  const record: ReportVerdictRecord = {
+    tone: verdict.tone,
+    headline: verdict.headline,
+    runMode: verdict.runMode,
+    caveat: verdict.caveat,
+    fixFirst: verdict.fixFirst.map((item) => ({ ...item }))
+  };
+  if (verdict.detail) record.detail = verdict.detail;
+  if (verdict.nextStep) record.nextStep = verdict.nextStep;
+  return record;
+}
+
+/**
+ * Findings as the report stores them: each one carrying its standard references, and
+ * its baseline state when a baseline was supplied. Both are derived, never asserted
+ * by the agent, so they are rewritten here on every build.
+ */
+function annotateFindings(findings: Finding[], baseline: BaselineFile | undefined) {
+  const comparison = baseline ? compareToBaseline(findings, baseline) : null;
+  const annotated = findings.map((finding) => {
+    const next: Finding = { ...finding, compliance: complianceFor(finding) };
+    delete next.baselineState;
+    const state = comparison?.states[finding.id];
+    if (state) next.baselineState = state;
+    return next;
+  });
+  return { annotated, comparison };
+}
+
 /**
  * Assemble and validate the canonical report. Coverage honesty is enforced here:
  * a report always states what was not assessed.
  */
 export function buildReport(input: BuildReportInput): ScanReport {
-  const summary = summarize(input.findings);
+  const { annotated, comparison } = annotateFindings(input.findings, input.baseline);
+  const summary = summarize(annotated);
   const limitations = [...input.limitations];
-  if (input.findings.length === 0 && !limitations.some((line) => line.includes("not evidence"))) {
+  if (annotated.length === 0 && !limitations.some((line) => line.includes("not evidence"))) {
     limitations.push(NO_FINDING_LIMITATION);
   }
   if (limitations.length === 0) {
@@ -88,13 +125,22 @@ export function buildReport(input: BuildReportInput): ScanReport {
       ...(input.candidateCount !== undefined ? { candidateCount: input.candidateCount } : {}),
       ...(input.duplicateCount !== undefined ? { duplicateCount: input.duplicateCount } : {})
     },
-    findings: input.findings,
+    findings: annotated,
     coverage: input.coverage.length > 0 ? input.coverage : ["No coverage notes were recorded."],
     limitations,
     methodologyVersion: METHODOLOGY_VERSION
   };
   if (input.cloudReportId) report.cloudReportId = input.cloudReportId;
   if (input.coverageAreas && input.coverageAreas.length > 0) report.coverageAreas = input.coverageAreas;
+  if (comparison) {
+    report.baseline = {
+      createdAt: comparison.baselineCreatedAt,
+      counts: { ...comparison.counts },
+      fixed: comparison.fixed.map((entry) => ({ ...entry }))
+    };
+    if (comparison.fromReportId) report.baseline.fromReportId = comparison.fromReportId;
+  }
+  report.verdict = verdictRecord(buildVerdict(report));
 
   const validation = validateReport(report);
   if (!validation.valid) {
@@ -103,45 +149,9 @@ export function buildReport(input: BuildReportInput): ScanReport {
   return report;
 }
 
-export function formatDuration(ms: number): string {
-  if (!Number.isFinite(ms) || ms < 0) return "unknown";
-  const totalSeconds = Math.round(ms / 1000);
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-  if (hours > 0) return `${hours}h ${minutes}m`;
-  if (minutes > 0) return `${minutes}m ${seconds}s`;
-  return `${seconds}s`;
-}
-
 export function formatTokenUsage(usage: ScanMetadata["tokenUsage"]): string {
   if (usage.source === "unavailable") return "Unavailable";
   const count = typeof usage.count === "number" ? usage.count.toLocaleString("en-US") : "unknown";
   if (usage.source === "exact") return `${count} (exact)`;
   return `~${count} (estimated${usage.estimator ? `, ${usage.estimator}` : ""})`;
-}
-
-export function severityLabel(severity: Finding["severity"]): string {
-  return severity.toUpperCase();
-}
-
-export function verificationLabel(verification: Finding["verification"]): string {
-  return verification === "strong_evidence"
-    ? "Strong evidence"
-    : verification === "needs_review"
-      ? "Needs review"
-      : "Verified";
-}
-
-/** Ordered for display: worst first, then verified before unverified. */
-export function sortFindings(findings: Finding[]): Finding[] {
-  const severityRank = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
-  const verificationRank = { verified: 0, strong_evidence: 1, needs_review: 2 };
-  return [...findings].sort((a, b) => {
-    const bySeverity = severityRank[a.severity] - severityRank[b.severity];
-    if (bySeverity !== 0) return bySeverity;
-    const byVerification = verificationRank[a.verification] - verificationRank[b.verification];
-    if (byVerification !== 0) return byVerification;
-    return a.id.localeCompare(b.id);
-  });
 }

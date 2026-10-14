@@ -170,6 +170,7 @@ function projectFinding(finding: Finding, policy: ProjectionPolicy): Finding | n
   if (finding.status) out.status = finding.status;
   if (finding.fixedAt) out.fixedAt = finding.fixedAt;
   if (finding.fingerprint && policy.fields.metadata !== false) out.fingerprint = finding.fingerprint;
+  if (finding.baselineState && policy.fields.metadata !== false) out.baselineState = finding.baselineState;
 
   const allowEvidence = policy.fields.evidence !== false;
   const allowCode = policy.fields.code !== false;

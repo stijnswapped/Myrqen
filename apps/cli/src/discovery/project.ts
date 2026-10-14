@@ -1,8 +1,10 @@
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import type { ProjectSignals } from "@myrqen/policy";
 import { detectInjectionSignals, extractEnvSecretValues, normalizeHttpTarget } from "@myrqen/policy";
 import type { StackSummary } from "@myrqen/contracts";
+import { assertLoopbackUrl } from "../config/project-config.js";
 
 
 const IGNORED_DIRECTORIES = new Set([
@@ -94,11 +96,28 @@ export interface DiscoveredProject {
   sourceBytes: number;
 }
 
+/*
+ * A Python app often has no pyproject.toml, only requirements.txt (Flask and FastAPI
+ * tutorials and most small services), so those count as a project root too.
+ */
+const ROOT_MARKERS = [
+  ".git",
+  "package.json",
+  "pyproject.toml",
+  "requirements.txt",
+  "setup.py",
+  "Pipfile",
+  "go.mod",
+  "Cargo.toml",
+  "composer.json",
+  "Gemfile"
+];
+
 /** Walk up for a repository or project marker. Falls back to the given directory. */
 export async function findRepoRoot(from: string): Promise<string> {
   let current = path.resolve(from);
   for (let depth = 0; depth < 24; depth += 1) {
-    for (const marker of [".git", "package.json", "pyproject.toml", "go.mod", "Cargo.toml", "composer.json", "Gemfile"]) {
+    for (const marker of ROOT_MARKERS) {
       try {
         await fs.access(path.join(current, marker));
         return current;
@@ -440,7 +459,15 @@ async function dockerAvailable(): Promise<boolean> {
 
     let child: ReturnType<typeof spawn>;
     try {
-      child = spawn("docker", ["info", "--format", "{{.ServerVersion}}"], { stdio: "ignore" });
+      // Not in the project directory. Windows will not remove or rename a directory
+      // that is some process's working directory, and `docker info`, or a helper
+      // it starts, can outlive the deadline that kills it. A probe that only asks
+      // whether a daemon answers has no reason to pin the user's project.
+      child = spawn("docker", ["info", "--format", "{{.ServerVersion}}"], {
+        stdio: "ignore",
+        cwd: os.tmpdir(),
+        windowsHide: true
+      });
     } catch {
       finish(false);
       return;
@@ -458,10 +485,21 @@ async function dockerAvailable(): Promise<boolean> {
 }
 
 /** A quick liveness probe against local candidates only. */
+/**
+ * Which of these loopback targets answer. Anything that is not a strict loopback
+ * origin is skipped without a request, whoever supplied it: a target list can
+ * carry an address read from repository content, and this probe runs on the
+ * user's own machine, inside their network.
+ */
 export async function firstReachable(targets: string[]): Promise<string[]> {
   const reachable: string[] = [];
   await Promise.all(
     targets.map(async (target) => {
+      try {
+        assertLoopbackUrl(target);
+      } catch {
+        return;
+      }
       try {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), 900);

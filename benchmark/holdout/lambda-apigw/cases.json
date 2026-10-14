@@ -1,0 +1,170 @@
+{
+  "family": "lambda-apigw",
+  "architecture": "AWS Lambda handlers behind API Gateway, wired by serverless.yml: exports.handler taking the proxy event, a JWT authorizer for identity, mysql2 against RDS and the DynamoDB document client for per-user documents",
+  "cases": [
+    {
+      "id": "holdout-lambda-customer-filter",
+      "family": "lambda-apigw",
+      "architecture": "API Gateway proxy handler building an incremental WHERE clause against mysql2",
+      "language": "javascript",
+      "file": "lambda-apigw/handlers/customer-lookup.js",
+      "kind": "vulnerable",
+      "category": "sql_injection",
+      "severityBand": ["critical", "high"],
+      "line": 35,
+      "lineRange": [34, 48],
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-lambdas",
+        "version": "1.0.0",
+        "dependencies": { "mysql2": "^3.9.7", "jsonwebtoken": "^9.0.2", "@aws-sdk/client-dynamodb": "^3.554.0", "@aws-sdk/lib-dynamodb": "^3.554.0" }
+      },
+      "extraFiles": {
+        "serverless.yml": "service: acme-suite-api\nprovider:\n  name: aws\n  runtime: nodejs20.x\n  httpApi:\n    authorizers:\n      sessionAuthorizer:\n        type: request\n        functionName: sessionAuthorizer\nfunctions:\n  customerLookup:\n    handler: src/customer-lookup.handler\n    events:\n      - httpApi:\n          path: /customers\n          method: get\n          authorizer: sessionAuthorizer\n"
+      },
+      "why": "Three of the four filters bind their value as a placeholder and the tenant scope is bound too, which is what makes the fourth easy to read past: the email filter splices the query parameter into a single-quoted LIKE pattern, so a value containing a quote closes the literal and appends attacker-chosen SQL to the statement mysql2 prepares."
+    },
+    {
+      "id": "holdout-lambda-subscriber-filter",
+      "family": "lambda-apigw",
+      "architecture": "API Gateway proxy handler building an incremental WHERE clause against mysql2",
+      "language": "javascript",
+      "file": "lambda-apigw/handlers/subscriber-lookup.js",
+      "kind": "safe",
+      "pairedWith": "holdout-lambda-customer-filter",
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-lambdas",
+        "version": "1.0.0",
+        "dependencies": { "mysql2": "^3.9.7", "jsonwebtoken": "^9.0.2", "@aws-sdk/client-dynamodb": "^3.554.0", "@aws-sdk/lib-dynamodb": "^3.554.0" }
+      },
+      "extraFiles": {
+        "serverless.yml": "service: acme-suite-api\nprovider:\n  name: aws\n  runtime: nodejs20.x\nfunctions:\n  subscriberLookup:\n    handler: src/subscriber-lookup.handler\n    events:\n      - httpApi:\n          path: /subscribers\n          method: get\n"
+      },
+      "why": "The SQL is still assembled at runtime from an array of clauses and still ends with an interpolated ordering and limit, but those two come from a fixed map and a constant, and every request value including the LIKE pattern is bound as a placeholder."
+    },
+    {
+      "id": "holdout-lambda-token-authorizer",
+      "family": "lambda-apigw",
+      "architecture": "API Gateway request authorizer returning an IAM policy from bearer-token claims",
+      "language": "javascript",
+      "file": "lambda-apigw/handlers/session-authorizer.js",
+      "kind": "vulnerable",
+      "category": "jwt_verification_bypass",
+      "severityBand": ["critical", "high"],
+      "line": 42,
+      "lineRange": [42, 48],
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-lambdas",
+        "version": "1.0.0",
+        "dependencies": { "jsonwebtoken": "^9.0.2", "jwks-rsa": "^3.1.0" }
+      },
+      "extraFiles": {
+        "serverless.yml": "service: acme-suite-api\nprovider:\n  name: aws\n  runtime: nodejs20.x\nfunctions:\n  sessionAuthorizer:\n    handler: src/session-authorizer.handler\n"
+      },
+      "why": "The authorizer checks the issuer, the audience, the expiry and the presence of a tenant claim, and the refresh-token helper directly above it calls jwt.verify with a JWKS key and a pinned algorithm. The access path only decodes: no signature is checked, so anyone can mint claims and receive an Allow policy with any tenant id and any role."
+    },
+    {
+      "id": "holdout-lambda-console-authorizer",
+      "family": "lambda-apigw",
+      "architecture": "API Gateway request authorizer returning an IAM policy from bearer-token claims",
+      "language": "javascript",
+      "file": "lambda-apigw/handlers/console-authorizer.js",
+      "kind": "safe",
+      "pairedWith": "holdout-lambda-token-authorizer",
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-lambdas",
+        "version": "1.0.0",
+        "dependencies": { "jsonwebtoken": "^9.0.2", "jwks-rsa": "^3.1.0" }
+      },
+      "extraFiles": {
+        "serverless.yml": "service: acme-suite-api\nprovider:\n  name: aws\n  runtime: nodejs20.x\nfunctions:\n  consoleAuthorizer:\n    handler: src/console-authorizer.handler\n"
+      },
+      "why": "jwt.decode is still called on the raw token, but only to read the kid from the header so the JWKS key can be fetched; the claims the policy is built from come from jwt.verify with a pinned RS256 algorithm, a fixed issuer and an audience."
+    },
+    {
+      "id": "holdout-lambda-preferences-merge",
+      "family": "lambda-apigw",
+      "architecture": "API Gateway proxy handler deep-merging a JSON patch into stored DynamoDB preferences",
+      "language": "javascript",
+      "file": "lambda-apigw/handlers/preferences-update.js",
+      "kind": "vulnerable",
+      "category": "prototype_pollution",
+      "severityBand": ["high", "medium"],
+      "line": 26,
+      "lineRange": [22, 46],
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-lambdas",
+        "version": "1.0.0",
+        "dependencies": { "@aws-sdk/client-dynamodb": "^3.554.0", "@aws-sdk/lib-dynamodb": "^3.554.0" }
+      },
+      "extraFiles": {
+        "serverless.yml": "service: acme-suite-api\nprovider:\n  name: aws\n  runtime: nodejs20.x\nfunctions:\n  preferencesUpdate:\n    handler: src/preferences-update.handler\n    events:\n      - httpApi:\n          path: /me/preferences\n          method: patch\n"
+      },
+      "why": "The recursive merge walks Object.keys of a JSON.parse'd request body with no reserved-key guard, so a body whose own __proto__ key holds an object recurses into Object.prototype and assigns onto it. Every later property read in the same container inherits the injected value, which is how the seat and export caps enforced two lines below the merge get subverted."
+    },
+    {
+      "id": "holdout-lambda-settings-merge",
+      "family": "lambda-apigw",
+      "architecture": "API Gateway proxy handler deep-merging a JSON patch into stored DynamoDB preferences",
+      "language": "javascript",
+      "file": "lambda-apigw/handlers/workspace-settings-update.js",
+      "kind": "safe",
+      "pairedWith": "holdout-lambda-preferences-merge",
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-lambdas",
+        "version": "1.0.0",
+        "dependencies": { "@aws-sdk/client-dynamodb": "^3.554.0", "@aws-sdk/lib-dynamodb": "^3.554.0" }
+      },
+      "extraFiles": {
+        "serverless.yml": "service: acme-suite-api\nprovider:\n  name: aws\n  runtime: nodejs20.x\nfunctions:\n  workspaceSettingsUpdate:\n    handler: src/workspace-settings-update.handler\n    events:\n      - httpApi:\n          path: /workspace/settings\n          method: patch\n"
+      },
+      "why": "The same recursive merge over the same parsed request body, but the three keys that can reach a prototype are skipped before assignment, so no request can escape the object it is merged into."
+    },
+    {
+      "id": "holdout-lambda-quote-total",
+      "family": "lambda-apigw",
+      "architecture": "API Gateway proxy handler pricing a cart against a per-tenant catalog",
+      "language": "javascript",
+      "file": "lambda-apigw/handlers/checkout-quote.js",
+      "kind": "vulnerable",
+      "category": "business_logic_price_manipulation",
+      "severityBand": ["high", "critical"],
+      "line": 33,
+      "lineRange": [33, 35],
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-lambdas",
+        "version": "1.0.0",
+        "dependencies": { "@aws-sdk/client-dynamodb": "^3.554.0", "@aws-sdk/lib-dynamodb": "^3.554.0" }
+      },
+      "extraFiles": {
+        "serverless.yml": "service: acme-suite-api\nprovider:\n  name: aws\n  runtime: nodejs20.x\nfunctions:\n  checkoutQuote:\n    handler: src/checkout-quote.handler\n    events:\n      - httpApi:\n          path: /checkout/quote\n          method: post\n"
+      },
+      "why": "Every other input is defended: the SKU must exist and be available to the tenant, the quantity is parsed and bounded, and the discount is computed server-side. The unit price prefers the value from the request body and only falls back to the catalog price, so a caller can price any line at one cent, or negative, and the quote it receives is the one the order is written from."
+    },
+    {
+      "id": "holdout-lambda-renewal-total",
+      "family": "lambda-apigw",
+      "architecture": "API Gateway proxy handler pricing a cart against a per-tenant catalog",
+      "language": "javascript",
+      "file": "lambda-apigw/handlers/renewal-quote.js",
+      "kind": "safe",
+      "pairedWith": "holdout-lambda-quote-total",
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-lambdas",
+        "version": "1.0.0",
+        "dependencies": { "@aws-sdk/client-dynamodb": "^3.554.0", "@aws-sdk/lib-dynamodb": "^3.554.0" }
+      },
+      "extraFiles": {
+        "serverless.yml": "service: acme-suite-api\nprovider:\n  name: aws\n  runtime: nodejs20.x\nfunctions:\n  renewalQuote:\n    handler: src/renewal-quote.handler\n    events:\n      - httpApi:\n          path: /renewal/quote\n          method: post\n"
+      },
+      "why": "The request may still carry a unit price and the handler still reads it, but only to detect a stale client and answer 409; the money is always computed from the catalog price the server loaded."
+    }
+  ]
+}

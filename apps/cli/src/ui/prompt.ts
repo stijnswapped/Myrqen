@@ -1,7 +1,22 @@
 import readline from "node:readline/promises";
 
+/**
+ * Can this run ask the human a question and expect an answer?
+ *
+ * A terminal is not enough. Continuous-integration runners commonly allocate a
+ * pty — GitLab CI, Jenkins, `docker run -t` — so `isTTY` is true while there is
+ * nobody there to press a key, and a prompt in that shell hangs the job until it
+ * times out. `TERM=dumb` says the same thing about a terminal that cannot render
+ * the cursor control an interactive picker needs.
+ *
+ * These are the conventions the README tells users are honoured, so they are
+ * honoured in the one place that decides whether to prompt.
+ */
 export function isInteractive(): boolean {
-  return Boolean(process.stdin.isTTY && process.stdout.isTTY) && process.env.MYRQEN_NON_INTERACTIVE !== "1";
+  if (process.env.MYRQEN_NON_INTERACTIVE === "1") return false;
+  if (process.env.CI && process.env.CI !== "0" && process.env.CI !== "false") return false;
+  if (process.env.TERM === "dumb") return false;
+  return Boolean(process.stdin.isTTY && process.stdout.isTTY);
 }
 
 async function ask(question: string): Promise<string> {

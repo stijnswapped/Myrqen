@@ -1,0 +1,281 @@
+{
+  "family": "extension-suite",
+  "architecture": "Chrome MV3 extension: a background service worker with chrome.runtime onMessage/onMessageExternal listeners, a command router, a chrome.storage.sync settings merger, fetch-based preview handlers, and content scripts that render a panel into a shadow root on every page.",
+  "cases": [
+    {
+      "id": "h3-extension-suite-external-channel",
+      "family": "extension-suite",
+      "architecture": "Chrome MV3 extension: a background service worker with chrome.runtime onMessage/onMessageExternal listeners, a command router, a chrome.storage.sync settings merger, fetch-based preview handlers, and content scripts that render a panel into a shadow root on every page.",
+      "language": "typescript",
+      "file": "extension-suite/src/background/service-worker.ts",
+      "scanAs": "src/background/service-worker.ts",
+      "kind": "vulnerable",
+      "category": "missing_authentication",
+      "severityBand": [
+        "critical",
+        "high"
+      ],
+      "line": 79,
+      "lineRange": [
+        78,
+        81
+      ],
+      "runtimeVerifiable": true,
+      "why": "`onMessageExternal` is the door open to web pages and other extensions, and this listener hands every message straight to the same privileged command table with no check on `sender.origin` or `sender.id` at all - the TODO above it admits `externally_connectable` has not been narrowed either. Any page that can reach the channel can therefore send `session.token` and walk away with the user's sync token, or `session.describe` for their email, or `session.signOut`.",
+      "packageJson": {
+        "name": "marginalia-extension",
+        "version": "3.6.1",
+        "private": true,
+        "type": "module",
+        "devDependencies": {
+          "@types/chrome": "^0.0.301",
+          "typescript": "^5.7.3",
+          "vite": "^6.0.7"
+        }
+      }
+    },
+    {
+      "id": "h3-extension-suite-companion-channel",
+      "family": "extension-suite",
+      "architecture": "Chrome MV3 extension: a background service worker with chrome.runtime onMessage/onMessageExternal listeners, a command router, a chrome.storage.sync settings merger, fetch-based preview handlers, and content scripts that render a panel into a shadow root on every page.",
+      "language": "typescript",
+      "file": "extension-suite/src/background/worker.ts",
+      "scanAs": "src/background/worker.ts",
+      "kind": "safe",
+      "pairedWith": "h3-extension-suite-external-channel",
+      "runtimeVerifiable": true,
+      "why": "The external listener refuses anything that is not a browser-attested trusted sender before dispatching: `sender.id` must be the one companion extension id, or `sender.origin` must be an exact member of the two-entry origin set. Both fields are stamped by the browser rather than taken from the message body, and origin equality cannot be satisfied by a lookalike host or by plain http, so `session.token` is only ever served to the app that is allowed to hold it.",
+      "packageJson": {
+        "name": "marginalia-extension",
+        "version": "3.6.1",
+        "private": true,
+        "type": "module",
+        "devDependencies": {
+          "@types/chrome": "^0.0.301",
+          "typescript": "^5.7.3",
+          "vite": "^6.0.7"
+        }
+      }
+    },
+    {
+      "id": "h3-extension-suite-command-table",
+      "family": "extension-suite",
+      "architecture": "Chrome MV3 extension: a background service worker with chrome.runtime onMessage/onMessageExternal listeners, a command router, a chrome.storage.sync settings merger, fetch-based preview handlers, and content scripts that render a panel into a shadow root on every page.",
+      "language": "typescript",
+      "file": "extension-suite/src/background/messaging/router.ts",
+      "scanAs": "src/background/messaging/router.ts",
+      "kind": "vulnerable",
+      "category": "broken_function_level_authorization",
+      "severityBand": [
+        "high",
+        "medium"
+      ],
+      "line": 45,
+      "lineRange": [
+        43,
+        49
+      ],
+      "runtimeVerifiable": true,
+      "why": "`route` resolves the handler out of both tables and calls it without ever consulting `senderKind`, even though it computed it one line earlier and the module's own header says workspace commands are meant to be driven from the options page only. A content script runs in every tab and is one page-controlled `postMessage` bridge away from the site it was injected into, so any visited page can reach the workspace-wide commands. The bare table index also resolves inherited keys such as `constructor`, which is why the sibling router uses `Object.hasOwn`.",
+      "packageJson": {
+        "name": "marginalia-extension",
+        "version": "3.6.1",
+        "private": true,
+        "type": "module",
+        "devDependencies": {
+          "@types/chrome": "^0.0.301",
+          "typescript": "^5.7.3",
+          "vite": "^6.0.7"
+        }
+      }
+    },
+    {
+      "id": "h3-extension-suite-command-gate",
+      "family": "extension-suite",
+      "architecture": "Chrome MV3 extension: a background service worker with chrome.runtime onMessage/onMessageExternal listeners, a command router, a chrome.storage.sync settings merger, fetch-based preview handlers, and content scripts that render a panel into a shadow root on every page.",
+      "language": "typescript",
+      "file": "extension-suite/src/background/messaging/dispatch.ts",
+      "scanAs": "src/background/messaging/dispatch.ts",
+      "kind": "safe",
+      "pairedWith": "h3-extension-suite-command-table",
+      "runtimeVerifiable": true,
+      "why": "Workspace commands are only resolved once the sender has been classified as the extension's own page; a content script or an external sender asking for one gets `forbidden` and the handler is never looked up. Lookups also go through `Object.hasOwn`, so a caller-supplied action cannot resolve to an inherited property of the command table.",
+      "packageJson": {
+        "name": "marginalia-extension",
+        "version": "3.6.1",
+        "private": true,
+        "type": "module",
+        "devDependencies": {
+          "@types/chrome": "^0.0.301",
+          "typescript": "^5.7.3",
+          "vite": "^6.0.7"
+        }
+      }
+    },
+    {
+      "id": "h3-extension-suite-settings-merge",
+      "family": "extension-suite",
+      "architecture": "Chrome MV3 extension: a background service worker with chrome.runtime onMessage/onMessageExternal listeners, a command router, a chrome.storage.sync settings merger, fetch-based preview handlers, and content scripts that render a panel into a shadow root on every page.",
+      "language": "typescript",
+      "file": "extension-suite/src/background/settings/apply-patch.ts",
+      "scanAs": "src/background/settings/apply-patch.ts",
+      "kind": "vulnerable",
+      "category": "prototype_pollution",
+      "severityBand": [
+        "high",
+        "medium"
+      ],
+      "line": 36,
+      "lineRange": [
+        32,
+        39
+      ],
+      "runtimeVerifiable": true,
+      "why": "`merge` walks the keys of a JSON document the caller supplied and recurses into `target[key]` with no reserved-key filter. `JSON.parse` produces an own `__proto__` property, so a document shaped like `{\"__proto__\":{\"trusted\":true}}` makes the recursion write onto Object.prototype, and every object in the worker inherits the new property. `isTrustedOrigin` a few lines below reads `settings.origins[origin]?.trusted` with no own-property check, so that single patch marks every origin trusted.",
+      "packageJson": {
+        "name": "marginalia-extension",
+        "version": "3.6.1",
+        "private": true,
+        "type": "module",
+        "devDependencies": {
+          "@types/chrome": "^0.0.301",
+          "typescript": "^5.7.3",
+          "vite": "^6.0.7"
+        }
+      }
+    },
+    {
+      "id": "h3-extension-suite-settings-profile",
+      "family": "extension-suite",
+      "architecture": "Chrome MV3 extension: a background service worker with chrome.runtime onMessage/onMessageExternal listeners, a command router, a chrome.storage.sync settings merger, fetch-based preview handlers, and content scripts that render a panel into a shadow root on every page.",
+      "language": "typescript",
+      "file": "extension-suite/src/background/settings/apply-profile.ts",
+      "scanAs": "src/background/settings/apply-profile.ts",
+      "kind": "safe",
+      "pairedWith": "h3-extension-suite-settings-merge",
+      "runtimeVerifiable": true,
+      "why": "The merge skips `__proto__`, `constructor` and `prototype` before touching `target`, and it only recurses into an existing subtree when that subtree is an own property, replacing it with a fresh object otherwise - so no assignment can reach Object.prototype. `isTrustedOrigin` additionally requires an own property on `settings.origins`, so an inherited key could not be read as a decision even if one existed.",
+      "packageJson": {
+        "name": "marginalia-extension",
+        "version": "3.6.1",
+        "private": true,
+        "type": "module",
+        "devDependencies": {
+          "@types/chrome": "^0.0.301",
+          "typescript": "^5.7.3",
+          "vite": "^6.0.7"
+        }
+      }
+    },
+    {
+      "id": "h3-extension-suite-team-highlights",
+      "family": "extension-suite",
+      "architecture": "Chrome MV3 extension: a background service worker with chrome.runtime onMessage/onMessageExternal listeners, a command router, a chrome.storage.sync settings merger, fetch-based preview handlers, and content scripts that render a panel into a shadow root on every page.",
+      "language": "javascript",
+      "file": "extension-suite/src/content/highlight-panel.js",
+      "scanAs": "src/content/highlight-panel.js",
+      "kind": "vulnerable",
+      "category": "stored_cross_site_scripting",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 49,
+      "lineRange": [
+        47,
+        57
+      ],
+      "runtimeVerifiable": true,
+      "why": "`note.quote`, `note.author` and `note.sourceTitle` are interpolated raw into an HTML template that is then assigned through `innerHTML` at line 57. The notes are not the extension's own strings: they arrive from the background worker via `sendCommand` in ../shared/messaging, having been captured as page text on whatever site a teammate was reading, so a highlight saved from a hostile page carries markup into every teammate's tab. The shadow root is only a styling boundary - script inside it runs in the page - and this content script can talk to the privileged worker.",
+      "packageJson": {
+        "name": "marginalia-extension",
+        "version": "3.6.1",
+        "private": true,
+        "type": "module",
+        "devDependencies": {
+          "@types/chrome": "^0.0.301",
+          "typescript": "^5.7.3",
+          "vite": "^6.0.7"
+        }
+      }
+    },
+    {
+      "id": "h3-extension-suite-team-notes",
+      "family": "extension-suite",
+      "architecture": "Chrome MV3 extension: a background service worker with chrome.runtime onMessage/onMessageExternal listeners, a command router, a chrome.storage.sync settings merger, fetch-based preview handlers, and content scripts that render a panel into a shadow root on every page.",
+      "language": "javascript",
+      "file": "extension-suite/src/content/note-panel.js",
+      "scanAs": "src/content/note-panel.js",
+      "kind": "safe",
+      "pairedWith": "h3-extension-suite-team-highlights",
+      "runtimeVerifiable": true,
+      "why": "Every stored field is passed through `asText`, which round-trips the value through a text node so `&`, `<` and `>` come back as entities and cannot open a tag in the element content where they are used. The one value that would have had to sit in an attribute, the note id, is written through `dataset` after the markup has been parsed, and the note's CSS class can only be one of two constants from the TONE_CLASS map.",
+      "packageJson": {
+        "name": "marginalia-extension",
+        "version": "3.6.1",
+        "private": true,
+        "type": "module",
+        "devDependencies": {
+          "@types/chrome": "^0.0.301",
+          "typescript": "^5.7.3",
+          "vite": "^6.0.7"
+        }
+      }
+    },
+    {
+      "id": "h3-extension-suite-hover-card",
+      "family": "extension-suite",
+      "architecture": "Chrome MV3 extension: a background service worker with chrome.runtime onMessage/onMessageExternal listeners, a command router, a chrome.storage.sync settings merger, fetch-based preview handlers, and content scripts that render a panel into a shadow root on every page.",
+      "language": "javascript",
+      "file": "extension-suite/src/background/handlers/link-preview.js",
+      "scanAs": "src/background/handlers/link-preview.js",
+      "kind": "vulnerable",
+      "category": "server_side_request_forgery",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 51,
+      "lineRange": [
+        49,
+        55
+      ],
+      "runtimeVerifiable": true,
+      "why": "`payload.url` is an href the content script read out of the page it is rendering, so it is page-controlled, and it is fetched with no parsing, no scheme check and no host restriction from a worker that holds `<all_urls>`. The status and the first 480 characters of the body are handed back to the caller, so a hostile page can use the extension to read `http://localhost` services, cloud metadata endpoints and the customer's internal wiki from inside the reader's network, past the origin policy that would otherwise stop it.",
+      "packageJson": {
+        "name": "marginalia-extension",
+        "version": "3.6.1",
+        "private": true,
+        "type": "module",
+        "devDependencies": {
+          "@types/chrome": "^0.0.301",
+          "typescript": "^5.7.3",
+          "vite": "^6.0.7"
+        }
+      }
+    },
+    {
+      "id": "h3-extension-suite-source-card",
+      "family": "extension-suite",
+      "architecture": "Chrome MV3 extension: a background service worker with chrome.runtime onMessage/onMessageExternal listeners, a command router, a chrome.storage.sync settings merger, fetch-based preview handlers, and content scripts that render a panel into a shadow root on every page.",
+      "language": "javascript",
+      "file": "extension-suite/src/background/handlers/page-preview.js",
+      "scanAs": "src/background/handlers/page-preview.js",
+      "kind": "safe",
+      "pairedWith": "h3-extension-suite-hover-card",
+      "runtimeVerifiable": true,
+      "why": "`previewTarget` parses the value into a real URL first and then requires https, no embedded credentials, and a hostname that is an exact member of the closed PREVIEW_HOSTS set, returning null otherwise; the fetch uses the normalised URL and `redirect: \"error\"` so an allow-listed host cannot bounce the worker to an internal address. The destination is decided by the extension, not by the page.",
+      "packageJson": {
+        "name": "marginalia-extension",
+        "version": "3.6.1",
+        "private": true,
+        "type": "module",
+        "devDependencies": {
+          "@types/chrome": "^0.0.301",
+          "typescript": "^5.7.3",
+          "vite": "^6.0.7"
+        }
+      }
+    }
+  ]
+}

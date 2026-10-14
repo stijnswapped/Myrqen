@@ -1,0 +1,49 @@
+name: Bug — the CLI, an integration, or a report
+description: Something other than detection accuracy went wrong.
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For a vulnerability **in Myrqen**, do not use this form — open a private
+        advisory or email `security@myrqen.cc`. For a missed or spurious finding,
+        use the _Detection defect_ form instead.
+
+        `myrqen doctor` answers most setup questions on its own, and its output is
+        the single most useful thing to paste here.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you ran, what you expected, what you got.
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: "`myrqen doctor` output"
+      description: Redact anything you would rather not publish; it prints paths.
+      render: shell
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      placeholder: "0.3.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Where
+      options:
+        - Install or update
+        - "`myrqen link` / `unlink` — an agent integration"
+        - A scan, or the session protocol
+        - The report — HTML, JSON, Markdown, or SARIF
+        - Account, device link, sync, or sharing
+        - Something else
+    validations:
+      required: true

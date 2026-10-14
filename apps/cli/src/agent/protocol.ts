@@ -20,7 +20,7 @@ import {
   normalizeHttpTarget
 } from "@myrqen/policy";
 import type { PlannedAction } from "@myrqen/policy";
-import { buildFixPrompt } from "@myrqen/report";
+import { buildFixAllPrompt, buildFixPrompt } from "@myrqen/report";
 import { resolveClient } from "../api/client.js";
 import { blank, bullet, field, json, style, warn, write } from "../ui/output.js";
 import { confirm, isInteractive } from "../ui/prompt.js";
@@ -402,6 +402,25 @@ export function printFixPrompt(state: SessionState, findingId: string): void {
   write(buildFixPrompt(finding, { projectName: state.project.name, localReportId: state.localReportId }));
 }
 
+/**
+ * The whole report as one remediation prompt.
+ *
+ * Separate from `printFixPrompt` because the useful unit of remediation is the report,
+ * not the finding: pasting fifteen per-finding prompts in sequence re-states the
+ * constraints fifteen times and produces fifteen commits touching the same four files.
+ * `buildFixAllPrompt` orders by file and severity, and says the two things a
+ * per-finding prompt cannot — rotate a committed secret rather than deleting the
+ * literal, and confirm an unsettled finding before editing on the strength of it.
+ */
+export function printFixAllPrompt(state: SessionState): void {
+  write(
+    buildFixAllPrompt(state.findings, {
+      projectName: state.project.name,
+      localReportId: state.localReportId
+    })
+  );
+}
+
 export type FixAction = "suggested" | "applied" | "verified" | "verification_failed" | "reverted";
 
 /**
@@ -412,7 +431,7 @@ export async function recordFix(
   state: SessionState,
   findingId: string,
   action: FixAction,
-  options: { changedFiles?: string[]; note?: string; asJson?: boolean } = {}
+  options: { changedFiles?: string[]; note?: string; asJson?: boolean; quiet?: boolean } = {}
 ): Promise<Finding> {
   const finding = state.findings.find((candidate) => candidate.id === findingId);
   if (!finding) throw new Error(`Finding ${findingId} is not part of session ${state.localReportId}.`);
@@ -446,6 +465,7 @@ export async function recordFix(
     metrics: { fix_verified: action === "verified" }
   });
 
+  if (options.quiet) return finding;
   if (options.asJson) json({ findingId, status: finding.status, verified: action === "verified" });
   else {
     write(

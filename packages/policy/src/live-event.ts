@@ -65,6 +65,28 @@ export function assertLiveEventSafe(event: SafeScanEvent & Record<string, unknow
     if (!/^[A-Z0-9_]{1,80}$/.test(event.safeCode)) throw new Error("Invalid safeCode format.");
     if (!(event.safeCode in SAFE_STATUS_CODES)) throw new Error(`safeCode "${event.safeCode}" is not allowlisted.`);
   }
+  /*
+   * The allowlist above only described what the message may be; nothing checked
+   * that it was. A device could put any 300 characters in `message` and the API
+   * would store and broadcast them, which is how a project's own secret reached
+   * the cloud progress stream in the acceptance suite: the heuristic scrubber
+   * below cannot recognise a value it has never seen, and the server has no copy
+   * of the project's secrets to compare against.
+   *
+   * So the message is now required to be exactly the text its code resolves to.
+   * `buildSafeEvent` has always derived it that way, so nothing that goes
+   * through the product changes — but free-form text can no longer be smuggled
+   * through this field at all, which is a guarantee rather than a filter.
+   */
+  if (event.message !== undefined) {
+    const allowlisted = event.safeCode === undefined ? undefined : SAFE_STATUS_CODES[event.safeCode];
+    if (allowlisted === undefined) {
+      throw new Error("A progress message is only allowed alongside an allowlisted safeCode.");
+    }
+    if (event.message !== allowlisted) {
+      throw new Error("Progress message does not match the text its safeCode resolves to.");
+    }
+  }
   assertSafeProgressMessage(event.message);
   if (event.reportId.length > 128 || event.eventId.length > 128) throw new Error("Event identifier too long.");
 

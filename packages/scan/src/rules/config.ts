@@ -12,9 +12,15 @@ import { locationOf, sourceEvidence, type Rule, type RuleContext } from "./conte
  * `internal/` is diagnostic whatever the last segment says. Narrowing this to the
  * literal word `debug` left a route returning the database URL and the migration
  * state entirely uncovered.
+ *
+ * The underscore forms are here for the same reason the underscore form of
+ * `debug` is: file-based routers have no notion of a private route, so a team
+ * marks one by prefixing the segment. `server/api/_internal/config.get.ts` is
+ * served at `/api/_internal/config` exactly like any other route, and reading
+ * the underscore as "not public" is the mistake the convention invites.
  */
 const DEBUG_PATH =
-  /\/(debug|_debug|dev|__dev|env|config|phpinfo|actuator|healthz\/detail|metrics\/raw|sysinfo|diagnostics?|dump|trace|pprof|varz|statusz|[a-z-]*-?status(?!\w)|internal(\/[\w-]+)*)(\/|$)/i;
+  /\/(debug|_debug|dev|__dev|env|config|phpinfo|actuator|healthz\/detail|metrics\/raw|sysinfo|diagnostics?|dump|trace|pprof|varz|statusz|[a-z-]*-?status(?!\w)|_{0,2}internal(\/[\w-]+)*)(\/|$)/i;
 
 /**
  * A `status` segment that hangs off a specific record is that record's state, not the
@@ -38,6 +44,23 @@ const ROLE_GATE = /\b(role|roles|isAdmin|is_admin|permission|permissions|scope|s
 const INTERNAL_STATE =
   /(process\.env|\benv\b|config|migration|schema_migrations|pg_stat|connection|queue|flag|commit|version|uptime|memoryUsage|buildInfo|hostname|platform|arch)/i;
 
+/**
+ * Middleware registered beside the handler — `router.get(path, requireUser,
+ * requireRole("ops"), handler)` — is part of the route's gate. Reading only the
+ * handler body reported a route gated by its registration as gated not at all.
+ */
+const MIDDLEWARE_ROLE_GATE = /role|admin|permission|scope|staff|operator|superuser|authori[sz]e/i;
+const MIDDLEWARE_AUTHENTICATION = /auth|session|requireUser|currentUser|signedIn|loggedIn|verifyToken|jwt/i;
+
+function registrationMiddleware(context: RuleContext, handler: ts.Node | undefined): string {
+  const call = handler?.parent;
+  if (!call || !ts.isCallExpression(call) || !call.arguments.includes(handler as ts.Expression)) return "";
+  return call.arguments
+    .filter((argument) => argument !== handler && !ts.isStringLiteralLike(argument) && !ts.isTemplateExpression(argument))
+    .map((argument) => argument.getText(context.file.source))
+    .join(" ");
+}
+
 export const debugEndpoint: Rule = {
   id: "debug-endpoint",
   category: "debug_endpoint_exposure",
@@ -45,7 +68,7 @@ export const debugEndpoint: Rule = {
   run(context: RuleContext) {
     for (const route of context.routes) {
       if (!DEBUG_PATH.test(route.path)) continue;
-      if (PER_RECORD_STATE.test(route.path) && !/\/(debug|internal|_debug|dump|trace|pprof)(\/|$)/i.test(route.path)) {
+      if (PER_RECORD_STATE.test(route.path) && !/\/(_{0,2}debug|_{0,2}internal|dump|trace|pprof)(\/|$)/i.test(route.path)) {
         continue;
       }
       const handler = route.node;
@@ -61,9 +84,11 @@ export const debugEndpoint: Rule = {
        * job; the defect is showing it to everyone. Requiring a *role* rather than
        * merely a session matters here — being signed in is not being entitled.
        */
-      const roleGated = ROLE_GATE.test(text) && /return|throw|notFound\(|redirect\(/.test(text);
+      const middleware = registrationMiddleware(context, handler);
+      const roleGated =
+        (ROLE_GATE.test(text) && /return|throw|notFound\(|redirect\(/.test(text)) || MIDDLEWARE_ROLE_GATE.test(middleware);
       if (roleGated) continue;
-      const authenticated = /session|currentUser|requireUser|requireViewer|getUser/i.test(text);
+      const authenticated = /session|currentUser|requireUser|requireViewer|getUser/i.test(text) || MIDDLEWARE_AUTHENTICATION.test(middleware);
       if (authenticated && !exposesSecrets) continue;
 
       context.report({

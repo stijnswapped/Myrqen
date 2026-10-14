@@ -1,0 +1,236 @@
+{
+  "generatedAt": "2026-10-14T10:45:32.143Z",
+  "scannerCommit": "04ccbb3",
+  "engineDirty": false,
+  "engineHash": "066b4b48cff5",
+  "gates": {
+    "criticalHighRecall": 0.95,
+    "overallRecall": 0.9,
+    "precision": 0.9,
+    "safeFalsePositiveRate": 0.03
+  },
+  "totals": {
+    "cases": 48,
+    "vulnerable": 24,
+    "safe": 24,
+    "unsupported": 0,
+    "outOfScope": 0,
+    "outOfScopeRecall": null,
+    "recall": 0,
+    "classBlindRecall": 0.041666666666666664,
+    "cweRecall": 0,
+    "cweRecallNear": 0,
+    "cweScored": 24,
+    "criticalHighRecall": 0,
+    "precision": 0,
+    "falsePositiveRate": 0.08333333333333333,
+    "confidentFalsePositiveRate": 0.08333333333333333,
+    "candidateFalsePositiveRate": 0,
+    "confidentPrecision": 0,
+    "intervals": {
+      "recall": [
+        0,
+        0.138
+      ],
+      "classBlindRecall": [
+        0.0074,
+        0.2024
+      ],
+      "cweRecall": [
+        0,
+        0.138
+      ],
+      "cweRecallNear": [
+        0,
+        0.138
+      ],
+      "falsePositiveRate": [
+        0.0232,
+        0.2585
+      ],
+      "confidentFalsePositiveRate": [
+        0.0232,
+        0.2585
+      ]
+    },
+    "sampleSize": {
+      "vulnerable": 24,
+      "safe": 24,
+      "cweScored": 24
+    }
+  },
+  "byClass": {
+    "cross_workspace_record_read_via_unscoped_get": {
+      "expected": 1,
+      "detected": 0,
+      "inBand": 0,
+      "misattributed": 0
+    },
+    "privilege_escalation_via_unfiltered_self_patch": {
+      "expected": 1,
+      "detected": 0,
+      "inBand": 0,
+      "misattributed": 0
+    },
+    "query_operator_injection_via_saved_criteria": {
+      "expected": 1,
+      "detected": 0,
+      "inBand": 0,
+      "misattributed": 0
+    },
+    "authentication_bypass_via_internal_service_call": {
+      "expected": 1,
+      "detected": 0,
+      "inBand": 0,
+      "misattributed": 0
+    },
+    "path_traversal_in_attachment_stream": {
+      "expected": 1,
+      "detected": 0,
+      "inBand": 0,
+      "misattributed": 0
+    },
+    "credential_material_in_joined_response": {
+      "expected": 1,
+      "detected": 0,
+      "inBand": 0,
+      "misattributed": 0
+    },
+    "jwt_claims_trusted_without_signature_verification": {
+      "expected": 1,
+      "detected": 0,
+      "inBand": 0,
+      "misattributed": 0
+    },
+    "sql_injection_via_unsafe_query_interpolation": {
+      "expected": 1,
+      "detected": 0,
+      "inBand": 0,
+      "misattributed": 0
+    },
+    "missing_authorization_check_on_internal_write_method": {
+      "expected": 1,
+      "detected": 0,
+      "inBand": 0,
+      "misattributed": 0
+    },
+    "missing_depot_scope_on_record_lookup": {
+      "expected": 1,
+      "detected": 0,
+      "inBand": 0,
+      "misattributed": 0
+    },
+    "caller_supplied_actor_identity_used_for_authorization": {
+      "expected": 1,
+      "detected": 0,
+      "inBand": 0,
+      "misattributed": 0
+    },
+    "path_traversal_in_document_fetch": {
+      "expected": 1,
+      "detected": 0,
+      "inBand": 0,
+      "misattributed": 0
+    },
+    "cross_company_read_via_unscoped_client_filter": {
+      "expected": 1,
+      "detected": 0,
+      "inBand": 0,
+      "misattributed": 0
+    },
+    "privilege_escalation_via_unfiltered_admin_patch": {
+      "expected": 1,
+      "detected": 0,
+      "inBand": 0,
+      "misattributed": 0
+    },
+    "sql_injection_via_interpolated_grouping_column": {
+      "expected": 1,
+      "detected": 0,
+      "inBand": 0,
+      "misattributed": 0
+    },
+    "unauthenticated_stock_write_on_undecorated_route": {
+      "expected": 1,
+      "detected": 0,
+      "inBand": 0,
+      "misattributed": 0
+    },
+    "path_traversal_in_label_download": {
+      "expected": 1,
+      "detected": 0,
+      "inBand": 0,
+      "misattributed": 0
+    },
+    "schema_disclosure_via_driver_error_message": {
+      "expected": 1,
+      "detected": 0,
+      "inBand": 0,
+      "misattributed": 0
+    },
+    "sql_injection_via_slash_command_text": {
+      "expected": 1,
+      "detected": 0,
+      "inBand": 0,
+      "misattributed": 0
+    },
+    "authorization_decision_from_block_action_value": {
+      "expected": 1,
+      "detected": 0,
+      "inBand": 0,
+      "misattributed": 0
+    },
+    "object_reference_from_modal_private_metadata": {
+      "expected": 1,
+      "detected": 0,
+      "inBand": 0,
+      "misattributed": 0
+    },
+    "mass_assignment_from_modal_state_values": {
+      "expected": 1,
+      "detected": 0,
+      "inBand": 0,
+      "misattributed": 0
+    },
+    "workspace_admin_flag_used_as_application_role": {
+      "expected": 1,
+      "detected": 0,
+      "inBand": 0,
+      "misattributed": 0
+    },
+    "missing_authorization_on_sensitive_record_read": {
+      "expected": 1,
+      "detected": 0,
+      "inBand": 0,
+      "misattributed": 0
+    }
+  },
+  "byFamily": {
+    "feathers-crm": {
+      "vulnerable": 6,
+      "detected": 0,
+      "safe": 6,
+      "falsePositives": 0
+    },
+    "grpc-service": {
+      "vulnerable": 6,
+      "detected": 0,
+      "safe": 6,
+      "falsePositives": 2
+    },
+    "loopback-inventory": {
+      "vulnerable": 6,
+      "detected": 0,
+      "safe": 6,
+      "falsePositives": 0
+    },
+    "slack-bolt": {
+      "vulnerable": 6,
+      "detected": 0,
+      "safe": 6,
+      "falsePositives": 1
+    }
+  },
+  "outcomes": [],
+  "outcomesWithheld": 48
+}

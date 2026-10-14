@@ -1,0 +1,125 @@
+{
+  "family": "webhook-receivers",
+  "architecture": "Cloudflare Workers modules routed with itty-router: a default export exposing fetch, D1 for relational writes, KV for sessions and OAuth state, secrets bound through the Env interface and WebCrypto for signature verification",
+  "cases": [
+    {
+      "id": "holdout-edge-ledger-credit",
+      "family": "webhook-receivers",
+      "architecture": "Cloudflare Worker webhook receiver writing to D1, with HMAC verification available in the same module",
+      "language": "typescript",
+      "file": "webhook-receivers/ledger-events.ts",
+      "kind": "vulnerable",
+      "category": "missing_authentication",
+      "severityBand": ["critical", "high"],
+      "route": "POST /webhooks/ledger",
+      "line": 44,
+      "lineRange": [44, 57],
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-edge",
+        "version": "1.0.0",
+        "type": "module",
+        "dependencies": { "itty-router": "^4.2.2" },
+        "devDependencies": { "wrangler": "^3.53.0", "@cloudflare/workers-types": "^4.20240419.0" }
+      },
+      "why": "The dunning route above it verifies its HMAC signature with WebCrypto before touching the database, so the helper, the secret binding and the pattern are all present. The ledger route parses the body and credits an account balance with no signature check and no other caller identity, so anyone who knows the URL can add money to any account."
+    },
+    {
+      "id": "holdout-edge-settlement-credit",
+      "family": "webhook-receivers",
+      "architecture": "Cloudflare Worker webhook receiver writing to D1, with HMAC verification available in the same module",
+      "language": "typescript",
+      "file": "webhook-receivers/settlement-events.ts",
+      "kind": "safe",
+      "pairedWith": "holdout-edge-ledger-credit",
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-edge",
+        "version": "1.0.0",
+        "type": "module",
+        "dependencies": { "itty-router": "^4.2.2" },
+        "devDependencies": { "wrangler": "^3.53.0", "@cloudflare/workers-types": "^4.20240419.0" }
+      },
+      "why": "The same balance-crediting SQL runs from the same kind of unauthenticated-looking public route, but the raw body is verified against the route's own HMAC secret before anything is parsed or written."
+    },
+    {
+      "id": "holdout-edge-partner-origins",
+      "family": "webhook-receivers",
+      "architecture": "Cloudflare Worker returning credentialed cross-origin responses to partner embeds",
+      "language": "typescript",
+      "file": "webhook-receivers/embed-bridge.ts",
+      "kind": "vulnerable",
+      "category": "insecure_cors_configuration",
+      "severityBand": ["medium", "high"],
+      "line": 15,
+      "lineRange": [14, 20],
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-edge",
+        "version": "1.0.0",
+        "type": "module",
+        "dependencies": { "itty-router": "^4.2.2" },
+        "devDependencies": { "wrangler": "^3.53.0", "@cloudflare/workers-types": "^4.20240419.0" }
+      },
+      "why": "The origin is checked, which is why this reads as defended, but the check is a suffix match on the host, so any origin ending in the allowed domain — a host the attacker registers, or a subdomain-shaped label glued to the front — passes and is reflected back with allow-credentials true, letting that origin read the account's plan and balance with the victim's session cookie."
+    },
+    {
+      "id": "holdout-edge-widget-origins",
+      "family": "webhook-receivers",
+      "architecture": "Cloudflare Worker returning credentialed cross-origin responses to partner embeds",
+      "language": "typescript",
+      "file": "webhook-receivers/widget-bridge.ts",
+      "kind": "safe",
+      "pairedWith": "holdout-edge-partner-origins",
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-edge",
+        "version": "1.0.0",
+        "type": "module",
+        "dependencies": { "itty-router": "^4.2.2" },
+        "devDependencies": { "wrangler": "^3.53.0", "@cloudflare/workers-types": "^4.20240419.0" }
+      },
+      "why": "The request origin is still echoed into the allow-origin header alongside allow-credentials, which is the only way a credentialed cross-origin response can work, but it is echoed only after an exact match against a fixed set of full origins."
+    },
+    {
+      "id": "holdout-edge-oauth-destination",
+      "family": "webhook-receivers",
+      "architecture": "Cloudflare Worker OAuth start and return routes with KV-held state",
+      "language": "typescript",
+      "file": "webhook-receivers/oauth-return.ts",
+      "kind": "vulnerable",
+      "category": "open_redirect",
+      "severityBand": ["medium", "low", "high"],
+      "route": "GET /oauth/return",
+      "line": 65,
+      "lineRange": [64, 70],
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-edge",
+        "version": "1.0.0",
+        "type": "module",
+        "dependencies": { "itty-router": "^4.2.2" },
+        "devDependencies": { "wrangler": "^3.53.0", "@cloudflare/workers-types": "^4.20240419.0" }
+      },
+      "why": "The destination came from the caller's returnTo at /oauth/start and was parked in KV, so being server-held does not make it trusted. The only check is a leading slash, which a protocol-relative //attacker.example passes, so the sign-in flow finishes by sending the freshly authenticated browser to a site the attacker controls."
+    },
+    {
+      "id": "holdout-edge-saml-destination",
+      "family": "webhook-receivers",
+      "architecture": "Cloudflare Worker OAuth start and return routes with KV-held state",
+      "language": "typescript",
+      "file": "webhook-receivers/saml-return.ts",
+      "kind": "safe",
+      "pairedWith": "holdout-edge-oauth-destination",
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "acme-suite-edge",
+        "version": "1.0.0",
+        "type": "module",
+        "dependencies": { "itty-router": "^4.2.2" },
+        "devDependencies": { "wrangler": "^3.53.0", "@cloudflare/workers-types": "^4.20240419.0" }
+      },
+      "why": "The caller-supplied destination still decides where the browser lands after sign-in, but it is resolved against the worker's own origin and rejected unless the resolved origin matches, and only the path and query survive into the Location header."
+    }
+  ]
+}

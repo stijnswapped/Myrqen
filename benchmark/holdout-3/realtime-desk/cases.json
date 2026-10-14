@@ -1,0 +1,422 @@
+{
+  "family": "realtime-desk",
+  "architecture": "Socket.IO gateway plus a raw `ws` widget bridge and Express SSE routes for a support desk, over Postgres and Mongo: two sibling deployments (apps/agent-desk and apps/shared-inbox) that share the same module layout.",
+  "cases": [
+    {
+      "id": "h3-realtime-desk-bridge-upgrade",
+      "family": "realtime-desk",
+      "architecture": "Socket.IO gateway plus a raw `ws` widget bridge and Express SSE routes for a support desk, over Postgres and Mongo: two sibling deployments (apps/agent-desk and apps/shared-inbox) that share the same module layout.",
+      "language": "javascript",
+      "file": "realtime-desk/apps/shared-inbox/src/bridge/server.js",
+      "scanAs": "apps/shared-inbox/src/bridge/server.js",
+      "kind": "vulnerable",
+      "category": "missing_authentication",
+      "severityBand": [
+        "critical",
+        "high"
+      ],
+      "line": 71,
+      "lineRange": [
+        68,
+        75
+      ],
+      "route": "GET /bridge/v1",
+      "runtimeVerifiable": true,
+      "why": "The upgrade is completed for anyone who asks for the right path, and the identity the whole bridge then trusts is read straight off the query string: `agentId` and `orgId` are whatever the connecting client typed. No cookie, token or signature is checked anywhere in this handler, so a stranger can open `/bridge/v1?agent=...&org=<victim org>` and every frame handler downstream - which all scope their reads off `ws.session` - will serve that tenant's data.",
+      "packageJson": {
+        "name": "deskline-realtime",
+        "version": "5.4.0",
+        "private": true,
+        "type": "module",
+        "dependencies": {
+          "cookie": "^1.0.2",
+          "express": "^4.21.2",
+          "mongodb": "^6.13.0",
+          "pg": "^8.13.1",
+          "socket.io": "^4.8.1",
+          "ws": "^8.18.0"
+        },
+        "devDependencies": {
+          "@types/express": "^5.0.0",
+          "@types/pg": "^8.11.10",
+          "typescript": "^5.7.3"
+        }
+      },
+      "extraFiles": {
+        "apps/shared-inbox/src/bridge/router.js": "import { logger } from \"../observability/logger.js\";\n\n/**\n * The bridge speaks a tiny JSON frame protocol. Feature modules register the\n * kinds they own at boot; an unknown kind is answered rather than ignored so a\n * client bug is visible in the console's network tab instead of hanging.\n */\nconst handlers = new Map();\n\nexport function registerFrameHandler(kind, handler) {\n  handlers.set(kind, handler);\n}\n\nexport async function routeFrame(socket, frame) {\n  const handler = handlers.get(frame?.kind);\n  if (!handler) {\n    socket.send(JSON.stringify({ kind: \"error\", reason: \"unknown_frame\" }));\n    return;\n  }\n\n  try {\n    await handler(socket, frame);\n  } catch (error) {\n    logger.error(\"bridge frame failed\", { kind: frame.kind, message: error.message });\n    socket.send(JSON.stringify({ kind: \"error\", reason: \"frame_failed\" }));\n  }\n}\n",
+        "apps/shared-inbox/src/observability/logger.ts": "import { hostname } from \"node:os\";\n\nconst LEVELS: Record<string, number> = { debug: 10, info: 20, warn: 30, error: 40 };\nconst threshold = LEVELS[process.env.LOG_LEVEL ?? \"info\"] ?? LEVELS.info;\nconst host = hostname();\n\nfunction emit(level: string, message: string, fields?: Record<string, unknown>): void {\n  if (LEVELS[level] < threshold) return;\n  const line = JSON.stringify({ ts: new Date().toISOString(), level, host, message, ...fields });\n  process.stdout.write(`${line}\\n`);\n}\n\nexport const logger = {\n  debug: (message: string, fields?: Record<string, unknown>) => emit(\"debug\", message, fields),\n  info: (message: string, fields?: Record<string, unknown>) => emit(\"info\", message, fields),\n  warn: (message: string, fields?: Record<string, unknown>) => emit(\"warn\", message, fields),\n  error: (message: string, fields?: Record<string, unknown>) => emit(\"error\", message, fields)\n};\n"
+      }
+    },
+    {
+      "id": "h3-realtime-desk-bridge-ticket",
+      "family": "realtime-desk",
+      "architecture": "Socket.IO gateway plus a raw `ws` widget bridge and Express SSE routes for a support desk, over Postgres and Mongo: two sibling deployments (apps/agent-desk and apps/shared-inbox) that share the same module layout.",
+      "language": "javascript",
+      "file": "realtime-desk/apps/agent-desk/src/bridge/server.js",
+      "scanAs": "apps/agent-desk/src/bridge/server.js",
+      "kind": "safe",
+      "pairedWith": "h3-realtime-desk-bridge-upgrade",
+      "route": "GET /bridge/v1",
+      "runtimeVerifiable": true,
+      "why": "The credential also rides on the query string, but it is a ticket the desk API minted: `verifyHandshakeTicket` recomputes the HMAC over the encoded claims with the server-side secret, compares it with `timingSafeEqual`, and rejects anything older than thirty seconds, so the agent and org on the socket are values the server asserted rather than values the client chose. A handshake without a valid ticket is answered with 401 and destroyed.",
+      "packageJson": {
+        "name": "deskline-realtime",
+        "version": "5.4.0",
+        "private": true,
+        "type": "module",
+        "dependencies": {
+          "cookie": "^1.0.2",
+          "express": "^4.21.2",
+          "mongodb": "^6.13.0",
+          "pg": "^8.13.1",
+          "socket.io": "^4.8.1",
+          "ws": "^8.18.0"
+        },
+        "devDependencies": {
+          "@types/express": "^5.0.0",
+          "@types/pg": "^8.11.10",
+          "typescript": "^5.7.3"
+        }
+      },
+      "extraFiles": {
+        "apps/agent-desk/src/bridge/router.js": "import { logger } from \"../observability/logger.js\";\n\n/**\n * The bridge speaks a tiny JSON frame protocol. Feature modules register the\n * kinds they own at boot; an unknown kind is answered rather than ignored so a\n * client bug is visible in the console's network tab instead of hanging.\n */\nconst handlers = new Map();\n\nexport function registerFrameHandler(kind, handler) {\n  handlers.set(kind, handler);\n}\n\nexport async function routeFrame(socket, frame) {\n  const handler = handlers.get(frame?.kind);\n  if (!handler) {\n    socket.send(JSON.stringify({ kind: \"error\", reason: \"unknown_frame\" }));\n    return;\n  }\n\n  try {\n    await handler(socket, frame);\n  } catch (error) {\n    logger.error(\"bridge frame failed\", { kind: frame.kind, message: error.message });\n    socket.send(JSON.stringify({ kind: \"error\", reason: \"frame_failed\" }));\n  }\n}\n",
+        "apps/agent-desk/src/observability/logger.ts": "import { hostname } from \"node:os\";\n\nconst LEVELS: Record<string, number> = { debug: 10, info: 20, warn: 30, error: 40 };\nconst threshold = LEVELS[process.env.LOG_LEVEL ?? \"info\"] ?? LEVELS.info;\nconst host = hostname();\n\nfunction emit(level: string, message: string, fields?: Record<string, unknown>): void {\n  if (LEVELS[level] < threshold) return;\n  const line = JSON.stringify({ ts: new Date().toISOString(), level, host, message, ...fields });\n  process.stdout.write(`${line}\\n`);\n}\n\nexport const logger = {\n  debug: (message: string, fields?: Record<string, unknown>) => emit(\"debug\", message, fields),\n  info: (message: string, fields?: Record<string, unknown>) => emit(\"info\", message, fields),\n  warn: (message: string, fields?: Record<string, unknown>) => emit(\"warn\", message, fields),\n  error: (message: string, fields?: Record<string, unknown>) => emit(\"error\", message, fields)\n};\n",
+        "apps/agent-desk/src/bridge/handshake.js": "import { createHmac, timingSafeEqual } from \"node:crypto\";\n\n/**\n * The console cannot set headers on a WebSocket handshake, so the desk API\n * mints a short-lived signed ticket over HTTP and the console puts it on the\n * query string. The ticket is the credential; the query string is only the\n * envelope, which is why the TTL is thirty seconds and not thirty minutes.\n */\nconst SECRET = process.env.BRIDGE_TICKET_SECRET ?? \"\";\nconst TICKET_TTL_MS = 30_000;\n\nexport function verifyHandshakeTicket(raw) {\n  if (!SECRET || typeof raw !== \"string\") return null;\n\n  const [body, signature] = raw.split(\".\");\n  if (!body || !signature) return null;\n\n  const expected = createHmac(\"sha256\", SECRET).update(body).digest();\n  const provided = Buffer.from(signature, \"base64url\");\n  if (provided.length !== expected.length) return null;\n  if (!timingSafeEqual(provided, expected)) return null;\n\n  let claims;\n  try {\n    claims = JSON.parse(Buffer.from(body, \"base64url\").toString(\"utf8\"));\n  } catch {\n    return null;\n  }\n\n  if (typeof claims?.agentId !== \"string\" || typeof claims?.orgId !== \"string\") return null;\n  if (!Number.isFinite(claims.issuedAt) || Date.now() - claims.issuedAt > TICKET_TTL_MS) return null;\n\n  return {\n    agentId: claims.agentId,\n    orgId: claims.orgId,\n    role: claims.role === \"admin\" ? \"admin\" : \"agent\"\n  };\n}\n"
+      }
+    },
+    {
+      "id": "h3-realtime-desk-transcript-term",
+      "family": "realtime-desk",
+      "architecture": "Socket.IO gateway plus a raw `ws` widget bridge and Express SSE routes for a support desk, over Postgres and Mongo: two sibling deployments (apps/agent-desk and apps/shared-inbox) that share the same module layout.",
+      "language": "javascript",
+      "file": "realtime-desk/apps/agent-desk/src/bridge/transcript-stream.js",
+      "scanAs": "apps/agent-desk/src/bridge/transcript-stream.js",
+      "kind": "vulnerable",
+      "category": "sql_injection",
+      "severityBand": [
+        "critical",
+        "high"
+      ],
+      "line": 39,
+      "lineRange": [
+        33,
+        42
+      ],
+      "runtimeVerifiable": true,
+      "why": "`frame.term` is client-controlled - the frame arrives as a WebSocket message and is dispatched into this handler by `routeFrame` in bridge/router.js, so the tainted value crosses a module boundary before it gets here - and it is interpolated into a quoted ILIKE literal in the statement text while the org id and limit beside it are properly bound. A quote in the search term closes the literal and the remainder is parsed as SQL, which also defeats the `m.org_id = $1` tenant predicate on the same query.",
+      "packageJson": {
+        "name": "deskline-realtime",
+        "version": "5.4.0",
+        "private": true,
+        "type": "module",
+        "dependencies": {
+          "cookie": "^1.0.2",
+          "express": "^4.21.2",
+          "mongodb": "^6.13.0",
+          "pg": "^8.13.1",
+          "socket.io": "^4.8.1",
+          "ws": "^8.18.0"
+        },
+        "devDependencies": {
+          "@types/express": "^5.0.0",
+          "@types/pg": "^8.11.10",
+          "typescript": "^5.7.3"
+        }
+      },
+      "extraFiles": {
+        "apps/agent-desk/src/bridge/router.js": "import { logger } from \"../observability/logger.js\";\n\n/**\n * The bridge speaks a tiny JSON frame protocol. Feature modules register the\n * kinds they own at boot; an unknown kind is answered rather than ignored so a\n * client bug is visible in the console's network tab instead of hanging.\n */\nconst handlers = new Map();\n\nexport function registerFrameHandler(kind, handler) {\n  handlers.set(kind, handler);\n}\n\nexport async function routeFrame(socket, frame) {\n  const handler = handlers.get(frame?.kind);\n  if (!handler) {\n    socket.send(JSON.stringify({ kind: \"error\", reason: \"unknown_frame\" }));\n    return;\n  }\n\n  try {\n    await handler(socket, frame);\n  } catch (error) {\n    logger.error(\"bridge frame failed\", { kind: frame.kind, message: error.message });\n    socket.send(JSON.stringify({ kind: \"error\", reason: \"frame_failed\" }));\n  }\n}\n",
+        "apps/agent-desk/src/observability/logger.ts": "import { hostname } from \"node:os\";\n\nconst LEVELS: Record<string, number> = { debug: 10, info: 20, warn: 30, error: 40 };\nconst threshold = LEVELS[process.env.LOG_LEVEL ?? \"info\"] ?? LEVELS.info;\nconst host = hostname();\n\nfunction emit(level: string, message: string, fields?: Record<string, unknown>): void {\n  if (LEVELS[level] < threshold) return;\n  const line = JSON.stringify({ ts: new Date().toISOString(), level, host, message, ...fields });\n  process.stdout.write(`${line}\\n`);\n}\n\nexport const logger = {\n  debug: (message: string, fields?: Record<string, unknown>) => emit(\"debug\", message, fields),\n  info: (message: string, fields?: Record<string, unknown>) => emit(\"info\", message, fields),\n  warn: (message: string, fields?: Record<string, unknown>) => emit(\"warn\", message, fields),\n  error: (message: string, fields?: Record<string, unknown>) => emit(\"error\", message, fields)\n};\n",
+        "apps/agent-desk/src/db/postgres.ts": "import pg from \"pg\";\n\n/**\n * One pool per process. The gateway holds thousands of long-lived sockets and\n * almost no request bursts, so the pool is sized for steady concurrency and\n * every statement carries a hard timeout \u2014 a socket handler that blocks on a\n * seq scan takes the whole event loop's fairness with it.\n */\nexport const pool = new pg.Pool({\n  connectionString: process.env.DATABASE_URL,\n  max: Number(process.env.PGPOOL_MAX ?? 20),\n  idleTimeoutMillis: 30_000,\n  statement_timeout: 10_000\n});\n\npool.on(\"error\", (error: Error) => {\n  process.stderr.write(`[postgres] idle client error: ${error.message}\\n`);\n});\n"
+      }
+    },
+    {
+      "id": "h3-realtime-desk-transcript-words",
+      "family": "realtime-desk",
+      "architecture": "Socket.IO gateway plus a raw `ws` widget bridge and Express SSE routes for a support desk, over Postgres and Mongo: two sibling deployments (apps/agent-desk and apps/shared-inbox) that share the same module layout.",
+      "language": "javascript",
+      "file": "realtime-desk/apps/shared-inbox/src/bridge/transcript-stream.js",
+      "scanAs": "apps/shared-inbox/src/bridge/transcript-stream.js",
+      "kind": "safe",
+      "pairedWith": "h3-realtime-desk-transcript-term",
+      "runtimeVerifiable": true,
+      "why": "The search term is split into at most six words and each one is pushed onto `params` as its own `%word%` pattern with a matching `$n` placeholder in the clause list, so no part of the client's term ever reaches the statement text. The only interpolated fragments are the joined placeholder clauses and an ORDER BY chosen from the constant ORDERS map.",
+      "packageJson": {
+        "name": "deskline-realtime",
+        "version": "5.4.0",
+        "private": true,
+        "type": "module",
+        "dependencies": {
+          "cookie": "^1.0.2",
+          "express": "^4.21.2",
+          "mongodb": "^6.13.0",
+          "pg": "^8.13.1",
+          "socket.io": "^4.8.1",
+          "ws": "^8.18.0"
+        },
+        "devDependencies": {
+          "@types/express": "^5.0.0",
+          "@types/pg": "^8.11.10",
+          "typescript": "^5.7.3"
+        }
+      },
+      "extraFiles": {
+        "apps/shared-inbox/src/bridge/router.js": "import { logger } from \"../observability/logger.js\";\n\n/**\n * The bridge speaks a tiny JSON frame protocol. Feature modules register the\n * kinds they own at boot; an unknown kind is answered rather than ignored so a\n * client bug is visible in the console's network tab instead of hanging.\n */\nconst handlers = new Map();\n\nexport function registerFrameHandler(kind, handler) {\n  handlers.set(kind, handler);\n}\n\nexport async function routeFrame(socket, frame) {\n  const handler = handlers.get(frame?.kind);\n  if (!handler) {\n    socket.send(JSON.stringify({ kind: \"error\", reason: \"unknown_frame\" }));\n    return;\n  }\n\n  try {\n    await handler(socket, frame);\n  } catch (error) {\n    logger.error(\"bridge frame failed\", { kind: frame.kind, message: error.message });\n    socket.send(JSON.stringify({ kind: \"error\", reason: \"frame_failed\" }));\n  }\n}\n",
+        "apps/shared-inbox/src/observability/logger.ts": "import { hostname } from \"node:os\";\n\nconst LEVELS: Record<string, number> = { debug: 10, info: 20, warn: 30, error: 40 };\nconst threshold = LEVELS[process.env.LOG_LEVEL ?? \"info\"] ?? LEVELS.info;\nconst host = hostname();\n\nfunction emit(level: string, message: string, fields?: Record<string, unknown>): void {\n  if (LEVELS[level] < threshold) return;\n  const line = JSON.stringify({ ts: new Date().toISOString(), level, host, message, ...fields });\n  process.stdout.write(`${line}\\n`);\n}\n\nexport const logger = {\n  debug: (message: string, fields?: Record<string, unknown>) => emit(\"debug\", message, fields),\n  info: (message: string, fields?: Record<string, unknown>) => emit(\"info\", message, fields),\n  warn: (message: string, fields?: Record<string, unknown>) => emit(\"warn\", message, fields),\n  error: (message: string, fields?: Record<string, unknown>) => emit(\"error\", message, fields)\n};\n",
+        "apps/shared-inbox/src/db/postgres.ts": "import pg from \"pg\";\n\n/**\n * One pool per process. The gateway holds thousands of long-lived sockets and\n * almost no request bursts, so the pool is sized for steady concurrency and\n * every statement carries a hard timeout \u2014 a socket handler that blocks on a\n * seq scan takes the whole event loop's fairness with it.\n */\nexport const pool = new pg.Pool({\n  connectionString: process.env.DATABASE_URL,\n  max: Number(process.env.PGPOOL_MAX ?? 20),\n  idleTimeoutMillis: 30_000,\n  statement_timeout: 10_000\n});\n\npool.on(\"error\", (error: Error) => {\n  process.stderr.write(`[postgres] idle client error: ${error.message}\\n`);\n});\n"
+      }
+    },
+    {
+      "id": "h3-realtime-desk-saved-view",
+      "family": "realtime-desk",
+      "architecture": "Socket.IO gateway plus a raw `ws` widget bridge and Express SSE routes for a support desk, over Postgres and Mongo: two sibling deployments (apps/agent-desk and apps/shared-inbox) that share the same module layout.",
+      "language": "typescript",
+      "file": "realtime-desk/apps/shared-inbox/src/gateway/events/queue-filter.ts",
+      "scanAs": "apps/shared-inbox/src/gateway/events/queue-filter.ts",
+      "kind": "vulnerable",
+      "category": "nosql_injection",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 38,
+      "lineRange": [
+        35,
+        42
+      ],
+      "runtimeVerifiable": true,
+      "why": "The whole client-supplied `filter` object is spread into the Mongo query, so any key and any value the agent's console sends becomes part of the selector - `{\"assigneeId\":{\"$ne\":null}}` or a `$where` clause are both accepted. Worse, the spread comes *after* `orgId` and `deletedAt`, so a filter containing `orgId` overwrites the tenant scope and reads another organisation's ticket projections, including requester names.",
+      "packageJson": {
+        "name": "deskline-realtime",
+        "version": "5.4.0",
+        "private": true,
+        "type": "module",
+        "dependencies": {
+          "cookie": "^1.0.2",
+          "express": "^4.21.2",
+          "mongodb": "^6.13.0",
+          "pg": "^8.13.1",
+          "socket.io": "^4.8.1",
+          "ws": "^8.18.0"
+        },
+        "devDependencies": {
+          "@types/express": "^5.0.0",
+          "@types/pg": "^8.11.10",
+          "typescript": "^5.7.3"
+        }
+      },
+      "extraFiles": {
+        "apps/shared-inbox/src/gateway/types.ts": "import type { Socket } from \"socket.io\";\n\nexport interface DeskSession {\n  agentId: string;\n  orgId: string;\n  role: \"agent\" | \"lead\" | \"admin\";\n}\n\nexport interface DeskSocketData {\n  session: DeskSession;\n}\n\n/**\n * The event map is open on purpose: handlers are registered by feature modules\n * that ship independently, so a closed union would mean editing this file for\n * every new event. The payloads are narrowed inside each handler instead.\n */\nexport interface DeskEvents {\n  [event: string]: (...args: any[]) => void;\n}\n\nexport type DeskSocket = Socket<DeskEvents, DeskEvents, DeskEvents, DeskSocketData>;\n\nexport type AckResponse<T> = ({ ok: true } & T) | { ok: false; error: string };\nexport type Ack<T> = (response: AckResponse<T>) => void;\n",
+        "apps/shared-inbox/src/gateway/middleware/authenticate.ts": "import { parse as parseCookie } from \"cookie\";\nimport { pool } from \"../../db/postgres.js\";\nimport type { DeskSocket } from \"../types.js\";\n\nconst SESSION_COOKIE = \"deskline_session\";\n\n/**\n * Socket.IO middleware is per namespace and does not inherit from the main\n * namespace, so every namespace that carries privileged events registers this\n * itself. Forgetting it produces a connection with no socket.data.session,\n * which every handler then fails closed on.\n */\nexport async function authenticateSocket(socket: DeskSocket, next: (error?: Error) => void): Promise<void> {\n  try {\n    const token = parseCookie(socket.handshake.headers.cookie ?? \"\")[SESSION_COOKIE];\n    if (!token) {\n      next(new Error(\"unauthenticated\"));\n      return;\n    }\n\n    const { rows } = await pool.query(\n      `SELECT a.id, a.org_id, a.role\n         FROM desk_sessions s\n         JOIN agents a ON a.id = s.agent_id\n        WHERE s.token_hash = encode(digest($1, 'sha256'), 'hex')\n          AND s.expires_at > now()`,\n      [token]\n    );\n\n    if (rows.length === 0) {\n      next(new Error(\"unauthenticated\"));\n      return;\n    }\n\n    socket.data.session = { agentId: rows[0].id, orgId: rows[0].org_id, role: rows[0].role };\n    next();\n  } catch {\n    next(new Error(\"session_lookup_failed\"));\n  }\n}\n",
+        "apps/shared-inbox/src/observability/logger.ts": "import { hostname } from \"node:os\";\n\nconst LEVELS: Record<string, number> = { debug: 10, info: 20, warn: 30, error: 40 };\nconst threshold = LEVELS[process.env.LOG_LEVEL ?? \"info\"] ?? LEVELS.info;\nconst host = hostname();\n\nfunction emit(level: string, message: string, fields?: Record<string, unknown>): void {\n  if (LEVELS[level] < threshold) return;\n  const line = JSON.stringify({ ts: new Date().toISOString(), level, host, message, ...fields });\n  process.stdout.write(`${line}\\n`);\n}\n\nexport const logger = {\n  debug: (message: string, fields?: Record<string, unknown>) => emit(\"debug\", message, fields),\n  info: (message: string, fields?: Record<string, unknown>) => emit(\"info\", message, fields),\n  warn: (message: string, fields?: Record<string, unknown>) => emit(\"warn\", message, fields),\n  error: (message: string, fields?: Record<string, unknown>) => emit(\"error\", message, fields)\n};\n",
+        "apps/shared-inbox/src/db/mongo.ts": "import { MongoClient } from \"mongodb\";\n\nconst client = new MongoClient(process.env.MONGO_URL ?? \"mongodb://127.0.0.1:27017\", {\n  maxPoolSize: 20,\n  serverSelectionTimeoutMS: 5_000\n});\n\nawait client.connect();\n\nconst db = client.db(process.env.MONGO_DB ?? \"deskline\");\n\n/**\n * The queue projections live in Mongo because the console re-sorts them on\n * every keystroke and the shapes change per tenant. Tickets of record are\n * still Postgres; these documents are derived and disposable.\n */\nexport const collections = {\n  tickets: db.collection(\"ticket_projections\"),\n  queues: db.collection(\"queues\"),\n  presence: db.collection(\"presence\")\n};\n"
+      }
+    },
+    {
+      "id": "h3-realtime-desk-compiled-view",
+      "family": "realtime-desk",
+      "architecture": "Socket.IO gateway plus a raw `ws` widget bridge and Express SSE routes for a support desk, over Postgres and Mongo: two sibling deployments (apps/agent-desk and apps/shared-inbox) that share the same module layout.",
+      "language": "typescript",
+      "file": "realtime-desk/apps/agent-desk/src/gateway/events/queue-filter.ts",
+      "scanAs": "apps/agent-desk/src/gateway/events/queue-filter.ts",
+      "kind": "safe",
+      "pairedWith": "h3-realtime-desk-saved-view",
+      "runtimeVerifiable": true,
+      "why": "The view is compiled rather than merged: only keys in the FACETS allow-list survive, and every value must be a string matching an anchored character class, so no operator object can ever reach `find()`. The tenant scope and the soft-delete predicate are written after the compiled facets, which means a facet named `orgId` cannot displace them.",
+      "packageJson": {
+        "name": "deskline-realtime",
+        "version": "5.4.0",
+        "private": true,
+        "type": "module",
+        "dependencies": {
+          "cookie": "^1.0.2",
+          "express": "^4.21.2",
+          "mongodb": "^6.13.0",
+          "pg": "^8.13.1",
+          "socket.io": "^4.8.1",
+          "ws": "^8.18.0"
+        },
+        "devDependencies": {
+          "@types/express": "^5.0.0",
+          "@types/pg": "^8.11.10",
+          "typescript": "^5.7.3"
+        }
+      },
+      "extraFiles": {
+        "apps/agent-desk/src/gateway/types.ts": "import type { Socket } from \"socket.io\";\n\nexport interface DeskSession {\n  agentId: string;\n  orgId: string;\n  role: \"agent\" | \"lead\" | \"admin\";\n}\n\nexport interface DeskSocketData {\n  session: DeskSession;\n}\n\n/**\n * The event map is open on purpose: handlers are registered by feature modules\n * that ship independently, so a closed union would mean editing this file for\n * every new event. The payloads are narrowed inside each handler instead.\n */\nexport interface DeskEvents {\n  [event: string]: (...args: any[]) => void;\n}\n\nexport type DeskSocket = Socket<DeskEvents, DeskEvents, DeskEvents, DeskSocketData>;\n\nexport type AckResponse<T> = ({ ok: true } & T) | { ok: false; error: string };\nexport type Ack<T> = (response: AckResponse<T>) => void;\n",
+        "apps/agent-desk/src/gateway/middleware/authenticate.ts": "import { parse as parseCookie } from \"cookie\";\nimport { pool } from \"../../db/postgres.js\";\nimport type { DeskSocket } from \"../types.js\";\n\nconst SESSION_COOKIE = \"deskline_session\";\n\n/**\n * Socket.IO middleware is per namespace and does not inherit from the main\n * namespace, so every namespace that carries privileged events registers this\n * itself. Forgetting it produces a connection with no socket.data.session,\n * which every handler then fails closed on.\n */\nexport async function authenticateSocket(socket: DeskSocket, next: (error?: Error) => void): Promise<void> {\n  try {\n    const token = parseCookie(socket.handshake.headers.cookie ?? \"\")[SESSION_COOKIE];\n    if (!token) {\n      next(new Error(\"unauthenticated\"));\n      return;\n    }\n\n    const { rows } = await pool.query(\n      `SELECT a.id, a.org_id, a.role\n         FROM desk_sessions s\n         JOIN agents a ON a.id = s.agent_id\n        WHERE s.token_hash = encode(digest($1, 'sha256'), 'hex')\n          AND s.expires_at > now()`,\n      [token]\n    );\n\n    if (rows.length === 0) {\n      next(new Error(\"unauthenticated\"));\n      return;\n    }\n\n    socket.data.session = { agentId: rows[0].id, orgId: rows[0].org_id, role: rows[0].role };\n    next();\n  } catch {\n    next(new Error(\"session_lookup_failed\"));\n  }\n}\n",
+        "apps/agent-desk/src/observability/logger.ts": "import { hostname } from \"node:os\";\n\nconst LEVELS: Record<string, number> = { debug: 10, info: 20, warn: 30, error: 40 };\nconst threshold = LEVELS[process.env.LOG_LEVEL ?? \"info\"] ?? LEVELS.info;\nconst host = hostname();\n\nfunction emit(level: string, message: string, fields?: Record<string, unknown>): void {\n  if (LEVELS[level] < threshold) return;\n  const line = JSON.stringify({ ts: new Date().toISOString(), level, host, message, ...fields });\n  process.stdout.write(`${line}\\n`);\n}\n\nexport const logger = {\n  debug: (message: string, fields?: Record<string, unknown>) => emit(\"debug\", message, fields),\n  info: (message: string, fields?: Record<string, unknown>) => emit(\"info\", message, fields),\n  warn: (message: string, fields?: Record<string, unknown>) => emit(\"warn\", message, fields),\n  error: (message: string, fields?: Record<string, unknown>) => emit(\"error\", message, fields)\n};\n",
+        "apps/agent-desk/src/db/mongo.ts": "import { MongoClient } from \"mongodb\";\n\nconst client = new MongoClient(process.env.MONGO_URL ?? \"mongodb://127.0.0.1:27017\", {\n  maxPoolSize: 20,\n  serverSelectionTimeoutMS: 5_000\n});\n\nawait client.connect();\n\nconst db = client.db(process.env.MONGO_DB ?? \"deskline\");\n\n/**\n * The queue projections live in Mongo because the console re-sorts them on\n * every keystroke and the shapes change per tenant. Tickets of record are\n * still Postgres; these documents are derived and disposable.\n */\nexport const collections = {\n  tickets: db.collection(\"ticket_projections\"),\n  queues: db.collection(\"queues\"),\n  presence: db.collection(\"presence\")\n};\n"
+      }
+    },
+    {
+      "id": "h3-realtime-desk-ticket-panel",
+      "family": "realtime-desk",
+      "architecture": "Socket.IO gateway plus a raw `ws` widget bridge and Express SSE routes for a support desk, over Postgres and Mongo: two sibling deployments (apps/agent-desk and apps/shared-inbox) that share the same module layout.",
+      "language": "typescript",
+      "file": "realtime-desk/apps/agent-desk/src/gateway/events/ticket-open.ts",
+      "scanAs": "apps/agent-desk/src/gateway/events/ticket-open.ts",
+      "kind": "vulnerable",
+      "category": "broken_object_level_authorization",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 40,
+      "lineRange": [
+        35,
+        42
+      ],
+      "runtimeVerifiable": true,
+      "why": "The ticket is selected on its id alone: the query has no organisation predicate and no grant join, and nothing after it compares the row to `socket.data.session`. The UUID check only constrains the shape. Any authenticated agent - of any tenant - who has a ticket id therefore receives the subject, the requester's name and email address and the first page of the timeline, and the `socket.join` below also subscribes them to every later update on that ticket.",
+      "packageJson": {
+        "name": "deskline-realtime",
+        "version": "5.4.0",
+        "private": true,
+        "type": "module",
+        "dependencies": {
+          "cookie": "^1.0.2",
+          "express": "^4.21.2",
+          "mongodb": "^6.13.0",
+          "pg": "^8.13.1",
+          "socket.io": "^4.8.1",
+          "ws": "^8.18.0"
+        },
+        "devDependencies": {
+          "@types/express": "^5.0.0",
+          "@types/pg": "^8.11.10",
+          "typescript": "^5.7.3"
+        }
+      },
+      "extraFiles": {
+        "apps/agent-desk/src/gateway/types.ts": "import type { Socket } from \"socket.io\";\n\nexport interface DeskSession {\n  agentId: string;\n  orgId: string;\n  role: \"agent\" | \"lead\" | \"admin\";\n}\n\nexport interface DeskSocketData {\n  session: DeskSession;\n}\n\n/**\n * The event map is open on purpose: handlers are registered by feature modules\n * that ship independently, so a closed union would mean editing this file for\n * every new event. The payloads are narrowed inside each handler instead.\n */\nexport interface DeskEvents {\n  [event: string]: (...args: any[]) => void;\n}\n\nexport type DeskSocket = Socket<DeskEvents, DeskEvents, DeskEvents, DeskSocketData>;\n\nexport type AckResponse<T> = ({ ok: true } & T) | { ok: false; error: string };\nexport type Ack<T> = (response: AckResponse<T>) => void;\n",
+        "apps/agent-desk/src/gateway/middleware/authenticate.ts": "import { parse as parseCookie } from \"cookie\";\nimport { pool } from \"../../db/postgres.js\";\nimport type { DeskSocket } from \"../types.js\";\n\nconst SESSION_COOKIE = \"deskline_session\";\n\n/**\n * Socket.IO middleware is per namespace and does not inherit from the main\n * namespace, so every namespace that carries privileged events registers this\n * itself. Forgetting it produces a connection with no socket.data.session,\n * which every handler then fails closed on.\n */\nexport async function authenticateSocket(socket: DeskSocket, next: (error?: Error) => void): Promise<void> {\n  try {\n    const token = parseCookie(socket.handshake.headers.cookie ?? \"\")[SESSION_COOKIE];\n    if (!token) {\n      next(new Error(\"unauthenticated\"));\n      return;\n    }\n\n    const { rows } = await pool.query(\n      `SELECT a.id, a.org_id, a.role\n         FROM desk_sessions s\n         JOIN agents a ON a.id = s.agent_id\n        WHERE s.token_hash = encode(digest($1, 'sha256'), 'hex')\n          AND s.expires_at > now()`,\n      [token]\n    );\n\n    if (rows.length === 0) {\n      next(new Error(\"unauthenticated\"));\n      return;\n    }\n\n    socket.data.session = { agentId: rows[0].id, orgId: rows[0].org_id, role: rows[0].role };\n    next();\n  } catch {\n    next(new Error(\"session_lookup_failed\"));\n  }\n}\n",
+        "apps/agent-desk/src/observability/logger.ts": "import { hostname } from \"node:os\";\n\nconst LEVELS: Record<string, number> = { debug: 10, info: 20, warn: 30, error: 40 };\nconst threshold = LEVELS[process.env.LOG_LEVEL ?? \"info\"] ?? LEVELS.info;\nconst host = hostname();\n\nfunction emit(level: string, message: string, fields?: Record<string, unknown>): void {\n  if (LEVELS[level] < threshold) return;\n  const line = JSON.stringify({ ts: new Date().toISOString(), level, host, message, ...fields });\n  process.stdout.write(`${line}\\n`);\n}\n\nexport const logger = {\n  debug: (message: string, fields?: Record<string, unknown>) => emit(\"debug\", message, fields),\n  info: (message: string, fields?: Record<string, unknown>) => emit(\"info\", message, fields),\n  warn: (message: string, fields?: Record<string, unknown>) => emit(\"warn\", message, fields),\n  error: (message: string, fields?: Record<string, unknown>) => emit(\"error\", message, fields)\n};\n",
+        "apps/agent-desk/src/db/postgres.ts": "import pg from \"pg\";\n\n/**\n * One pool per process. The gateway holds thousands of long-lived sockets and\n * almost no request bursts, so the pool is sized for steady concurrency and\n * every statement carries a hard timeout \u2014 a socket handler that blocks on a\n * seq scan takes the whole event loop's fairness with it.\n */\nexport const pool = new pg.Pool({\n  connectionString: process.env.DATABASE_URL,\n  max: Number(process.env.PGPOOL_MAX ?? 20),\n  idleTimeoutMillis: 30_000,\n  statement_timeout: 10_000\n});\n\npool.on(\"error\", (error: Error) => {\n  process.stderr.write(`[postgres] idle client error: ${error.message}\\n`);\n});\n",
+        "apps/agent-desk/src/serializers/ticket-panel.ts": "interface TicketRow {\n  id: string;\n  subject: string;\n  status: string;\n  priority: string;\n  assignee_id: string | null;\n  updated_at: Date;\n  requester_email: string;\n  requester_name: string;\n}\n\ninterface TimelineRow {\n  id: string;\n  kind: string;\n  body: string;\n  author_id: string | null;\n  created_at: Date;\n}\n\n/** The exact shape the detail panel binds to. Nothing else is sent. */\nexport function ticketPanel(ticket: TicketRow, timeline: TimelineRow[]) {\n  return {\n    id: ticket.id,\n    subject: ticket.subject,\n    status: ticket.status,\n    priority: ticket.priority,\n    assigneeId: ticket.assignee_id,\n    updatedAt: ticket.updated_at,\n    requester: { email: ticket.requester_email, name: ticket.requester_name },\n    timeline: timeline.map((event) => ({\n      id: event.id,\n      kind: event.kind,\n      body: event.body,\n      authorId: event.author_id,\n      createdAt: event.created_at\n    }))\n  };\n}\n"
+      }
+    },
+    {
+      "id": "h3-realtime-desk-granted-panel",
+      "family": "realtime-desk",
+      "architecture": "Socket.IO gateway plus a raw `ws` widget bridge and Express SSE routes for a support desk, over Postgres and Mongo: two sibling deployments (apps/agent-desk and apps/shared-inbox) that share the same module layout.",
+      "language": "typescript",
+      "file": "realtime-desk/apps/shared-inbox/src/gateway/events/ticket-open.ts",
+      "scanAs": "apps/shared-inbox/src/gateway/events/ticket-open.ts",
+      "kind": "safe",
+      "pairedWith": "h3-realtime-desk-ticket-panel",
+      "runtimeVerifiable": true,
+      "why": "The authorisation is the join: the ticket row only materialises when `ticket_grants` holds a live, unrevoked grant for the socket's own agent id, which is bound as a parameter from `socket.data.session`. A ticket the caller has no grant on returns no rows and is answered with `ticket_not_found`, so the room is never joined and no panel is serialised.",
+      "packageJson": {
+        "name": "deskline-realtime",
+        "version": "5.4.0",
+        "private": true,
+        "type": "module",
+        "dependencies": {
+          "cookie": "^1.0.2",
+          "express": "^4.21.2",
+          "mongodb": "^6.13.0",
+          "pg": "^8.13.1",
+          "socket.io": "^4.8.1",
+          "ws": "^8.18.0"
+        },
+        "devDependencies": {
+          "@types/express": "^5.0.0",
+          "@types/pg": "^8.11.10",
+          "typescript": "^5.7.3"
+        }
+      },
+      "extraFiles": {
+        "apps/shared-inbox/src/gateway/types.ts": "import type { Socket } from \"socket.io\";\n\nexport interface DeskSession {\n  agentId: string;\n  orgId: string;\n  role: \"agent\" | \"lead\" | \"admin\";\n}\n\nexport interface DeskSocketData {\n  session: DeskSession;\n}\n\n/**\n * The event map is open on purpose: handlers are registered by feature modules\n * that ship independently, so a closed union would mean editing this file for\n * every new event. The payloads are narrowed inside each handler instead.\n */\nexport interface DeskEvents {\n  [event: string]: (...args: any[]) => void;\n}\n\nexport type DeskSocket = Socket<DeskEvents, DeskEvents, DeskEvents, DeskSocketData>;\n\nexport type AckResponse<T> = ({ ok: true } & T) | { ok: false; error: string };\nexport type Ack<T> = (response: AckResponse<T>) => void;\n",
+        "apps/shared-inbox/src/gateway/middleware/authenticate.ts": "import { parse as parseCookie } from \"cookie\";\nimport { pool } from \"../../db/postgres.js\";\nimport type { DeskSocket } from \"../types.js\";\n\nconst SESSION_COOKIE = \"deskline_session\";\n\n/**\n * Socket.IO middleware is per namespace and does not inherit from the main\n * namespace, so every namespace that carries privileged events registers this\n * itself. Forgetting it produces a connection with no socket.data.session,\n * which every handler then fails closed on.\n */\nexport async function authenticateSocket(socket: DeskSocket, next: (error?: Error) => void): Promise<void> {\n  try {\n    const token = parseCookie(socket.handshake.headers.cookie ?? \"\")[SESSION_COOKIE];\n    if (!token) {\n      next(new Error(\"unauthenticated\"));\n      return;\n    }\n\n    const { rows } = await pool.query(\n      `SELECT a.id, a.org_id, a.role\n         FROM desk_sessions s\n         JOIN agents a ON a.id = s.agent_id\n        WHERE s.token_hash = encode(digest($1, 'sha256'), 'hex')\n          AND s.expires_at > now()`,\n      [token]\n    );\n\n    if (rows.length === 0) {\n      next(new Error(\"unauthenticated\"));\n      return;\n    }\n\n    socket.data.session = { agentId: rows[0].id, orgId: rows[0].org_id, role: rows[0].role };\n    next();\n  } catch {\n    next(new Error(\"session_lookup_failed\"));\n  }\n}\n",
+        "apps/shared-inbox/src/observability/logger.ts": "import { hostname } from \"node:os\";\n\nconst LEVELS: Record<string, number> = { debug: 10, info: 20, warn: 30, error: 40 };\nconst threshold = LEVELS[process.env.LOG_LEVEL ?? \"info\"] ?? LEVELS.info;\nconst host = hostname();\n\nfunction emit(level: string, message: string, fields?: Record<string, unknown>): void {\n  if (LEVELS[level] < threshold) return;\n  const line = JSON.stringify({ ts: new Date().toISOString(), level, host, message, ...fields });\n  process.stdout.write(`${line}\\n`);\n}\n\nexport const logger = {\n  debug: (message: string, fields?: Record<string, unknown>) => emit(\"debug\", message, fields),\n  info: (message: string, fields?: Record<string, unknown>) => emit(\"info\", message, fields),\n  warn: (message: string, fields?: Record<string, unknown>) => emit(\"warn\", message, fields),\n  error: (message: string, fields?: Record<string, unknown>) => emit(\"error\", message, fields)\n};\n",
+        "apps/shared-inbox/src/db/postgres.ts": "import pg from \"pg\";\n\n/**\n * One pool per process. The gateway holds thousands of long-lived sockets and\n * almost no request bursts, so the pool is sized for steady concurrency and\n * every statement carries a hard timeout \u2014 a socket handler that blocks on a\n * seq scan takes the whole event loop's fairness with it.\n */\nexport const pool = new pg.Pool({\n  connectionString: process.env.DATABASE_URL,\n  max: Number(process.env.PGPOOL_MAX ?? 20),\n  idleTimeoutMillis: 30_000,\n  statement_timeout: 10_000\n});\n\npool.on(\"error\", (error: Error) => {\n  process.stderr.write(`[postgres] idle client error: ${error.message}\\n`);\n});\n",
+        "apps/shared-inbox/src/serializers/ticket-panel.ts": "interface TicketRow {\n  id: string;\n  subject: string;\n  status: string;\n  priority: string;\n  assignee_id: string | null;\n  updated_at: Date;\n  requester_email: string;\n  requester_name: string;\n}\n\ninterface TimelineRow {\n  id: string;\n  kind: string;\n  body: string;\n  author_id: string | null;\n  created_at: Date;\n}\n\n/** The exact shape the detail panel binds to. Nothing else is sent. */\nexport function ticketPanel(ticket: TicketRow, timeline: TimelineRow[]) {\n  return {\n    id: ticket.id,\n    subject: ticket.subject,\n    status: ticket.status,\n    priority: ticket.priority,\n    assigneeId: ticket.assignee_id,\n    updatedAt: ticket.updated_at,\n    requester: { email: ticket.requester_email, name: ticket.requester_name },\n    timeline: timeline.map((event) => ({\n      id: event.id,\n      kind: event.kind,\n      body: event.body,\n      authorId: event.author_id,\n      createdAt: event.created_at\n    }))\n  };\n}\n"
+      }
+    },
+    {
+      "id": "h3-realtime-desk-counter-stream",
+      "family": "realtime-desk",
+      "architecture": "Socket.IO gateway plus a raw `ws` widget bridge and Express SSE routes for a support desk, over Postgres and Mongo: two sibling deployments (apps/agent-desk and apps/shared-inbox) that share the same module layout.",
+      "language": "typescript",
+      "file": "realtime-desk/apps/agent-desk/src/routes/live-queue.ts",
+      "scanAs": "apps/agent-desk/src/routes/live-queue.ts",
+      "kind": "vulnerable",
+      "category": "insecure_cors_configuration",
+      "severityBand": [
+        "high",
+        "medium"
+      ],
+      "line": 25,
+      "lineRange": [
+        23,
+        29
+      ],
+      "route": "GET /queues/:queueId/stream",
+      "runtimeVerifiable": true,
+      "why": "The request's own `Origin` header is echoed back as `Access-Control-Allow-Origin` - falling back to `*` when absent - and paired with `Access-Control-Allow-Credentials: true`. That combination lets any site the agent visits open this EventSource with the desk session cookie attached and read the tenant's live queue counters cross-origin; the reflection makes the allow-list effectively universal, and there is no `Vary: Origin` either.",
+      "packageJson": {
+        "name": "deskline-realtime",
+        "version": "5.4.0",
+        "private": true,
+        "type": "module",
+        "dependencies": {
+          "cookie": "^1.0.2",
+          "express": "^4.21.2",
+          "mongodb": "^6.13.0",
+          "pg": "^8.13.1",
+          "socket.io": "^4.8.1",
+          "ws": "^8.18.0"
+        },
+        "devDependencies": {
+          "@types/express": "^5.0.0",
+          "@types/pg": "^8.11.10",
+          "typescript": "^5.7.3"
+        }
+      },
+      "extraFiles": {
+        "apps/agent-desk/src/routes/require-agent.ts": "import { parse as parseCookie } from \"cookie\";\nimport type { NextFunction, Request, Response } from \"express\";\nimport { pool } from \"../db/postgres.js\";\n\nconst SESSION_COOKIE = \"deskline_session\";\n\nexport interface AgentContext {\n  id: string;\n  orgId: string;\n  role: \"agent\" | \"lead\" | \"admin\";\n}\n\nexport interface AgentRequest extends Request {\n  agent: AgentContext;\n}\n\n/**\n * EventSource cannot send an Authorization header, so the desk cookie is the\n * only credential a stream request can carry. The token is stored hashed; the\n * comparison happens in Postgres against the digest, never against the raw\n * value.\n */\nexport async function requireAgent(req: Request, res: Response, next: NextFunction): Promise<void> {\n  const token = parseCookie(req.headers.cookie ?? \"\")[SESSION_COOKIE];\n  if (!token) {\n    res.status(401).json({ error: \"unauthenticated\" });\n    return;\n  }\n\n  try {\n    const { rows } = await pool.query(\n      `SELECT a.id, a.org_id, a.role\n         FROM desk_sessions s\n         JOIN agents a ON a.id = s.agent_id\n        WHERE s.token_hash = encode(digest($1, 'sha256'), 'hex')\n          AND s.expires_at > now()`,\n      [token]\n    );\n\n    if (rows.length === 0) {\n      res.status(401).json({ error: \"unauthenticated\" });\n      return;\n    }\n\n    (req as AgentRequest).agent = { id: rows[0].id, orgId: rows[0].org_id, role: rows[0].role };\n    next();\n  } catch (error) {\n    next(error);\n  }\n}\n",
+        "apps/agent-desk/src/realtime/queue-bus.ts": "import { EventEmitter } from \"node:events\";\n\n/**\n * Process-local fan-out for queue counter changes. In production this emitter\n * is fed by a single Postgres LISTEN connection held by the process, so every\n * stream in the process shares one database connection rather than polling.\n */\nexport const queueBus = new EventEmitter();\n\n// One listener per open stream, and a desk pod holds a few thousand of them.\nqueueBus.setMaxListeners(0);\n\nexport function queueChannel(orgId: string, queueId: string): string {\n  return `queue:${orgId}:${queueId}`;\n}\n",
+        "apps/agent-desk/src/db/postgres.ts": "import pg from \"pg\";\n\n/**\n * One pool per process. The gateway holds thousands of long-lived sockets and\n * almost no request bursts, so the pool is sized for steady concurrency and\n * every statement carries a hard timeout \u2014 a socket handler that blocks on a\n * seq scan takes the whole event loop's fairness with it.\n */\nexport const pool = new pg.Pool({\n  connectionString: process.env.DATABASE_URL,\n  max: Number(process.env.PGPOOL_MAX ?? 20),\n  idleTimeoutMillis: 30_000,\n  statement_timeout: 10_000\n});\n\npool.on(\"error\", (error: Error) => {\n  process.stderr.write(`[postgres] idle client error: ${error.message}\\n`);\n});\n",
+        "apps/agent-desk/src/observability/logger.ts": "import { hostname } from \"node:os\";\n\nconst LEVELS: Record<string, number> = { debug: 10, info: 20, warn: 30, error: 40 };\nconst threshold = LEVELS[process.env.LOG_LEVEL ?? \"info\"] ?? LEVELS.info;\nconst host = hostname();\n\nfunction emit(level: string, message: string, fields?: Record<string, unknown>): void {\n  if (LEVELS[level] < threshold) return;\n  const line = JSON.stringify({ ts: new Date().toISOString(), level, host, message, ...fields });\n  process.stdout.write(`${line}\\n`);\n}\n\nexport const logger = {\n  debug: (message: string, fields?: Record<string, unknown>) => emit(\"debug\", message, fields),\n  info: (message: string, fields?: Record<string, unknown>) => emit(\"info\", message, fields),\n  warn: (message: string, fields?: Record<string, unknown>) => emit(\"warn\", message, fields),\n  error: (message: string, fields?: Record<string, unknown>) => emit(\"error\", message, fields)\n};\n"
+      }
+    },
+    {
+      "id": "h3-realtime-desk-shell-stream",
+      "family": "realtime-desk",
+      "architecture": "Socket.IO gateway plus a raw `ws` widget bridge and Express SSE routes for a support desk, over Postgres and Mongo: two sibling deployments (apps/agent-desk and apps/shared-inbox) that share the same module layout.",
+      "language": "typescript",
+      "file": "realtime-desk/apps/shared-inbox/src/routes/live-queue.ts",
+      "scanAs": "apps/shared-inbox/src/routes/live-queue.ts",
+      "kind": "safe",
+      "pairedWith": "h3-realtime-desk-counter-stream",
+      "route": "GET /queues/:queueId/stream",
+      "runtimeVerifiable": true,
+      "why": "The credentialed grant is only issued when the request's Origin is an exact member of the two-entry STREAM_ORIGINS set; anything else - including a request with no Origin at all - gets no CORS headers, so no third-party page can read the stream. `Vary: Origin` is set as well, so a shared cache cannot hand one shell's grant to another.",
+      "packageJson": {
+        "name": "deskline-realtime",
+        "version": "5.4.0",
+        "private": true,
+        "type": "module",
+        "dependencies": {
+          "cookie": "^1.0.2",
+          "express": "^4.21.2",
+          "mongodb": "^6.13.0",
+          "pg": "^8.13.1",
+          "socket.io": "^4.8.1",
+          "ws": "^8.18.0"
+        },
+        "devDependencies": {
+          "@types/express": "^5.0.0",
+          "@types/pg": "^8.11.10",
+          "typescript": "^5.7.3"
+        }
+      },
+      "extraFiles": {
+        "apps/shared-inbox/src/routes/require-agent.ts": "import { parse as parseCookie } from \"cookie\";\nimport type { NextFunction, Request, Response } from \"express\";\nimport { pool } from \"../db/postgres.js\";\n\nconst SESSION_COOKIE = \"deskline_session\";\n\nexport interface AgentContext {\n  id: string;\n  orgId: string;\n  role: \"agent\" | \"lead\" | \"admin\";\n}\n\nexport interface AgentRequest extends Request {\n  agent: AgentContext;\n}\n\n/**\n * EventSource cannot send an Authorization header, so the desk cookie is the\n * only credential a stream request can carry. The token is stored hashed; the\n * comparison happens in Postgres against the digest, never against the raw\n * value.\n */\nexport async function requireAgent(req: Request, res: Response, next: NextFunction): Promise<void> {\n  const token = parseCookie(req.headers.cookie ?? \"\")[SESSION_COOKIE];\n  if (!token) {\n    res.status(401).json({ error: \"unauthenticated\" });\n    return;\n  }\n\n  try {\n    const { rows } = await pool.query(\n      `SELECT a.id, a.org_id, a.role\n         FROM desk_sessions s\n         JOIN agents a ON a.id = s.agent_id\n        WHERE s.token_hash = encode(digest($1, 'sha256'), 'hex')\n          AND s.expires_at > now()`,\n      [token]\n    );\n\n    if (rows.length === 0) {\n      res.status(401).json({ error: \"unauthenticated\" });\n      return;\n    }\n\n    (req as AgentRequest).agent = { id: rows[0].id, orgId: rows[0].org_id, role: rows[0].role };\n    next();\n  } catch (error) {\n    next(error);\n  }\n}\n",
+        "apps/shared-inbox/src/realtime/queue-bus.ts": "import { EventEmitter } from \"node:events\";\n\n/**\n * Process-local fan-out for queue counter changes. In production this emitter\n * is fed by a single Postgres LISTEN connection held by the process, so every\n * stream in the process shares one database connection rather than polling.\n */\nexport const queueBus = new EventEmitter();\n\n// One listener per open stream, and a desk pod holds a few thousand of them.\nqueueBus.setMaxListeners(0);\n\nexport function queueChannel(orgId: string, queueId: string): string {\n  return `queue:${orgId}:${queueId}`;\n}\n",
+        "apps/shared-inbox/src/db/postgres.ts": "import pg from \"pg\";\n\n/**\n * One pool per process. The gateway holds thousands of long-lived sockets and\n * almost no request bursts, so the pool is sized for steady concurrency and\n * every statement carries a hard timeout \u2014 a socket handler that blocks on a\n * seq scan takes the whole event loop's fairness with it.\n */\nexport const pool = new pg.Pool({\n  connectionString: process.env.DATABASE_URL,\n  max: Number(process.env.PGPOOL_MAX ?? 20),\n  idleTimeoutMillis: 30_000,\n  statement_timeout: 10_000\n});\n\npool.on(\"error\", (error: Error) => {\n  process.stderr.write(`[postgres] idle client error: ${error.message}\\n`);\n});\n",
+        "apps/shared-inbox/src/observability/logger.ts": "import { hostname } from \"node:os\";\n\nconst LEVELS: Record<string, number> = { debug: 10, info: 20, warn: 30, error: 40 };\nconst threshold = LEVELS[process.env.LOG_LEVEL ?? \"info\"] ?? LEVELS.info;\nconst host = hostname();\n\nfunction emit(level: string, message: string, fields?: Record<string, unknown>): void {\n  if (LEVELS[level] < threshold) return;\n  const line = JSON.stringify({ ts: new Date().toISOString(), level, host, message, ...fields });\n  process.stdout.write(`${line}\\n`);\n}\n\nexport const logger = {\n  debug: (message: string, fields?: Record<string, unknown>) => emit(\"debug\", message, fields),\n  info: (message: string, fields?: Record<string, unknown>) => emit(\"info\", message, fields),\n  warn: (message: string, fields?: Record<string, unknown>) => emit(\"warn\", message, fields),\n  error: (message: string, fields?: Record<string, unknown>) => emit(\"error\", message, fields)\n};\n"
+      }
+    }
+  ]
+}

@@ -1,0 +1,36 @@
+{
+  "tolerance": 1.6,
+  "probeMs": 21,
+  "files": [
+    {
+      "file": "packages/scan/src/dependencies/advisory-snapshot.ts",
+      "size": 345234,
+      "ms": 701
+    },
+    {
+      "file": "packages/scan/src/rules/access.ts",
+      "size": 187342,
+      "ms": 3649
+    },
+    {
+      "file": "packages/scan/src/rules/perimeter.ts",
+      "size": 141458,
+      "ms": 2863
+    },
+    {
+      "file": "packages/scan/src/rules/credentials.ts",
+      "size": 108967,
+      "ms": 1359
+    },
+    {
+      "file": "packages/scan/src/ast/taint.ts",
+      "size": 100446,
+      "ms": 1591
+    },
+    {
+      "file": "packages/scan/src/rules/parsing.ts",
+      "size": 93231,
+      "ms": 1242
+    }
+  ]
+}

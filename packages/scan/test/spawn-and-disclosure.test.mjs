@@ -95,7 +95,7 @@ test("a free-text term in a bare positional argv slot is reported as argument in
   });
   const found = ofCategory(result, "argument_injection");
   assert.equal(found.length, 1);
-  assert.equal(found[0].severity, "medium");
+  assert.equal(found[0].severity, "high");
   assert.match(found[0].remediation, /--/);
 });
 
@@ -380,4 +380,287 @@ test("a finding in a handler reached through a Map keyed by method and path carr
   const found = ofCategory(result, "sql_injection");
   assert.equal(found.length, 1);
   assert.equal(found[0].route, "POST /api/notes/search");
+});
+
+/* ------------------------------------------------------------------ *
+ * Argument injection with no shell in sight
+ *
+ * The shape these cover is the one a careful author reaches for on purpose: a
+ * fixed executable, an argument array, no `shell: true` anywhere. That removes
+ * command injection and leaves argument injection, which turns on a single
+ * character — a program parsing options cannot tell an operand from an option
+ * once the operand begins with a dash. The defences are a literal `--`, passing
+ * the value as a named option's argument, and refusing a leading dash outright;
+ * each of them has to silence the rule, and nothing else may.
+ *
+ * They also exercise the hop across a function boundary. A command-line program
+ * parses its arguments in one place and does its work in a helper, so a model
+ * that stops at the handler sees an argument array full of parameters with no
+ * origin and reports nothing at all.
+ * ------------------------------------------------------------------ */
+
+test("a caller's value reaching argv through a helper's parameters is reported", async () => {
+  const result = await scanSource({
+    "bin/replicate.js": `#!/usr/bin/env node
+      const { execFile } = require("node:child_process");
+      const { promisify } = require("node:util");
+      const { Command } = require("commander");
+      const run = promisify(execFile);
+
+      async function replicate({ upstream, workdir }) {
+        await run("git", ["clone", "--depth", "1", upstream, workdir], { timeout: 60000 });
+      }
+
+      const program = new Command();
+      program
+        .requiredOption("--upstream <url>", "repository to copy")
+        .requiredOption("--workdir <dir>", "where to put it")
+        .action(async (options) => {
+          await replicate(options);
+        });
+      program.parseAsync(process.argv);
+    `
+  });
+  const found = ofCategory(result, "argument_injection");
+  assert.equal(found.length, 1, "the helper's parameter is the caller's value under another name");
+  assert.equal(found[0].location.line, 8);
+  assert.equal(found[0].severity, "high");
+  assert.match(found[0].reasoning, /handed to `replicate`/);
+});
+
+test("the same helper with an end-of-options separator before the value is not reported", async () => {
+  const result = await scanSource({
+    "bin/replicate.js": `#!/usr/bin/env node
+      const { execFile } = require("node:child_process");
+      const { promisify } = require("node:util");
+      const { Command } = require("commander");
+      const run = promisify(execFile);
+
+      async function replicate({ upstream, workdir }) {
+        await run("git", ["clone", "--depth", "1", "--", upstream, workdir], { timeout: 60000 });
+      }
+
+      const program = new Command();
+      program
+        .requiredOption("--upstream <url>", "repository to copy")
+        .requiredOption("--workdir <dir>", "where to put it")
+        .action(async (options) => {
+          await replicate(options);
+        });
+      program.parseAsync(process.argv);
+    `
+  });
+  assert.deepEqual(ofCategory(result, "argument_injection"), []);
+});
+
+test("a value an anchored pattern refuses to let start with a dash is not reported", async () => {
+  const result = await scanSource({
+    "bin/tagged.js": `#!/usr/bin/env node
+      const { execFileSync } = require("node:child_process");
+      const { Command } = require("commander");
+      const TAG = /^[A-Za-z0-9][A-Za-z0-9._\\/-]{0,80}$/;
+
+      function archive({ tag, out }) {
+        if (!TAG.test(tag)) throw new Error(tag + " is not a usable tag");
+        execFileSync("git", ["archive", "--format=tar", tag, "--output", out]);
+      }
+
+      const program = new Command();
+      program
+        .requiredOption("--tag <ref>", "tag to archive")
+        .requiredOption("--out <file>", "file to write")
+        .action((options) => {
+          archive(options);
+        });
+      program.parseAsync(process.argv);
+    `
+  });
+  assert.deepEqual(
+    ofCategory(result, "argument_injection"),
+    [],
+    "the pattern is anchored and its first atom cannot match a dash"
+  );
+});
+
+test("an anchored pattern that still permits a leading dash leaves the finding standing", async () => {
+  const result = await scanSource({
+    "bin/tagged.js": `#!/usr/bin/env node
+      const { execFileSync } = require("node:child_process");
+      const { Command } = require("commander");
+      const TAG = /^[a-z0-9-]{1,80}$/;
+
+      function archive({ tag, out }) {
+        if (!TAG.test(tag)) throw new Error(tag + " is not a usable tag");
+        execFileSync("git", ["archive", "--format=tar", tag, "--output", out]);
+      }
+
+      const program = new Command();
+      program
+        .requiredOption("--tag <ref>", "tag to archive")
+        .requiredOption("--out <file>", "file to write")
+        .action((options) => {
+          archive(options);
+        });
+      program.parseAsync(process.argv);
+    `
+  });
+  const found = ofCategory(result, "argument_injection");
+  assert.equal(found.length, 1, "a trailing dash in the class is a literal, so `-x` still matches");
+  assert.equal(found[0].location.line, 8);
+});
+
+test("an explicit refusal of a leading dash is not reported", async () => {
+  const result = await scanSource({
+    "bin/fetch.js": `#!/usr/bin/env node
+      const { spawnSync } = require("node:child_process");
+      const { Command } = require("commander");
+
+      function download({ source, out }) {
+        if (source.startsWith("-")) throw new Error("refusing an option-shaped source");
+        spawnSync("curl", ["--silent", "--output", out, source]);
+      }
+
+      const program = new Command();
+      program
+        .requiredOption("--source <url>", "what to fetch")
+        .requiredOption("--out <file>", "where to put it")
+        .action((options) => {
+          download(options);
+        });
+      program.parseAsync(process.argv);
+    `
+  });
+  assert.deepEqual(ofCategory(result, "argument_injection"), []);
+});
+
+test("a leading-dash check that only warns leaves the finding standing", async () => {
+  const result = await scanSource({
+    "bin/fetch.js": `#!/usr/bin/env node
+      const { spawnSync } = require("node:child_process");
+      const { Command } = require("commander");
+
+      function download({ source, out }) {
+        if (source.startsWith("-")) console.warn("that looks like an option");
+        spawnSync("curl", ["--silent", "--output", out, source]);
+      }
+
+      const program = new Command();
+      program
+        .requiredOption("--source <url>", "what to fetch")
+        .requiredOption("--out <file>", "where to put it")
+        .action((options) => {
+          download(options);
+        });
+      program.parseAsync(process.argv);
+    `
+  });
+  const found = ofCategory(result, "argument_injection");
+  assert.equal(found.length, 1, "a check that lets execution continue is not a defence");
+  assert.equal(found[0].location.line, 7);
+});
+
+test("a helper every call site feeds a constant is not reported", async () => {
+  const result = await scanSource({
+    "bin/verify.js": `#!/usr/bin/env node
+      const { execFileSync } = require("node:child_process");
+      const { Command } = require("commander");
+
+      function inspect(ref) {
+        return execFileSync("git", ["rev-parse", ref]).toString().trim();
+      }
+
+      const program = new Command();
+      program
+        .requiredOption("--label <text>", "what to print")
+        .action((options) => {
+          process.stdout.write(options.label + " " + inspect("HEAD") + "\\n");
+        });
+      program.parseAsync(process.argv);
+    `
+  });
+  assert.deepEqual(
+    ofCategory(result, "argument_injection"),
+    [],
+    "the hop reports what a call site actually passes, never what a parameter could hold"
+  );
+});
+
+test("only the caller-supplied field of a call-site object literal is treated as the caller's", async () => {
+  const result = await scanSource({
+    "bin/pack.js": `#!/usr/bin/env node
+      const { execFileSync } = require("node:child_process");
+      const { Command } = require("commander");
+      const ARCHIVE_ROOT = "/srv/archives";
+
+      function pack({ root, member }) {
+        execFileSync("tar", ["--create", "--file", "/dev/stdout", root, member]);
+      }
+
+      const program = new Command();
+      program
+        .requiredOption("--member <path>", "what to add")
+        .action((options) => {
+          pack({ root: ARCHIVE_ROOT, member: options.member });
+        });
+      program.parseAsync(process.argv);
+    `
+  });
+  const found = ofCategory(result, "argument_injection");
+  assert.equal(found.length, 1);
+  assert.match(found[0].reasoning, /as `member`/);
+  assert.match(found[0].reasoning, /argv\[4\]/, "the constant root in the slot before it is not the caller's");
+});
+
+test("a shell command a helper builds from its parameter is still command injection", async () => {
+  const result = await scanSource({
+    "src/reports.js": `
+      const { exec } = require("node:child_process");
+      const { promisify } = require("node:util");
+      const runShell = promisify(exec);
+
+      async function convert(name) {
+        return runShell("soffice --convert-to pdf /srv/in/" + name);
+      }
+
+      export async function renderReport(req, res) {
+        const { stdout } = await convert(req.body.name);
+        res.json({ raw: stdout });
+      }
+    `
+  });
+  const found = ofCategory(result, "command_injection");
+  assert.equal(found.length, 1, "a handler is not less exposed for having split its work into a helper");
+  assert.equal(found[0].severity, "critical");
+});
+
+test("a value another helper returned does not carry inferred taint across a second boundary", async () => {
+  const result = await scanSource({
+    "src/probe.js": `
+      const { execFile } = require("node:child_process");
+      const { promisify } = require("node:util");
+      const run = promisify(execFile);
+      const NAME = /^[A-Za-z0-9._-]+$/;
+
+      function resolveExecutable(name) {
+        if (!NAME.test(name)) return null;
+        return "/usr/local/bin/" + name;
+      }
+
+      async function version(executable) {
+        return run(executable, ["--version"], { timeout: 2000 });
+      }
+
+      export async function toolVersion(req, res) {
+        const executable = resolveExecutable(req.query.tool);
+        if (!executable) return res.status(400).json({ error: "unknown tool" });
+        res.json({ version: await version(executable) });
+      }
+    `
+  });
+  assert.deepEqual(
+    ofCategory(result, "command_injection"),
+    [],
+    "the model assumed resolveExecutable passes its argument through; stacking that assumption on the hop invents the flow"
+  );
+  assert.deepEqual(ofCategory(result, "argument_injection"), []);
 });

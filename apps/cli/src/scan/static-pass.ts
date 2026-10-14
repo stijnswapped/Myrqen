@@ -76,7 +76,7 @@ export async function runStaticPass(
  * A candidate becomes a finding submission. The CLI owns identity, so no id is
  * supplied here; the intake assigns one and computes the fingerprint.
  */
-function toSubmission(candidate: Candidate): Record<string, unknown> {
+export function toSubmission(candidate: Candidate): Record<string, unknown> {
   return {
     title: candidate.title,
     category: candidate.category,

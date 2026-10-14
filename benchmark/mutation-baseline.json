@@ -1,0 +1,106 @@
+{
+  "corpus": {
+    "authored": {
+      "vulnerable": 86,
+      "seen": 86,
+      "recall": 1,
+      "safe": 86,
+      "safeWithFindings": 2,
+      "safeWithAssertedFindings": 0
+    },
+    "mutated": {
+      "vulnerable": 86,
+      "seen": 63,
+      "recall": 0.733,
+      "safe": 86,
+      "safeWithFindings": 7,
+      "safeWithAssertedFindings": 3
+    },
+    "properties": {
+      "vulnerable": 86,
+      "seen": 62,
+      "recall": 0.721,
+      "safe": 86,
+      "safeWithFindings": 14,
+      "safeWithAssertedFindings": 9
+    }
+  },
+  "holdout": {
+    "authored": {
+      "vulnerable": 27,
+      "seen": 27,
+      "recall": 1,
+      "safe": 27,
+      "safeWithFindings": 9,
+      "safeWithAssertedFindings": 0
+    },
+    "mutated": {
+      "vulnerable": 27,
+      "seen": 16,
+      "recall": 0.593,
+      "safe": 27,
+      "safeWithFindings": 9,
+      "safeWithAssertedFindings": 0
+    },
+    "properties": {
+      "vulnerable": 27,
+      "seen": 21,
+      "recall": 0.778,
+      "safe": 27,
+      "safeWithFindings": 11,
+      "safeWithAssertedFindings": 2
+    }
+  },
+  "holdout-2": {
+    "authored": {
+      "vulnerable": 11,
+      "seen": 9,
+      "recall": 0.818,
+      "safe": 11,
+      "safeWithFindings": 0,
+      "safeWithAssertedFindings": 0
+    },
+    "mutated": {
+      "vulnerable": 11,
+      "seen": 7,
+      "recall": 0.636,
+      "safe": 11,
+      "safeWithFindings": 0,
+      "safeWithAssertedFindings": 0
+    },
+    "properties": {
+      "vulnerable": 11,
+      "seen": 7,
+      "recall": 0.636,
+      "safe": 11,
+      "safeWithFindings": 2,
+      "safeWithAssertedFindings": 1
+    }
+  },
+  "holdout-3": {
+    "authored": {
+      "vulnerable": 34,
+      "seen": 17,
+      "recall": 0.5,
+      "safe": 34,
+      "safeWithFindings": 0,
+      "safeWithAssertedFindings": 0
+    },
+    "mutated": {
+      "vulnerable": 34,
+      "seen": 14,
+      "recall": 0.412,
+      "safe": 34,
+      "safeWithFindings": 0,
+      "safeWithAssertedFindings": 0
+    },
+    "properties": {
+      "vulnerable": 34,
+      "seen": 14,
+      "recall": 0.412,
+      "safe": 34,
+      "safeWithFindings": 0,
+      "safeWithAssertedFindings": 0
+    }
+  }
+}

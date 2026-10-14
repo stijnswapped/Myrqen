@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-19T18:29:50.119Z",
+  "generatedAt": "2026-10-14T09:06:28.595Z",
   "gates": {
     "criticalHighRecall": 0.95,
     "overallRecall": 0.9,
@@ -12,38 +12,54 @@
   "results": [
     {
       "fixture": "vuln-shop",
-      "durationMs": 10946,
+      "durationMs": 15972,
       "contextEffort": {
         "requested": "auto",
         "resolved": "high"
       },
       "staticPass": {
-        "filesParsed": 2,
-        "rulesRun": 36,
-        "durationMs": 91,
+        "filesParsed": 3,
+        "rulesRun": 49,
+        "durationMs": 158,
         "candidatesRecorded": 14,
         "notAssessed": [
-          "Data flow is followed within a single function. A value that becomes attacker-controlled in one module and is used in another is not connected.",
-          "Only JavaScript and TypeScript source is parsed. Other languages, templates, configuration files, and infrastructure definitions are not analysed.",
+          "In JavaScript and TypeScript, data flow is followed across functions and modules when a resolved call hands caller data from a request handler to another function, up to four calls deep, through ESM and CommonJS imports, re-exports, tsconfig paths and class methods, including the fields of an object argument. zod, yup, joi and valibot schemas are read field by field. A function handed caller data from more than two other modules is treated as a shared utility and not followed into. Values that travel through event emitters, queues, stored callbacks, dynamic dispatch or a call the engine cannot resolve are not connected.",
+          "JavaScript, TypeScript and Python source is parsed. Other languages, configuration files, and infrastructure definitions are not analysed, and templates are read only where a Python view renders them.",
           "Runtime behaviour, authentication state, and business rules are not exercised by the static pass; dynamic validation is the host agent's part of the assessment.",
-          "Dependency findings compare declared versions against a small offline advisory table, without resolving the lockfile or establishing reachability.",
-          "A route is reported as the file declares it. Where a router module is mounted under a prefix elsewhere in the application, the prefix is not part of the reported path."
+          "Dependency findings compare installed versions (from the lockfile, or exact pins in package.json without one) against an offline advisory snapshot. A finding is raised only where application code imports and uses an export the advisory names; a vulnerable package reached only through another package is listed as present but not reached, because this scan does not follow calls inside dependencies.",
+          "A route is reported as the file declares it, or as another module in this scan registered the handler under. Where a router is itself mounted under a prefix further up the application, that prefix is not part of the reported path.",
+          "4 handler(s) were attributed to a route declared in a different module. The route is reported as that router spells it, without any prefix the router is mounted under.",
+          "No entry point was recognised in 2 of 3 parsed file(s). Data-flow checks need an entry point to know which values a caller controls, so in those files they did not run — treat a clean result for this project as unproven rather than as evidence of safety."
         ]
       },
-      "expected": 14,
-      "reported": 14,
+      "expected": 17,
+      "reported": 17,
       "refuted": 0,
-      "truePositives": 14,
+      "truePositives": 17,
       "falsePositives": 0,
       "unmatched": [],
       "missed": [],
       "recall": 1,
+      "staticVisibleExpected": 14,
+      "staticRecall": 1,
+      "agentOnlyExpected": 3,
+      "agentOnlyRecall": 1,
+      "endToEndRecall": 1,
+      "discovery": {
+        "found": 3,
+        "failures": [],
+        "categories": [
+          "broken_object_level_authorization",
+          "account_enumeration",
+          "replayable_promotion_redemption"
+        ]
+      },
       "criticalHighRecall": 1,
       "precision": 1,
       "byCategory": {
         "broken_object_level_authorization": {
-          "expected": 1,
-          "found": 1,
+          "expected": 2,
+          "found": 2,
           "recall": 1
         },
         "broken_function_level_authorization": {
@@ -110,11 +126,21 @@
           "expected": 1,
           "found": 1,
           "recall": 1
+        },
+        "account_enumeration": {
+          "expected": 1,
+          "found": 1,
+          "recall": 1
+        },
+        "replayable_promotion_redemption": {
+          "expected": 1,
+          "found": 1,
+          "recall": 1
         }
       },
       "duplicatesPerGroundTruthIssue": 0,
       "duplicateOutcome": "merged_as_corroboration",
-      "verifiedCount": 9,
+      "verifiedCount": 12,
       "validation": {
         "verified": 9,
         "refuted": 0,
@@ -180,7 +206,7 @@
             "category": "path_traversal",
             "outcome": "verified",
             "kind": "runtime",
-            "description": "Requested /api/files with name=../../../../etc/hosts. The response reported a failure against /Users/stijn/thuis/etc/hosts, which is outside the route's base directory, so the traversal resolved and only the absence of that file prevented the read.",
+            "description": "Requested /api/files with name=../../../../etc/hosts. The response reported a failure against /Users/stijn/thuis/myrqen/.claude/worktrees/etc/hosts, which is outside the route's base directory, so the traversal resolved and only the absence of that file prevented the read.",
             "location": "GET /api/files"
           },
           {
@@ -196,7 +222,7 @@
             "category": "debug_endpoint_exposure",
             "outcome": "verified",
             "kind": "runtime",
-            "description": "Requested /debug/config with no session at all and received HTTP 200 with a body of 118 bytes.",
+            "description": "Requested /debug/config with no session at all and received HTTP 200 with a body of 123 bytes.",
             "location": "GET /debug/config"
           },
           {
@@ -237,31 +263,31 @@
       "unsafeActionsAllowed": 0,
       "canaryLeaks": 0,
       "reportFiles": {
-        "json": "/Users/stijn/thuis/myrqen/fixtures/vuln-shop/.myrqen/reports/rpt_de135b32-3f06-4a10-b0e0-f32c34995128/report.json",
-        "html": "/Users/stijn/thuis/myrqen/fixtures/vuln-shop/.myrqen/reports/rpt_de135b32-3f06-4a10-b0e0-f32c34995128/report.html",
-        "markdown": "/Users/stijn/thuis/myrqen/fixtures/vuln-shop/.myrqen/reports/rpt_de135b32-3f06-4a10-b0e0-f32c34995128/report.md",
-        "sarif": "/Users/stijn/thuis/myrqen/fixtures/vuln-shop/.myrqen/reports/rpt_de135b32-3f06-4a10-b0e0-f32c34995128/report.sarif.json"
+        "json": "/Users/stijn/thuis/myrqen/.claude/worktrees/agent-af655070ef423d7e5/fixtures/vuln-shop/.myrqen/reports/rpt_af69dcb8-5874-468b-af71-97a4b5789d53/report.json",
+        "html": "/Users/stijn/thuis/myrqen/.claude/worktrees/agent-af655070ef423d7e5/fixtures/vuln-shop/.myrqen/reports/rpt_af69dcb8-5874-468b-af71-97a4b5789d53/report.html",
+        "markdown": "/Users/stijn/thuis/myrqen/.claude/worktrees/agent-af655070ef423d7e5/fixtures/vuln-shop/.myrqen/reports/rpt_af69dcb8-5874-468b-af71-97a4b5789d53/report.md",
+        "sarif": "/Users/stijn/thuis/myrqen/.claude/worktrees/agent-af655070ef423d7e5/fixtures/vuln-shop/.myrqen/reports/rpt_af69dcb8-5874-468b-af71-97a4b5789d53/report.sarif.json"
       },
       "cloudState": "not_requested"
     },
     {
       "fixture": "safe-app",
-      "durationMs": 5806,
+      "durationMs": 8514,
       "contextEffort": {
         "requested": "auto",
         "resolved": "high"
       },
       "staticPass": {
         "filesParsed": 1,
-        "rulesRun": 36,
-        "durationMs": 70,
+        "rulesRun": 49,
+        "durationMs": 101,
         "candidatesRecorded": 0,
         "notAssessed": [
-          "Data flow is followed within a single function. A value that becomes attacker-controlled in one module and is used in another is not connected.",
-          "Only JavaScript and TypeScript source is parsed. Other languages, templates, configuration files, and infrastructure definitions are not analysed.",
+          "In JavaScript and TypeScript, data flow is followed across functions and modules when a resolved call hands caller data from a request handler to another function, up to four calls deep, through ESM and CommonJS imports, re-exports, tsconfig paths and class methods, including the fields of an object argument. zod, yup, joi and valibot schemas are read field by field. A function handed caller data from more than two other modules is treated as a shared utility and not followed into. Values that travel through event emitters, queues, stored callbacks, dynamic dispatch or a call the engine cannot resolve are not connected.",
+          "JavaScript, TypeScript and Python source is parsed. Other languages, configuration files, and infrastructure definitions are not analysed, and templates are read only where a Python view renders them.",
           "Runtime behaviour, authentication state, and business rules are not exercised by the static pass; dynamic validation is the host agent's part of the assessment.",
-          "Dependency findings compare declared versions against a small offline advisory table, without resolving the lockfile or establishing reachability.",
-          "A route is reported as the file declares it. Where a router module is mounted under a prefix elsewhere in the application, the prefix is not part of the reported path."
+          "Dependency findings compare installed versions (from the lockfile, or exact pins in package.json without one) against an offline advisory snapshot. A finding is raised only where application code imports and uses an export the advisory names; a vulnerable package reached only through another package is listed as present but not reached, because this scan does not follow calls inside dependencies.",
+          "A route is reported as the file declares it, or as another module in this scan registered the handler under. Where a router is itself mounted under a prefix further up the application, that prefix is not part of the reported path."
         ]
       },
       "expected": 0,
@@ -272,6 +298,16 @@
       "unmatched": [],
       "missed": [],
       "recall": null,
+      "staticVisibleExpected": 0,
+      "staticRecall": null,
+      "agentOnlyExpected": 0,
+      "agentOnlyRecall": null,
+      "endToEndRecall": null,
+      "discovery": {
+        "found": 0,
+        "failures": [],
+        "categories": []
+      },
       "criticalHighRecall": null,
       "precision": null,
       "byCategory": {},
@@ -297,10 +333,492 @@
       "unsafeActionsAllowed": 0,
       "canaryLeaks": 0,
       "reportFiles": {
-        "json": "/Users/stijn/thuis/myrqen/fixtures/safe-app/.myrqen/reports/rpt_389dd31a-9a81-4028-82d0-d3f7671961ac/report.json",
-        "html": "/Users/stijn/thuis/myrqen/fixtures/safe-app/.myrqen/reports/rpt_389dd31a-9a81-4028-82d0-d3f7671961ac/report.html",
-        "markdown": "/Users/stijn/thuis/myrqen/fixtures/safe-app/.myrqen/reports/rpt_389dd31a-9a81-4028-82d0-d3f7671961ac/report.md",
-        "sarif": "/Users/stijn/thuis/myrqen/fixtures/safe-app/.myrqen/reports/rpt_389dd31a-9a81-4028-82d0-d3f7671961ac/report.sarif.json"
+        "json": "/Users/stijn/thuis/myrqen/.claude/worktrees/agent-af655070ef423d7e5/fixtures/safe-app/.myrqen/reports/rpt_afb1931a-16fa-4abe-bbd0-b58a045737c2/report.json",
+        "html": "/Users/stijn/thuis/myrqen/.claude/worktrees/agent-af655070ef423d7e5/fixtures/safe-app/.myrqen/reports/rpt_afb1931a-16fa-4abe-bbd0-b58a045737c2/report.html",
+        "markdown": "/Users/stijn/thuis/myrqen/.claude/worktrees/agent-af655070ef423d7e5/fixtures/safe-app/.myrqen/reports/rpt_afb1931a-16fa-4abe-bbd0-b58a045737c2/report.md",
+        "sarif": "/Users/stijn/thuis/myrqen/.claude/worktrees/agent-af655070ef423d7e5/fixtures/safe-app/.myrqen/reports/rpt_afb1931a-16fa-4abe-bbd0-b58a045737c2/report.sarif.json"
+      },
+      "cloudState": "not_requested"
+    },
+    {
+      "fixture": "vuln-fastapi",
+      "durationMs": 13390,
+      "contextEffort": {
+        "requested": "auto",
+        "resolved": "high"
+      },
+      "staticPass": {
+        "filesParsed": 13,
+        "rulesRun": 62,
+        "durationMs": 47,
+        "candidatesRecorded": 13,
+        "notAssessed": [
+          "In JavaScript and TypeScript, data flow is followed across functions and modules when a resolved call hands caller data from a request handler to another function, up to four calls deep, through ESM and CommonJS imports, re-exports, tsconfig paths and class methods, including the fields of an object argument. zod, yup, joi and valibot schemas are read field by field. A function handed caller data from more than two other modules is treated as a shared utility and not followed into. Values that travel through event emitters, queues, stored callbacks, dynamic dispatch or a call the engine cannot resolve are not connected.",
+          "JavaScript, TypeScript and Python source is parsed. Other languages, configuration files, and infrastructure definitions are not analysed, and templates are read only where a Python view renders them.",
+          "Runtime behaviour, authentication state, and business rules are not exercised by the static pass; dynamic validation is the host agent's part of the assessment.",
+          "Dependency findings compare installed versions (from the lockfile, or exact pins in package.json without one) against an offline advisory snapshot. A finding is raised only where application code imports and uses an export the advisory names; a vulnerable package reached only through another package is listed as present but not reached, because this scan does not follow calls inside dependencies.",
+          "A route is reported as the file declares it, or as another module in this scan registered the handler under. Where a router is itself mounted under a prefix further up the application, that prefix is not part of the reported path.",
+          "Python entry points are recognised for FastAPI and Flask. Django, class-based views (Flask MethodView), plain Starlette, aiohttp, Tornado and other frameworks are parsed, but their handlers are not recognised as entry points, so data-flow checks do not start from them.",
+          "Python data flow follows calls into functions and methods defined in this project, across modules, including functions handed to a background task, thread or task queue with their arguments. A value one route stores in the session is followed, by key, to the routes that read it back, and a value a route writes to a stored record's field is followed, by field name, to unescaped markup and template source that read the field back. It does not follow other callbacks, dynamic dispatch, values kept in caches, stored data reaching other sinks, or decorators that rewrite a handler's arguments.",
+          "Python dependency manifests (requirements.txt, pyproject.toml, poetry.lock) are not compared against advisories.",
+          "5 of 13 Python file(s) declare no route; they were analysed only as code reachable from the 21 recognised route(s) (FastAPI)."
+        ]
+      },
+      "expected": 13,
+      "reported": 13,
+      "refuted": 0,
+      "truePositives": 13,
+      "falsePositives": 0,
+      "unmatched": [],
+      "missed": [],
+      "recall": 1,
+      "staticVisibleExpected": 13,
+      "staticRecall": 1,
+      "agentOnlyExpected": 0,
+      "agentOnlyRecall": null,
+      "endToEndRecall": 1,
+      "discovery": {
+        "found": 0,
+        "failures": [],
+        "categories": []
+      },
+      "criticalHighRecall": 1,
+      "precision": 1,
+      "byCategory": {
+        "broken_object_level_authorization": {
+          "expected": 1,
+          "found": 1,
+          "recall": 1
+        },
+        "sql_injection": {
+          "expected": 1,
+          "found": 1,
+          "recall": 1
+        },
+        "server_side_request_forgery": {
+          "expected": 1,
+          "found": 1,
+          "recall": 1
+        },
+        "path_traversal": {
+          "expected": 1,
+          "found": 1,
+          "recall": 1
+        },
+        "hardcoded_secret": {
+          "expected": 1,
+          "found": 1,
+          "recall": 1
+        },
+        "debug_endpoint_exposure": {
+          "expected": 1,
+          "found": 1,
+          "recall": 1
+        },
+        "reflected_cross_site_scripting": {
+          "expected": 1,
+          "found": 1,
+          "recall": 1
+        },
+        "insecure_cookie_configuration": {
+          "expected": 1,
+          "found": 1,
+          "recall": 1
+        },
+        "open_redirect": {
+          "expected": 1,
+          "found": 1,
+          "recall": 1
+        },
+        "command_injection": {
+          "expected": 1,
+          "found": 1,
+          "recall": 1
+        },
+        "template_injection": {
+          "expected": 1,
+          "found": 1,
+          "recall": 1
+        },
+        "unsafe_deserialization": {
+          "expected": 1,
+          "found": 1,
+          "recall": 1
+        },
+        "missing_authentication": {
+          "expected": 1,
+          "found": 1,
+          "recall": 1
+        }
+      },
+      "duplicatesPerGroundTruthIssue": 0,
+      "duplicateOutcome": "merged_as_corroboration",
+      "verifiedCount": 9,
+      "validation": {
+        "verified": 9,
+        "refuted": 0,
+        "unsettled": 4,
+        "identitiesUsed": [
+          "user_a",
+          "user_b",
+          "admin"
+        ],
+        "outcomes": [
+          {
+            "findingId": "MYR-001",
+            "category": "sql_injection",
+            "outcome": "verified",
+            "kind": "runtime",
+            "description": "A term that matches nothing returned 0 row(s); the same term followed by a quote, a tautology and a comment returned 4. The value is part of the statement text.",
+            "location": "GET /api/products/search"
+          },
+          {
+            "findingId": "MYR-002",
+            "category": "command_injection",
+            "outcome": "unsettled",
+            "description": "No safe runtime probe exists for command_injection; it stays as the static pass reported it."
+          },
+          {
+            "findingId": "MYR-003",
+            "category": "template_injection",
+            "outcome": "verified",
+            "kind": "runtime",
+            "description": "Requested /api/greeting with template={{7*7}}myrqen; the response contained 49myrqen, so the server evaluated the caller's text as a template expression.",
+            "location": "GET /api/greeting"
+          },
+          {
+            "findingId": "MYR-004",
+            "category": "unsafe_deserialization",
+            "outcome": "unsettled",
+            "description": "No safe runtime probe exists for unsafe_deserialization; it stays as the static pass reported it."
+          },
+          {
+            "findingId": "MYR-005",
+            "category": "hardcoded_secret",
+            "outcome": "unsettled",
+            "description": "No safe runtime probe exists for hardcoded_secret; it stays as the static pass reported it."
+          },
+          {
+            "findingId": "MYR-006",
+            "category": "path_traversal",
+            "outcome": "verified",
+            "kind": "runtime",
+            "description": "Requested /api/files with name=../../../../etc/hosts. The response reported a failure against /Users/stijn/thuis/myrqen/.claude/worktrees/agent-af655070ef423d7e5/fixtures/vuln-fastapi/data/../../../../etc/hosts, which is outside the route's base directory, so the traversal resolved and only the absence of that file prevented the read.",
+            "location": "GET /api/files"
+          },
+          {
+            "findingId": "MYR-007",
+            "category": "server_side_request_forgery",
+            "outcome": "verified",
+            "kind": "runtime",
+            "description": "POST /api/import fetched a destination supplied entirely by the caller and returned HTTP 200. No allowlist was consulted, so the destination is the caller's choice.",
+            "location": "POST /api/import"
+          },
+          {
+            "findingId": "MYR-008",
+            "category": "broken_object_level_authorization",
+            "outcome": "verified",
+            "kind": "identity_differential",
+            "description": "Signed in as user_a and requested /api/orders/102, a record listed for user_b. The response was HTTP 200 with a body of 84 bytes.",
+            "location": "GET /api/orders/102"
+          },
+          {
+            "findingId": "MYR-009",
+            "category": "debug_endpoint_exposure",
+            "outcome": "unsettled",
+            "description": "No route was attributed to this candidate."
+          },
+          {
+            "findingId": "MYR-010",
+            "category": "reflected_cross_site_scripting",
+            "outcome": "verified",
+            "kind": "runtime",
+            "description": "Requested /search with a markup probe in the q parameter; the response contained the probe unescaped, so the caller controls markup in the document.",
+            "location": "GET /search"
+          },
+          {
+            "findingId": "MYR-011",
+            "category": "missing_authentication",
+            "outcome": "verified",
+            "kind": "runtime",
+            "description": "Requested /api/account/export with no session at all and received HTTP 200 with a body of 232 bytes.",
+            "location": "GET /api/account/export"
+          },
+          {
+            "findingId": "MYR-012",
+            "category": "insecure_cookie_configuration",
+            "outcome": "verified",
+            "kind": "runtime",
+            "description": "The session cookie returned by the login route is missing HttpOnly, Secure.",
+            "location": "POST /api/login"
+          },
+          {
+            "findingId": "MYR-013",
+            "category": "open_redirect",
+            "outcome": "verified",
+            "kind": "runtime",
+            "description": "Requested /api/logout with next set to an external origin; the response was HTTP 302 with Location https://example.invalid/myrqen-probe. The probe did not follow it.",
+            "location": "GET /api/logout"
+          }
+        ]
+      },
+      "severityMismatches": [],
+      "verificationMismatches": [],
+      "evidenceShortfalls": [],
+      "safetyViolations": [],
+      "unsafeActionsBlocked": 4,
+      "unsafeActionsAllowed": 0,
+      "canaryLeaks": 0,
+      "reportFiles": {
+        "json": "/Users/stijn/thuis/myrqen/.claude/worktrees/agent-af655070ef423d7e5/fixtures/vuln-fastapi/.myrqen/reports/rpt_8dc69739-4f06-45a1-9c54-43e853b997b6/report.json",
+        "html": "/Users/stijn/thuis/myrqen/.claude/worktrees/agent-af655070ef423d7e5/fixtures/vuln-fastapi/.myrqen/reports/rpt_8dc69739-4f06-45a1-9c54-43e853b997b6/report.html",
+        "markdown": "/Users/stijn/thuis/myrqen/.claude/worktrees/agent-af655070ef423d7e5/fixtures/vuln-fastapi/.myrqen/reports/rpt_8dc69739-4f06-45a1-9c54-43e853b997b6/report.md",
+        "sarif": "/Users/stijn/thuis/myrqen/.claude/worktrees/agent-af655070ef423d7e5/fixtures/vuln-fastapi/.myrqen/reports/rpt_8dc69739-4f06-45a1-9c54-43e853b997b6/report.sarif.json"
+      },
+      "cloudState": "not_requested"
+    },
+    {
+      "fixture": "vuln-flask",
+      "durationMs": 16132,
+      "contextEffort": {
+        "requested": "auto",
+        "resolved": "high"
+      },
+      "staticPass": {
+        "filesParsed": 12,
+        "rulesRun": 62,
+        "durationMs": 45,
+        "candidatesRecorded": 14,
+        "notAssessed": [
+          "In JavaScript and TypeScript, data flow is followed across functions and modules when a resolved call hands caller data from a request handler to another function, up to four calls deep, through ESM and CommonJS imports, re-exports, tsconfig paths and class methods, including the fields of an object argument. zod, yup, joi and valibot schemas are read field by field. A function handed caller data from more than two other modules is treated as a shared utility and not followed into. Values that travel through event emitters, queues, stored callbacks, dynamic dispatch or a call the engine cannot resolve are not connected.",
+          "JavaScript, TypeScript and Python source is parsed. Other languages, configuration files, and infrastructure definitions are not analysed, and templates are read only where a Python view renders them.",
+          "Runtime behaviour, authentication state, and business rules are not exercised by the static pass; dynamic validation is the host agent's part of the assessment.",
+          "Dependency findings compare installed versions (from the lockfile, or exact pins in package.json without one) against an offline advisory snapshot. A finding is raised only where application code imports and uses an export the advisory names; a vulnerable package reached only through another package is listed as present but not reached, because this scan does not follow calls inside dependencies.",
+          "A route is reported as the file declares it, or as another module in this scan registered the handler under. Where a router is itself mounted under a prefix further up the application, that prefix is not part of the reported path.",
+          "Python entry points are recognised for FastAPI and Flask. Django, class-based views (Flask MethodView), plain Starlette, aiohttp, Tornado and other frameworks are parsed, but their handlers are not recognised as entry points, so data-flow checks do not start from them.",
+          "Python data flow follows calls into functions and methods defined in this project, across modules, including functions handed to a background task, thread or task queue with their arguments. A value one route stores in the session is followed, by key, to the routes that read it back, and a value a route writes to a stored record's field is followed, by field name, to unescaped markup and template source that read the field back. It does not follow other callbacks, dynamic dispatch, values kept in caches, stored data reaching other sinks, or decorators that rewrite a handler's arguments.",
+          "Python dependency manifests (requirements.txt, pyproject.toml, poetry.lock) are not compared against advisories.",
+          "3 of 12 Python file(s) declare no route; they were analysed only as code reachable from the 22 recognised route(s) (Flask)."
+        ]
+      },
+      "expected": 14,
+      "reported": 14,
+      "refuted": 0,
+      "truePositives": 14,
+      "falsePositives": 0,
+      "unmatched": [],
+      "missed": [],
+      "recall": 1,
+      "staticVisibleExpected": 14,
+      "staticRecall": 1,
+      "agentOnlyExpected": 0,
+      "agentOnlyRecall": null,
+      "endToEndRecall": 1,
+      "discovery": {
+        "found": 0,
+        "failures": [],
+        "categories": []
+      },
+      "criticalHighRecall": 1,
+      "precision": 1,
+      "byCategory": {
+        "broken_object_level_authorization": {
+          "expected": 1,
+          "found": 1,
+          "recall": 1
+        },
+        "sql_injection": {
+          "expected": 1,
+          "found": 1,
+          "recall": 1
+        },
+        "server_side_request_forgery": {
+          "expected": 1,
+          "found": 1,
+          "recall": 1
+        },
+        "path_traversal": {
+          "expected": 1,
+          "found": 1,
+          "recall": 1
+        },
+        "hardcoded_secret": {
+          "expected": 1,
+          "found": 1,
+          "recall": 1
+        },
+        "debug_endpoint_exposure": {
+          "expected": 1,
+          "found": 1,
+          "recall": 1
+        },
+        "reflected_cross_site_scripting": {
+          "expected": 2,
+          "found": 2,
+          "recall": 1
+        },
+        "insecure_cookie_configuration": {
+          "expected": 1,
+          "found": 1,
+          "recall": 1
+        },
+        "open_redirect": {
+          "expected": 1,
+          "found": 1,
+          "recall": 1
+        },
+        "command_injection": {
+          "expected": 1,
+          "found": 1,
+          "recall": 1
+        },
+        "template_injection": {
+          "expected": 1,
+          "found": 1,
+          "recall": 1
+        },
+        "unsafe_deserialization": {
+          "expected": 1,
+          "found": 1,
+          "recall": 1
+        },
+        "missing_authentication": {
+          "expected": 1,
+          "found": 1,
+          "recall": 1
+        }
+      },
+      "duplicatesPerGroundTruthIssue": 0,
+      "duplicateOutcome": "merged_as_corroboration",
+      "verifiedCount": 10,
+      "validation": {
+        "verified": 10,
+        "refuted": 0,
+        "unsettled": 4,
+        "identitiesUsed": [
+          "user_a",
+          "user_b",
+          "admin"
+        ],
+        "outcomes": [
+          {
+            "findingId": "MYR-001",
+            "category": "sql_injection",
+            "outcome": "verified",
+            "kind": "runtime",
+            "description": "A term that matches nothing returned 0 row(s); the same term followed by a quote, a tautology and a comment returned 4. The value is part of the statement text.",
+            "location": "GET /api/products/search"
+          },
+          {
+            "findingId": "MYR-002",
+            "category": "command_injection",
+            "outcome": "unsettled",
+            "description": "No safe runtime probe exists for command_injection; it stays as the static pass reported it."
+          },
+          {
+            "findingId": "MYR-003",
+            "category": "template_injection",
+            "outcome": "verified",
+            "kind": "runtime",
+            "description": "Requested /api/greeting with template={{7*7}}myrqen; the response contained 49myrqen, so the server evaluated the caller's text as a template expression.",
+            "location": "GET /api/greeting"
+          },
+          {
+            "findingId": "MYR-004",
+            "category": "unsafe_deserialization",
+            "outcome": "unsettled",
+            "description": "No safe runtime probe exists for unsafe_deserialization; it stays as the static pass reported it."
+          },
+          {
+            "findingId": "MYR-005",
+            "category": "hardcoded_secret",
+            "outcome": "unsettled",
+            "description": "No safe runtime probe exists for hardcoded_secret; it stays as the static pass reported it."
+          },
+          {
+            "findingId": "MYR-006",
+            "category": "path_traversal",
+            "outcome": "verified",
+            "kind": "runtime",
+            "description": "Requested /api/files with name=../../../../etc/hosts. The response reported a failure against /Users/stijn/thuis/myrqen/.claude/worktrees/agent-af655070ef423d7e5/fixtures/vuln-flask/app/../data/../../../../etc/hosts, which is outside the route's base directory, so the traversal resolved and only the absence of that file prevented the read.",
+            "location": "GET /api/files"
+          },
+          {
+            "findingId": "MYR-007",
+            "category": "server_side_request_forgery",
+            "outcome": "verified",
+            "kind": "runtime",
+            "description": "POST /api/import fetched a destination supplied entirely by the caller and returned HTTP 200. No allowlist was consulted, so the destination is the caller's choice.",
+            "location": "POST /api/import"
+          },
+          {
+            "findingId": "MYR-008",
+            "category": "broken_object_level_authorization",
+            "outcome": "verified",
+            "kind": "identity_differential",
+            "description": "Signed in as user_a and requested /api/notes/202, a record listed for user_b. The response was HTTP 200 with a body of 71 bytes.",
+            "location": "GET /api/notes/202"
+          },
+          {
+            "findingId": "MYR-009",
+            "category": "missing_authentication",
+            "outcome": "verified",
+            "kind": "runtime",
+            "description": "Requested /api/account/export with no session at all and received HTTP 200 with a body of 353 bytes.",
+            "location": "GET /api/account/export"
+          },
+          {
+            "findingId": "MYR-010",
+            "category": "insecure_cookie_configuration",
+            "outcome": "verified",
+            "kind": "runtime",
+            "description": "The session cookie returned by the login route is missing HttpOnly, Secure, SameSite.",
+            "location": "POST /api/login"
+          },
+          {
+            "findingId": "MYR-011",
+            "category": "open_redirect",
+            "outcome": "verified",
+            "kind": "runtime",
+            "description": "Requested /api/logout with next set to an external origin; the response was HTTP 302 with Location https://example.invalid/myrqen-probe. The probe did not follow it.",
+            "location": "GET /api/logout"
+          },
+          {
+            "findingId": "MYR-012",
+            "category": "reflected_cross_site_scripting",
+            "outcome": "verified",
+            "kind": "runtime",
+            "description": "Requested /search with a markup probe in the q parameter; the response contained the probe unescaped, so the caller controls markup in the document.",
+            "location": "GET /search"
+          },
+          {
+            "findingId": "MYR-013",
+            "category": "reflected_cross_site_scripting",
+            "outcome": "verified",
+            "kind": "runtime",
+            "description": "Requested /welcome with a markup probe in the name parameter; the response contained the probe unescaped, so the caller controls markup in the document.",
+            "location": "GET /welcome"
+          },
+          {
+            "findingId": "MYR-014",
+            "category": "debug_endpoint_exposure",
+            "outcome": "unsettled",
+            "description": "No route was attributed to this candidate."
+          }
+        ]
+      },
+      "severityMismatches": [],
+      "verificationMismatches": [],
+      "evidenceShortfalls": [],
+      "safetyViolations": [],
+      "unsafeActionsBlocked": 4,
+      "unsafeActionsAllowed": 0,
+      "canaryLeaks": 0,
+      "reportFiles": {
+        "json": "/Users/stijn/thuis/myrqen/.claude/worktrees/agent-af655070ef423d7e5/fixtures/vuln-flask/.myrqen/reports/rpt_87c4c5ed-0077-44a6-99f2-498b82bc1fa9/report.json",
+        "html": "/Users/stijn/thuis/myrqen/.claude/worktrees/agent-af655070ef423d7e5/fixtures/vuln-flask/.myrqen/reports/rpt_87c4c5ed-0077-44a6-99f2-498b82bc1fa9/report.html",
+        "markdown": "/Users/stijn/thuis/myrqen/.claude/worktrees/agent-af655070ef423d7e5/fixtures/vuln-flask/.myrqen/reports/rpt_87c4c5ed-0077-44a6-99f2-498b82bc1fa9/report.md",
+        "sarif": "/Users/stijn/thuis/myrqen/.claude/worktrees/agent-af655070ef423d7e5/fixtures/vuln-flask/.myrqen/reports/rpt_87c4c5ed-0077-44a6-99f2-498b82bc1fa9/report.sarif.json"
       },
       "cloudState": "not_requested"
     }

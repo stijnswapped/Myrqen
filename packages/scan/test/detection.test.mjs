@@ -309,6 +309,7 @@ test("test and fixture files are excluded and the exclusion is disclosed", async
 test("coverage always states what the engine cannot see", async () => {
   const result = await scanSource({ "src/app.js": "export const value = 1;\n" });
   assert.ok(result.coverage.notAssessed.length >= 4);
-  assert.ok(result.coverage.notAssessed.some((statement) => /single function/.test(statement)));
+  // The data-flow limit is stated: how far it reaches, and what it still does not connect.
+  assert.ok(result.coverage.notAssessed.some((statement) => /across functions and modules/.test(statement) && /not connected/.test(statement)));
   assert.ok(result.coverage.rulesRun.length >= 19);
 });

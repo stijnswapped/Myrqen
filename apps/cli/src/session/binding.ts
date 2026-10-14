@@ -17,6 +17,23 @@ export interface BindingOutcome {
   message?: string;
 }
 
+/**
+ * A workspace lookup or project creation that fails is not a reason to abandon
+ * the scan. The static pass, the report and every source check need no network
+ * at all, so an unreachable or failing API degrades to exactly the outcome an
+ * unlinked device already gets — local, unbound, and said out loud — rather than
+ * throwing out of `session start` and leaving the user with no report and an
+ * exit code.
+ */
+function unreachable(attempt: string, error: unknown): BindingOutcome {
+  const detail = error instanceof Error ? error.message : "the request failed";
+  return {
+    bindingSource: "unbound",
+    workspaceKind: "personal",
+    message: `${attempt} (${detail}), so this repository stays unbound and the scan stays local.`
+  };
+}
+
 function bindingPublicId(): string {
   return `bnd_${crypto.randomBytes(16).toString("base64url")}`;
 }
@@ -43,7 +60,12 @@ export async function resolveBinding(
     };
   }
 
-  const { workspaces } = await client.workspaces();
+  let workspaces: WorkspaceSummary[];
+  try {
+    ({ workspaces } = await client.workspaces());
+  } catch (error) {
+    return unreachable("The workspace list could not be read", error);
+  }
   if (workspaces.length === 0) {
     return {
       bindingSource: "unbound",
@@ -101,11 +123,16 @@ export async function resolveBinding(
   }
 
   const publicId = bindingPublicId();
-  const created = await client.createProject({
-    workspaceId: chosen.id,
-    name: projectName,
-    bindingPublicId: publicId
-  });
+  let created: { projectId: string };
+  try {
+    created = await client.createProject({
+      workspaceId: chosen.id,
+      name: projectName,
+      bindingPublicId: publicId
+    });
+  } catch (error) {
+    return unreachable(`The project could not be created in ${chosen.name}`, error);
+  }
 
   if (chosen.kind === "team") {
     await writeTeamBinding(repoRoot, { workspaceId: chosen.id, projectId: created.projectId });

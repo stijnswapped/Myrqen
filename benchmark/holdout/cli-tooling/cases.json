@@ -1,0 +1,117 @@
+{
+  "family": "cli-tooling",
+  "architecture": "Node command-line tools shipped in the product's own npm package: commander for argument parsing, yauzl for archives downloaded from the export API, execFile for git operations and lodash.template for report rendering, all run unattended in CI",
+  "cases": [
+    {
+      "id": "holdout-cli-bundle-entries",
+      "family": "cli-tooling",
+      "architecture": "commander CLI extracting an archive downloaded from the workspace export API",
+      "language": "javascript",
+      "file": "cli-tooling/bin/bundle-restore.js",
+      "kind": "vulnerable",
+      "category": "zip_slip",
+      "severityBand": ["high", "critical"],
+      "line": 49,
+      "lineRange": [49, 52],
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "@acme-suite/cli",
+        "version": "1.0.0",
+        "bin": { "acme-restore": "bin/bundle-restore.js" },
+        "dependencies": { "commander": "^12.0.0", "yauzl": "^3.1.3", "lodash.template": "^4.5.0" }
+      },
+      "why": "The manifest entry is deliberately reduced to its basename, so the file shows that its author knew entry names are not trustworthy. Every other entry is joined onto the destination as-is and its parent directories are created on demand, so an archive entry named with leading ../ segments writes anywhere the CI user can write, including the shell profile and the checked-out build scripts."
+    },
+    {
+      "id": "holdout-cli-snapshot-entries",
+      "family": "cli-tooling",
+      "architecture": "commander CLI extracting an archive downloaded from the workspace export API",
+      "language": "javascript",
+      "file": "cli-tooling/bin/snapshot-restore.js",
+      "kind": "safe",
+      "pairedWith": "holdout-cli-bundle-entries",
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "@acme-suite/cli",
+        "version": "1.0.0",
+        "bin": { "acme-restore": "bin/snapshot-restore.js" },
+        "dependencies": { "commander": "^12.0.0", "yauzl": "^3.1.3", "lodash.template": "^4.5.0" }
+      },
+      "why": "The archive entry name still decides the output path and directories are still created from it, but the resolved path is required to sit inside the destination root before anything is written, and entries that fail are recorded and skipped."
+    },
+    {
+      "id": "holdout-cli-mirror-remote",
+      "family": "cli-tooling",
+      "architecture": "commander CLI running git through execFile with per-tenant remote URLs from the console",
+      "language": "javascript",
+      "file": "cli-tooling/bin/mirror-sync.js",
+      "kind": "vulnerable",
+      "category": "argument_injection",
+      "severityBand": ["high", "critical"],
+      "line": 21,
+      "lineRange": [21, 23],
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "@acme-suite/cli",
+        "version": "1.0.0",
+        "bin": { "acme-mirror": "bin/mirror-sync.js" },
+        "dependencies": { "commander": "^12.0.0", "yauzl": "^3.1.3", "lodash.template": "^4.5.0" }
+      },
+      "why": "There is no shell anywhere in this file and the branch name is pattern-checked, so the usual shape of the problem is absent. The source URL is passed as a positional argument with no separator and no validation, and git treats a value beginning with --upload-pack= as an option rather than a repository, which runs the attacker's command as the CI user."
+    },
+    {
+      "id": "holdout-cli-fork-remote",
+      "family": "cli-tooling",
+      "architecture": "commander CLI running git through execFile with per-tenant remote URLs from the console",
+      "language": "javascript",
+      "file": "cli-tooling/bin/fork-sync.js",
+      "kind": "safe",
+      "pairedWith": "holdout-cli-mirror-remote",
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "@acme-suite/cli",
+        "version": "1.0.0",
+        "bin": { "acme-mirror": "bin/fork-sync.js" },
+        "dependencies": { "commander": "^12.0.0", "yauzl": "^3.1.3", "lodash.template": "^4.5.0" }
+      },
+      "why": "The same git subcommands run through the same execFile wrapper with the same caller-supplied remotes, but each remote must parse as an https URL on an allowed host with no embedded credentials, and the positional arguments are separated from the options with --."
+    },
+    {
+      "id": "holdout-cli-theme-layout",
+      "family": "cli-tooling",
+      "architecture": "commander CLI rendering a report through a theme package fetched from a tenant-configured URL",
+      "language": "javascript",
+      "file": "cli-tooling/bin/theme-render.js",
+      "kind": "vulnerable",
+      "category": "template_injection",
+      "severityBand": ["critical", "high"],
+      "line": 20,
+      "lineRange": [19, 26],
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "@acme-suite/cli",
+        "version": "1.0.0",
+        "bin": { "acme-render": "bin/theme-render.js" },
+        "dependencies": { "commander": "^12.0.0", "yauzl": "^3.1.3", "lodash.template": "^4.5.0" }
+      },
+      "why": "The layout is fetched from a URL a tenant sets in their branding settings and handed to lodash.template, which compiles the text into a JavaScript function; the <% %> body of that text runs with the privileges of the rendering job, so whoever controls the theme host controls the reporting worker. The fixed summary template in the same file is the shape that is safe."
+    },
+    {
+      "id": "holdout-cli-statement-layout",
+      "family": "cli-tooling",
+      "architecture": "commander CLI rendering a report through a theme package fetched from a tenant-configured URL",
+      "language": "javascript",
+      "file": "cli-tooling/bin/statement-render.js",
+      "kind": "safe",
+      "pairedWith": "holdout-cli-theme-layout",
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "@acme-suite/cli",
+        "version": "1.0.0",
+        "bin": { "acme-render": "bin/statement-render.js" },
+        "dependencies": { "commander": "^12.0.0", "yauzl": "^3.1.3", "lodash.template": "^4.5.0" }
+      },
+      "why": "The tenant's theme URL is still fetched at render time and still shapes the output, but only as JSON values interpolated with the escaping delimiter into a layout that is compiled from a constant in this file, so nothing remote is ever compiled."
+    }
+  ]
+}

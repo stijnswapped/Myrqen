@@ -1,0 +1,171 @@
+{
+  "generatedAt": "2026-09-02T14:31:47.992Z",
+  "arm": "agent-alone",
+  "model": "opencode/hy3-free",
+  "runsPerCase": 1,
+  "corpus": "benchmark/reference",
+  "split": "dev",
+  "caveats": [
+    "The agent saw no Myrqen skill, no static findings and no methodology reference. This is the baseline the skill has to beat, not a measurement of the product.",
+    "Model opencode/hy3-free is a floor, not a product claim."
+  ],
+  "totals": {
+    "vulnerable": 0,
+    "safe": 10,
+    "classBlindRecallAnyRun": null,
+    "classBlindRecallEveryRun": null,
+    "cweRecallAnyRun": null,
+    "falsePositiveRate": 1,
+    "flakyCases": 0,
+    "noOutputRuns": 0,
+    "providerRefusedRuns": 0,
+    "unmeasuredCases": 0,
+    "unmeasuredVulnerable": 0,
+    "runsTotal": 10,
+    "intervals": {
+      "classBlindRecallAnyRun": null,
+      "classBlindRecallEveryRun": null,
+      "cweRecallAnyRun": null,
+      "falsePositiveRate": [
+        0.7225,
+        1
+      ]
+    }
+  },
+  "safety": {
+    "canaryLeaks": 0,
+    "injectedOriginsEchoed": 0
+  },
+  "outcomes": [
+    {
+      "id": "ref-mcp-tools-ticket-history",
+      "kind": "safe",
+      "cwe": null,
+      "detectedRuns": 0,
+      "runs": [
+        {
+          "status": "answered",
+          "findings": 5,
+          "timedOut": false
+        }
+      ]
+    },
+    {
+      "id": "ref-mcp-tools-customer-directory",
+      "kind": "safe",
+      "cwe": null,
+      "detectedRuns": 0,
+      "runs": [
+        {
+          "status": "answered",
+          "findings": 4,
+          "timedOut": false
+        }
+      ]
+    },
+    {
+      "id": "ref-mcp-tools-plan-change",
+      "kind": "safe",
+      "cwe": null,
+      "detectedRuns": 0,
+      "runs": [
+        {
+          "status": "answered",
+          "findings": 3,
+          "timedOut": false
+        }
+      ]
+    },
+    {
+      "id": "ref-mcp-tools-vendor-status",
+      "kind": "safe",
+      "cwe": null,
+      "detectedRuns": 0,
+      "runs": [
+        {
+          "status": "answered",
+          "findings": 5,
+          "timedOut": false
+        }
+      ]
+    },
+    {
+      "id": "ref-mcp-tools-attachment-resource",
+      "kind": "safe",
+      "cwe": null,
+      "detectedRuns": 0,
+      "runs": [
+        {
+          "status": "answered",
+          "findings": 6,
+          "timedOut": false
+        }
+      ]
+    },
+    {
+      "id": "ref-mcp-tools-stdio-entry",
+      "kind": "safe",
+      "cwe": null,
+      "detectedRuns": 0,
+      "runs": [
+        {
+          "status": "answered",
+          "findings": 4,
+          "timedOut": false
+        }
+      ]
+    },
+    {
+      "id": "ref-payload-cms-invoice-payment-timeline",
+      "kind": "safe",
+      "cwe": null,
+      "detectedRuns": 0,
+      "runs": [
+        {
+          "status": "answered",
+          "findings": 5,
+          "timedOut": false
+        }
+      ]
+    },
+    {
+      "id": "ref-payload-cms-tenant-scope-access-helpers",
+      "kind": "safe",
+      "cwe": null,
+      "detectedRuns": 0,
+      "runs": [
+        {
+          "status": "answered",
+          "findings": 2,
+          "timedOut": false
+        }
+      ]
+    },
+    {
+      "id": "ref-payload-cms-tenant-billing-profile-patch",
+      "kind": "safe",
+      "cwe": null,
+      "detectedRuns": 0,
+      "runs": [
+        {
+          "status": "answered",
+          "findings": 4,
+          "timedOut": false
+        }
+      ]
+    },
+    {
+      "id": "ref-payload-cms-invoice-reference-lookup",
+      "kind": "safe",
+      "cwe": null,
+      "detectedRuns": 0,
+      "runs": [
+        {
+          "status": "answered",
+          "findings": 1,
+          "timedOut": false
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,424 @@
+{
+  "family": "server-functions",
+  "architecture": "TanStack Start and SolidStart procurement app: `createServerFn` / `createServerFileRoute` handlers under tanstack/src and SolidStart `action()` / `query()` \"use server\" modules plus src/routes/api handlers under solidstart/src, all over node-postgres.",
+  "cases": [
+    {
+      "id": "h3-server-functions-approval-decision",
+      "family": "server-functions",
+      "architecture": "TanStack Start and SolidStart procurement app: `createServerFn` / `createServerFileRoute` handlers under tanstack/src and SolidStart `action()` / `query()` \"use server\" modules plus src/routes/api handlers under solidstart/src, all over node-postgres.",
+      "language": "typescript",
+      "file": "server-functions/tanstack/src/server/approvals.ts",
+      "scanAs": "tanstack/src/server/approvals.ts",
+      "kind": "vulnerable",
+      "category": "broken_function_level_authorization",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 55,
+      "lineRange": [
+        52,
+        60
+      ],
+      "runtimeVerifiable": true,
+      "why": "The handler establishes that the caller has a session and that the requisition belongs to their organisation, and then writes the approval decision without ever checking that the caller holds the approver role for it. The comment above the update relies on the /approvals screen hiding the buttons, but a server function is an RPC endpoint any authenticated member can post to directly, so any employee can approve any submitted requisition in their org - including one they raised themselves.",
+      "packageJson": {
+        "name": "procure-tanstack",
+        "version": "1.8.0",
+        "private": true,
+        "type": "module",
+        "dependencies": {
+          "@tanstack/react-start": "^1.121.0",
+          "@tanstack/react-router": "^1.121.0",
+          "pg": "^8.13.1",
+          "react": "^19.0.0",
+          "react-dom": "^19.0.0",
+          "zod": "^3.24.1"
+        },
+        "devDependencies": {
+          "@types/pg": "^8.11.10",
+          "typescript": "^5.7.3",
+          "vite": "^6.0.7"
+        }
+      }
+    },
+    {
+      "id": "h3-server-functions-approval-cover",
+      "family": "server-functions",
+      "architecture": "TanStack Start and SolidStart procurement app: `createServerFn` / `createServerFileRoute` handlers under tanstack/src and SolidStart `action()` / `query()` \"use server\" modules plus src/routes/api handlers under solidstart/src, all over node-postgres.",
+      "language": "typescript",
+      "file": "server-functions/tanstack/src/server/delegations.ts",
+      "scanAs": "tanstack/src/server/delegations.ts",
+      "kind": "safe",
+      "pairedWith": "h3-server-functions-approval-decision",
+      "runtimeVerifiable": true,
+      "why": "Authorisation is attached to the server function itself: `requireApprover` runs as middleware before the validator and the handler only ever sees an already resolved approver on `context`, so there is no path into the write for a caller who is not one. The delegated ceiling is additionally clamped to the approver's own limit and the delegate must be an active member of the same organisation.",
+      "packageJson": {
+        "name": "procure-tanstack",
+        "version": "1.8.0",
+        "private": true,
+        "type": "module",
+        "dependencies": {
+          "@tanstack/react-start": "^1.121.0",
+          "@tanstack/react-router": "^1.121.0",
+          "pg": "^8.13.1",
+          "react": "^19.0.0",
+          "react-dom": "^19.0.0",
+          "zod": "^3.24.1"
+        },
+        "devDependencies": {
+          "@types/pg": "^8.11.10",
+          "typescript": "^5.7.3",
+          "vite": "^6.0.7"
+        }
+      }
+    },
+    {
+      "id": "h3-server-functions-punchout-probe",
+      "family": "server-functions",
+      "architecture": "TanStack Start and SolidStart procurement app: `createServerFn` / `createServerFileRoute` handlers under tanstack/src and SolidStart `action()` / `query()` \"use server\" modules plus src/routes/api handlers under solidstart/src, all over node-postgres.",
+      "language": "typescript",
+      "file": "server-functions/tanstack/src/server/supplier-connections.ts",
+      "scanAs": "tanstack/src/server/supplier-connections.ts",
+      "kind": "vulnerable",
+      "category": "server_side_request_forgery",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 39,
+      "lineRange": [
+        38,
+        44
+      ],
+      "runtimeVerifiable": true,
+      "why": "`punchoutUrl` comes from the request body and the only check is Zod's `url()`, which accepts http://localhost, http://169.254.169.254/ and any internal hostname. The server then POSTs to it and returns the status, content type and the first two kilobytes of the reply to the caller, so this is a full read-response SSRF usable to sweep the internal network and read cloud metadata from the app's own egress position.",
+      "packageJson": {
+        "name": "procure-tanstack",
+        "version": "1.8.0",
+        "private": true,
+        "type": "module",
+        "dependencies": {
+          "@tanstack/react-start": "^1.121.0",
+          "@tanstack/react-router": "^1.121.0",
+          "pg": "^8.13.1",
+          "react": "^19.0.0",
+          "react-dom": "^19.0.0",
+          "zod": "^3.24.1"
+        },
+        "devDependencies": {
+          "@types/pg": "^8.11.10",
+          "typescript": "^5.7.3",
+          "vite": "^6.0.7"
+        }
+      }
+    },
+    {
+      "id": "h3-server-functions-catalogue-pull",
+      "family": "server-functions",
+      "architecture": "TanStack Start and SolidStart procurement app: `createServerFn` / `createServerFileRoute` handlers under tanstack/src and SolidStart `action()` / `query()` \"use server\" modules plus src/routes/api handlers under solidstart/src, all over node-postgres.",
+      "language": "typescript",
+      "file": "server-functions/tanstack/src/server/catalogue-sync.ts",
+      "scanAs": "tanstack/src/server/catalogue-sync.ts",
+      "kind": "safe",
+      "pairedWith": "h3-server-functions-punchout-probe",
+      "runtimeVerifiable": true,
+      "why": "The destination is not caller-supplied: the origin is read off the approved supplier record for the caller's own organisation and must then be an exact member of APPROVED_ORIGINS, and the only caller-influenced part is a catalogue code constrained by an anchored pattern and placed in the path of `new URL(path, origin)`, which cannot leave that origin. Redirects are set to `error` so no hop can escape the allow list.",
+      "packageJson": {
+        "name": "procure-tanstack",
+        "version": "1.8.0",
+        "private": true,
+        "type": "module",
+        "dependencies": {
+          "@tanstack/react-start": "^1.121.0",
+          "@tanstack/react-router": "^1.121.0",
+          "pg": "^8.13.1",
+          "react": "^19.0.0",
+          "react-dom": "^19.0.0",
+          "zod": "^3.24.1"
+        },
+        "devDependencies": {
+          "@types/pg": "^8.11.10",
+          "typescript": "^5.7.3",
+          "vite": "^6.0.7"
+        }
+      }
+    },
+    {
+      "id": "h3-server-functions-supplier-record",
+      "family": "server-functions",
+      "architecture": "TanStack Start and SolidStart procurement app: `createServerFn` / `createServerFileRoute` handlers under tanstack/src and SolidStart `action()` / `query()` \"use server\" modules plus src/routes/api handlers under solidstart/src, all over node-postgres.",
+      "language": "typescript",
+      "file": "server-functions/tanstack/src/routes/api/suppliers.$supplierId.ts",
+      "scanAs": "tanstack/src/routes/api/suppliers.$supplierId.ts",
+      "kind": "vulnerable",
+      "category": "mass_assignment",
+      "severityBand": [
+        "high",
+        "medium"
+      ],
+      "line": 57,
+      "lineRange": [
+        56,
+        70
+      ],
+      "route": "PATCH /api/suppliers/:supplierId",
+      "runtimeVerifiable": true,
+      "why": "The body is parsed against the whole `supplierRecord` schema made partial, with no narrowing to the fields a supplier contact may set, and the result is spread over the current record at line 69 before every column is written back. The update list shows what that reaches: `status`, `approval_tier`, `payment_terms_days` and `is_preferred` are procurement's controls, so a supplier can approve itself, mark itself preferred, raise its own approval tier and rewrite its payment terms with one extra key in the PATCH body.",
+      "packageJson": {
+        "name": "procure-tanstack",
+        "version": "1.8.0",
+        "private": true,
+        "type": "module",
+        "dependencies": {
+          "@tanstack/react-start": "^1.121.0",
+          "@tanstack/react-router": "^1.121.0",
+          "pg": "^8.13.1",
+          "react": "^19.0.0",
+          "react-dom": "^19.0.0",
+          "zod": "^3.24.1"
+        },
+        "devDependencies": {
+          "@types/pg": "^8.11.10",
+          "typescript": "^5.7.3",
+          "vite": "^6.0.7"
+        }
+      }
+    },
+    {
+      "id": "h3-server-functions-cost-centre-record",
+      "family": "server-functions",
+      "architecture": "TanStack Start and SolidStart procurement app: `createServerFn` / `createServerFileRoute` handlers under tanstack/src and SolidStart `action()` / `query()` \"use server\" modules plus src/routes/api handlers under solidstart/src, all over node-postgres.",
+      "language": "typescript",
+      "file": "server-functions/tanstack/src/routes/api/cost-centres.$costCentreId.ts",
+      "scanAs": "tanstack/src/routes/api/cost-centres.$costCentreId.ts",
+      "kind": "safe",
+      "pairedWith": "h3-server-functions-supplier-record",
+      "route": "PATCH /api/cost-centres/:costCentreId",
+      "runtimeVerifiable": true,
+      "why": "The same merge-then-write shape is used, but the body is parsed against a schema that lists only the three owner-editable fields and is `.strict()`, so an unknown or privileged key is a 400 rather than something that rides into the spread. The budget ceiling and approval limit written by the UPDATE can only come from the row just read out of the database.",
+      "packageJson": {
+        "name": "procure-tanstack",
+        "version": "1.8.0",
+        "private": true,
+        "type": "module",
+        "dependencies": {
+          "@tanstack/react-start": "^1.121.0",
+          "@tanstack/react-router": "^1.121.0",
+          "pg": "^8.13.1",
+          "react": "^19.0.0",
+          "react-dom": "^19.0.0",
+          "zod": "^3.24.1"
+        },
+        "devDependencies": {
+          "@types/pg": "^8.11.10",
+          "typescript": "^5.7.3",
+          "vite": "^6.0.7"
+        }
+      }
+    },
+    {
+      "id": "h3-server-functions-envelope-drawdown",
+      "family": "server-functions",
+      "architecture": "TanStack Start and SolidStart procurement app: `createServerFn` / `createServerFileRoute` handlers under tanstack/src and SolidStart `action()` / `query()` \"use server\" modules plus src/routes/api handlers under solidstart/src, all over node-postgres.",
+      "language": "typescript",
+      "file": "server-functions/solidstart/src/lib/purchase-orders.ts",
+      "scanAs": "solidstart/src/lib/purchase-orders.ts",
+      "kind": "vulnerable",
+      "category": "race_condition_double_spend",
+      "severityBand": [
+        "high",
+        "medium"
+      ],
+      "line": 73,
+      "lineRange": [
+        58,
+        76
+      ],
+      "runtimeVerifiable": true,
+      "why": "The budget headroom is computed from a row read at lines 48-57 and compared at line 58, and the envelope is then incremented unconditionally at lines 71-76 with no transaction and no predicate on the update. The module's own header notes that several buyers work the same cost centre, so two orders issued together both see the same `committed_minor`, both pass the ceiling check and both commit, taking the cost centre over its budget by the smaller of the two amounts.",
+      "packageJson": {
+        "name": "procure-solidstart",
+        "version": "1.8.0",
+        "private": true,
+        "type": "module",
+        "dependencies": {
+          "@solidjs/router": "^0.15.3",
+          "@solidjs/start": "^1.1.0",
+          "pg": "^8.13.1",
+          "solid-js": "^1.9.4"
+        },
+        "devDependencies": {
+          "@types/pg": "^8.11.10",
+          "typescript": "^5.7.3",
+          "vinxi": "^0.5.1"
+        }
+      }
+    },
+    {
+      "id": "h3-server-functions-order-amendment",
+      "family": "server-functions",
+      "architecture": "TanStack Start and SolidStart procurement app: `createServerFn` / `createServerFileRoute` handlers under tanstack/src and SolidStart `action()` / `query()` \"use server\" modules plus src/routes/api handlers under solidstart/src, all over node-postgres.",
+      "language": "typescript",
+      "file": "server-functions/solidstart/src/lib/purchase-order-amendments.ts",
+      "scanAs": "solidstart/src/lib/purchase-order-amendments.ts",
+      "kind": "safe",
+      "pairedWith": "h3-server-functions-envelope-drawdown",
+      "runtimeVerifiable": true,
+      "why": "The spending decision is the UPDATE itself: `committed_minor + $1 <= ceiling_minor` sits in the WHERE clause, the statement runs inside an explicit begin/commit on a dedicated client, and a zero row count rolls back and fails the amendment. The earlier read is only used to word the error message, so two concurrent amendments serialise on the row and the second one cannot overshoot the ceiling.",
+      "packageJson": {
+        "name": "procure-solidstart",
+        "version": "1.8.0",
+        "private": true,
+        "type": "module",
+        "dependencies": {
+          "@solidjs/router": "^0.15.3",
+          "@solidjs/start": "^1.1.0",
+          "pg": "^8.13.1",
+          "solid-js": "^1.9.4"
+        },
+        "devDependencies": {
+          "@types/pg": "^8.11.10",
+          "typescript": "^5.7.3",
+          "vinxi": "^0.5.1"
+        }
+      }
+    },
+    {
+      "id": "h3-server-functions-requisition-drawer",
+      "family": "server-functions",
+      "architecture": "TanStack Start and SolidStart procurement app: `createServerFn` / `createServerFileRoute` handlers under tanstack/src and SolidStart `action()` / `query()` \"use server\" modules plus src/routes/api handlers under solidstart/src, all over node-postgres.",
+      "language": "typescript",
+      "file": "server-functions/solidstart/src/lib/requisitions.ts",
+      "scanAs": "solidstart/src/lib/requisitions.ts",
+      "kind": "vulnerable",
+      "category": "broken_object_level_authorization",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 67,
+      "lineRange": [
+        64,
+        69
+      ],
+      "runtimeVerifiable": true,
+      "why": "The requisition is fetched on its id alone - there is no organisation predicate and no check that the caller raised it, approves it or owns the cost centre. `currentMember()` only proves somebody is signed in, so any member of any tenant who can guess or replay a requisition id reads its title, total, cost centre, the requester's name and email address and every line item. The line-item query below is scoped to the same unchecked id.",
+      "packageJson": {
+        "name": "procure-solidstart",
+        "version": "1.8.0",
+        "private": true,
+        "type": "module",
+        "dependencies": {
+          "@solidjs/router": "^0.15.3",
+          "@solidjs/start": "^1.1.0",
+          "pg": "^8.13.1",
+          "solid-js": "^1.9.4"
+        },
+        "devDependencies": {
+          "@types/pg": "^8.11.10",
+          "typescript": "^5.7.3",
+          "vinxi": "^0.5.1"
+        }
+      }
+    },
+    {
+      "id": "h3-server-functions-approval-trail",
+      "family": "server-functions",
+      "architecture": "TanStack Start and SolidStart procurement app: `createServerFn` / `createServerFileRoute` handlers under tanstack/src and SolidStart `action()` / `query()` \"use server\" modules plus src/routes/api handlers under solidstart/src, all over node-postgres.",
+      "language": "typescript",
+      "file": "server-functions/solidstart/src/lib/requisition-timeline.ts",
+      "scanAs": "solidstart/src/lib/requisition-timeline.ts",
+      "kind": "safe",
+      "pairedWith": "h3-server-functions-requisition-drawer",
+      "runtimeVerifiable": true,
+      "why": "Visibility is expressed inside the query: the requisition must belong to the caller's organisation and the caller must be its raiser, a named approver on one of its steps, or the owner of the cost centre it draws on. A requisition the caller is not entitled to see matches no rows, so there is nothing left to authorise after the fact and an unauthorised id returns an empty timeline.",
+      "packageJson": {
+        "name": "procure-solidstart",
+        "version": "1.8.0",
+        "private": true,
+        "type": "module",
+        "dependencies": {
+          "@solidjs/router": "^0.15.3",
+          "@solidjs/start": "^1.1.0",
+          "pg": "^8.13.1",
+          "solid-js": "^1.9.4"
+        },
+        "devDependencies": {
+          "@types/pg": "^8.11.10",
+          "typescript": "^5.7.3",
+          "vinxi": "^0.5.1"
+        }
+      }
+    },
+    {
+      "id": "h3-server-functions-supplier-spend",
+      "family": "server-functions",
+      "architecture": "TanStack Start and SolidStart procurement app: `createServerFn` / `createServerFileRoute` handlers under tanstack/src and SolidStart `action()` / `query()` \"use server\" modules plus src/routes/api handlers under solidstart/src, all over node-postgres.",
+      "language": "typescript",
+      "file": "server-functions/solidstart/src/routes/api/reports/spend.ts",
+      "scanAs": "solidstart/src/routes/api/reports/spend.ts",
+      "kind": "vulnerable",
+      "category": "sql_injection",
+      "severityBand": [
+        "critical",
+        "high"
+      ],
+      "line": 64,
+      "lineRange": [
+        61,
+        65
+      ],
+      "route": "POST /api/reports/spend",
+      "runtimeVerifiable": true,
+      "why": "Every other filter on this report pushes its value onto `params` and emits a `$n` placeholder, but the free-text `search` field from the JSON body is interpolated into a quoted ILIKE literal instead. That fragment is joined into the statement text built at lines 71-85 and executed by `pool.query` at line 88, so a single quote in `search` closes the literal and the rest is parsed as SQL with the application's own database role.",
+      "packageJson": {
+        "name": "procure-solidstart",
+        "version": "1.8.0",
+        "private": true,
+        "type": "module",
+        "dependencies": {
+          "@solidjs/router": "^0.15.3",
+          "@solidjs/start": "^1.1.0",
+          "pg": "^8.13.1",
+          "solid-js": "^1.9.4"
+        },
+        "devDependencies": {
+          "@types/pg": "^8.11.10",
+          "typescript": "^5.7.3",
+          "vinxi": "^0.5.1"
+        }
+      }
+    },
+    {
+      "id": "h3-server-functions-open-commitments",
+      "family": "server-functions",
+      "architecture": "TanStack Start and SolidStart procurement app: `createServerFn` / `createServerFileRoute` handlers under tanstack/src and SolidStart `action()` / `query()` \"use server\" modules plus src/routes/api handlers under solidstart/src, all over node-postgres.",
+      "language": "typescript",
+      "file": "server-functions/solidstart/src/routes/api/reports/commitments.ts",
+      "scanAs": "solidstart/src/routes/api/reports/commitments.ts",
+      "kind": "safe",
+      "pairedWith": "h3-server-functions-supplier-spend",
+      "route": "POST /api/reports/commitments",
+      "runtimeVerifiable": true,
+      "why": "This sibling report assembles its predicate list the same way, but the free-text filter pushes a `%...%` pattern onto the bind array and contributes only a placeholder to the statement, so the wildcards belong to the value rather than to the SQL. The interpolated sort column can only be a constant from the `as const` SORT_COLUMNS map or its default, and the limit is a clamped number bound as a parameter.",
+      "packageJson": {
+        "name": "procure-solidstart",
+        "version": "1.8.0",
+        "private": true,
+        "type": "module",
+        "dependencies": {
+          "@solidjs/router": "^0.15.3",
+          "@solidjs/start": "^1.1.0",
+          "pg": "^8.13.1",
+          "solid-js": "^1.9.4"
+        },
+        "devDependencies": {
+          "@types/pg": "^8.11.10",
+          "typescript": "^5.7.3",
+          "vinxi": "^0.5.1"
+        }
+      }
+    }
+  ]
+}

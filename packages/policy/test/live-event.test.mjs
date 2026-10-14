@@ -24,17 +24,23 @@ test("aggregate counts are permitted; anything else is refused", () => {
 });
 
 test("free-form progress text cannot be smuggled through the event", () => {
+  const base = { eventId: "e", reportId: "r", type: "warning_safe", occurredAt: new Date().toISOString() };
+
+  // Refused because it is free-form, not because it looks dangerous. Relying on
+  // the scrubber alone left anything it did not recognise — a project's own
+  // secret, a route, a filename — free to reach the cloud stream.
+  assert.throws(() => assertLiveEventSafe({ ...base, message: "mapping the application" }), /allowlisted safeCode/);
+  assert.throws(() => assertLiveEventSafe({ ...base, message: `found key ${SHAPES.stripeLive}` }), /allowlisted safeCode/);
+
+  // A code that exists does not license arbitrary text beside it.
   assert.throws(
-    () =>
-      assertLiveEventSafe({
-        eventId: "e",
-        reportId: "r",
-        type: "warning_safe",
-        occurredAt: new Date().toISOString(),
-        message: `found key ${SHAPES.stripeLive}`
-      }),
-    /secret-like/
+    () => assertLiveEventSafe({ ...base, safeCode: "SCAN_COMPLETE", message: "Scan complete, and here is why" }),
+    /does not match the text its safeCode resolves to/
   );
+
+  // The allowlisted pairing is accepted.
+  assertLiveEventSafe({ ...base, safeCode: "SCAN_COMPLETE", message: SAFE_STATUS_CODES.SCAN_COMPLETE });
+
   assert.throws(() => buildSafeEvent({ reportId: "r1", type: "warning_safe", safeCode: "MADE_UP_CODE" }), /not allowlisted/);
 });
 

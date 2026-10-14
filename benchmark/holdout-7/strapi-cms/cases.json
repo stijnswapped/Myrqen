@@ -1,0 +1,772 @@
+{
+  "family": "strapi-cms",
+  "cases": [
+    {
+      "id": "h7-strapi-cms-invoice-portal-view",
+      "family": "strapi-cms",
+      "architecture": "Strapi 5 content-API application in TypeScript: content-type controllers, services and routers under src/api/, the Document Service API over Postgres as the data layer (with strapi.db.query and a strapi.db.connection.raw escape hatch), and the caller's identity coming from the Users & Permissions plugin's JWT on ctx.state.user (API tokens on ctx.state.auth), with the newsroom tenant resolved from the user's organisation relation.",
+      "language": "typescript",
+      "file": "strapi-cms/src/api/invoice/controllers/invoice.ts",
+      "scanAs": "src/api/invoice/controllers/invoice.ts",
+      "kind": "vulnerable",
+      "category": "cross_tenant_record_access_by_document_id",
+      "cwe": "CWE-639",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "line": 70,
+      "lineRange": [
+        63,
+        88
+      ],
+      "route": "GET /invoices/:documentId/portal",
+      "runtimeVerifiable": true,
+      "why": "portalView takes documentId straight from ctx.params and loads the invoice with strapi.documents(...).findOne without ever comparing the invoice's subscriber organisation to the caller's membership.organisationId, so any signed-in reader can read another newsroom's invoice - amounts, billing reference and the subscriber's email - by swapping the documentId in the URL. The find() handler above shows the scoping this handler is missing, and the route's global::is-authenticated policy only proves there is a session.",
+      "packageJson": {
+        "name": "northbeam-newsroom",
+        "version": "1.7.2",
+        "private": true,
+        "description": "Northbeam newsroom CMS and reader portal",
+        "scripts": {
+          "build": "strapi build",
+          "console": "strapi console",
+          "deploy": "strapi deploy",
+          "develop": "strapi develop",
+          "start": "strapi start",
+          "strapi": "strapi"
+        },
+        "dependencies": {
+          "@strapi/plugin-cloud": "5.6.0",
+          "@strapi/plugin-users-permissions": "5.6.0",
+          "@strapi/strapi": "5.6.0",
+          "pg": "8.12.0",
+          "react": "^18.3.1",
+          "react-dom": "^18.3.1",
+          "react-router-dom": "^6.26.2",
+          "styled-components": "^6.1.13"
+        },
+        "devDependencies": {
+          "@types/node": "^20.14.10",
+          "typescript": "^5.5.4"
+        },
+        "engines": {
+          "node": ">=18.0.0 <=22.x.x",
+          "npm": ">=6.0.0"
+        }
+      },
+      "extraFiles": {
+        "src/utils/access.ts": "/**\n * Access helpers shared by the portal and desk controllers.\n *\n * The users-permissions plugin verifies the JWT and drops the bare user row on\n * ctx.state.user, but it will not populate our custom `organisation` relation,\n * so anything that needs to know which newsroom the caller belongs to has to\n * ask for it. API tokens arrive without a user at all - the desk cron jobs show\n * up on ctx.state.auth instead.\n */\n\nexport type Membership = {\n  userId: number;\n  userDocumentId: string;\n  organisationId: string | null;\n  organisationName: string | null;\n  roleType: string | null;\n};\n\nconst EDITORIAL_ROLE_TYPES = new Set([\"editor\", \"managing_editor\", \"newsroom_admin\"]);\n\nexport async function resolveMembership(ctx: any): Promise<Membership | null> {\n  const sessionUser = ctx.state.user;\n  if (!sessionUser?.documentId) {\n    return null;\n  }\n\n  const account: any = await strapi\n    .documents(\"plugin::users-permissions.user\")\n    .findOne({\n      documentId: sessionUser.documentId,\n      fields: [\"username\", \"blocked\"],\n      populate: {\n        role: { fields: [\"type\"] },\n        organisation: { fields: [\"name\"] },\n      },\n    });\n\n  if (!account || account.blocked) {\n    return null;\n  }\n\n  return {\n    userId: sessionUser.id,\n    userDocumentId: sessionUser.documentId,\n    organisationId: account.organisation?.documentId ?? null,\n    organisationName: account.organisation?.name ?? null,\n    roleType: account.role?.type ?? null,\n  };\n}\n\nexport function isEditorialStaff(membership: Membership | null): boolean {\n  return Boolean(membership?.roleType && EDITORIAL_ROLE_TYPES.has(membership.roleType));\n}\n\n/**\n * The desk cron and the syndication worker talk to us with a full-access API\n * token rather than a session.\n */\nexport function isFullAccessToken(ctx: any): boolean {\n  return (\n    ctx.state.auth?.strategy?.name === \"api-token\" &&\n    ctx.state.auth?.credentials?.type === \"full-access\"\n  );\n}\n",
+        "src/api/invoice/routes/invoice.ts": "/**\n * Customer portal billing routes.\n *\n * Everything here needs a live session - the portal is not public.\n */\nexport default {\n  type: \"content-api\",\n  routes: [\n    {\n      method: \"GET\",\n      path: \"/invoices\",\n      handler: \"invoice.find\",\n      config: {\n        policies: [\"global::is-authenticated\"],\n        middlewares: [],\n      },\n    },\n    {\n      method: \"GET\",\n      path: \"/invoices/:documentId/portal\",\n      handler: \"invoice.portalView\",\n      config: {\n        policies: [\"global::is-authenticated\"],\n        middlewares: [],\n      },\n    },\n  ],\n};\n",
+        "src/policies/is-authenticated.ts": "/**\n * global::is-authenticated\n *\n * users-permissions already rejects a missing or expired JWT before the policy\n * chain runs; this one additionally bounces accounts that have been blocked\n * since their token was issued.\n */\nexport default (policyContext: any, _config: unknown, { strapi }: any) => {\n  const user = policyContext.state.user;\n\n  if (!user) {\n    return false;\n  }\n\n  if (user.blocked) {\n    strapi.log.warn(`blocked account ${user.id} hit ${policyContext.request.url}`);\n    return false;\n  }\n\n  return true;\n};\n"
+      }
+    },
+    {
+      "id": "h7-strapi-cms-statement-portal-view",
+      "family": "strapi-cms",
+      "architecture": "Strapi 5 content-API application in TypeScript: content-type controllers, services and routers under src/api/, the Document Service API over Postgres as the data layer (with strapi.db.query and a strapi.db.connection.raw escape hatch), and the caller's identity coming from the Users & Permissions plugin's JWT on ctx.state.user (API tokens on ctx.state.auth), with the newsroom tenant resolved from the user's organisation relation.",
+      "language": "typescript",
+      "file": "strapi-cms/src/api/statement/controllers/statement.ts",
+      "scanAs": "src/api/statement/controllers/statement.ts",
+      "kind": "safe",
+      "pairedWith": "h7-strapi-cms-invoice-portal-view",
+      "route": "GET /statements/:documentId",
+      "runtimeVerifiable": true,
+      "why": "Same operation - fetch a billing document addressed by the documentId in the URL - but the lookup is a findMany whose filters carry both the documentId and organisation: { documentId: membership.organisationId }, so the ownership check is the query. A statement from another newsroom returns an empty array and the handler answers 404.",
+      "packageJson": {
+        "name": "northbeam-newsroom",
+        "version": "1.7.2",
+        "private": true,
+        "description": "Northbeam newsroom CMS and reader portal",
+        "scripts": {
+          "build": "strapi build",
+          "console": "strapi console",
+          "deploy": "strapi deploy",
+          "develop": "strapi develop",
+          "start": "strapi start",
+          "strapi": "strapi"
+        },
+        "dependencies": {
+          "@strapi/plugin-cloud": "5.6.0",
+          "@strapi/plugin-users-permissions": "5.6.0",
+          "@strapi/strapi": "5.6.0",
+          "pg": "8.12.0",
+          "react": "^18.3.1",
+          "react-dom": "^18.3.1",
+          "react-router-dom": "^6.26.2",
+          "styled-components": "^6.1.13"
+        },
+        "devDependencies": {
+          "@types/node": "^20.14.10",
+          "typescript": "^5.5.4"
+        },
+        "engines": {
+          "node": ">=18.0.0 <=22.x.x",
+          "npm": ">=6.0.0"
+        }
+      },
+      "extraFiles": {
+        "src/utils/access.ts": "/**\n * Access helpers shared by the portal and desk controllers.\n *\n * The users-permissions plugin verifies the JWT and drops the bare user row on\n * ctx.state.user, but it will not populate our custom `organisation` relation,\n * so anything that needs to know which newsroom the caller belongs to has to\n * ask for it. API tokens arrive without a user at all - the desk cron jobs show\n * up on ctx.state.auth instead.\n */\n\nexport type Membership = {\n  userId: number;\n  userDocumentId: string;\n  organisationId: string | null;\n  organisationName: string | null;\n  roleType: string | null;\n};\n\nconst EDITORIAL_ROLE_TYPES = new Set([\"editor\", \"managing_editor\", \"newsroom_admin\"]);\n\nexport async function resolveMembership(ctx: any): Promise<Membership | null> {\n  const sessionUser = ctx.state.user;\n  if (!sessionUser?.documentId) {\n    return null;\n  }\n\n  const account: any = await strapi\n    .documents(\"plugin::users-permissions.user\")\n    .findOne({\n      documentId: sessionUser.documentId,\n      fields: [\"username\", \"blocked\"],\n      populate: {\n        role: { fields: [\"type\"] },\n        organisation: { fields: [\"name\"] },\n      },\n    });\n\n  if (!account || account.blocked) {\n    return null;\n  }\n\n  return {\n    userId: sessionUser.id,\n    userDocumentId: sessionUser.documentId,\n    organisationId: account.organisation?.documentId ?? null,\n    organisationName: account.organisation?.name ?? null,\n    roleType: account.role?.type ?? null,\n  };\n}\n\nexport function isEditorialStaff(membership: Membership | null): boolean {\n  return Boolean(membership?.roleType && EDITORIAL_ROLE_TYPES.has(membership.roleType));\n}\n\n/**\n * The desk cron and the syndication worker talk to us with a full-access API\n * token rather than a session.\n */\nexport function isFullAccessToken(ctx: any): boolean {\n  return (\n    ctx.state.auth?.strategy?.name === \"api-token\" &&\n    ctx.state.auth?.credentials?.type === \"full-access\"\n  );\n}\n",
+        "src/api/statement/routes/statement.ts": "export default {\n  type: \"content-api\",\n  routes: [\n    {\n      method: \"GET\",\n      path: \"/statements/:documentId\",\n      handler: \"statement.portalView\",\n      config: {\n        policies: [\"global::is-authenticated\"],\n        middlewares: [],\n      },\n    },\n  ],\n};\n",
+        "src/policies/is-authenticated.ts": "/**\n * global::is-authenticated\n *\n * users-permissions already rejects a missing or expired JWT before the policy\n * chain runs; this one additionally bounces accounts that have been blocked\n * since their token was issued.\n */\nexport default (policyContext: any, _config: unknown, { strapi }: any) => {\n  const user = policyContext.state.user;\n\n  if (!user) {\n    return false;\n  }\n\n  if (user.blocked) {\n    strapi.log.warn(`blocked account ${user.id} hit ${policyContext.request.url}`);\n    return false;\n  }\n\n  return true;\n};\n"
+      }
+    },
+    {
+      "id": "h7-strapi-cms-subscriber-self-update",
+      "family": "strapi-cms",
+      "architecture": "Strapi 5 content-API application in TypeScript: content-type controllers, services and routers under src/api/, the Document Service API over Postgres as the data layer (with strapi.db.query and a strapi.db.connection.raw escape hatch), and the caller's identity coming from the Users & Permissions plugin's JWT on ctx.state.user (API tokens on ctx.state.auth), with the newsroom tenant resolved from the user's organisation relation.",
+      "language": "typescript",
+      "file": "strapi-cms/src/api/subscriber/controllers/subscriber.ts",
+      "scanAs": "src/api/subscriber/controllers/subscriber.ts",
+      "kind": "vulnerable",
+      "category": "mass_assignment_from_request_body",
+      "cwe": "CWE-915",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 70,
+      "lineRange": [
+        61,
+        78
+      ],
+      "route": "PUT /subscribers/me",
+      "runtimeVerifiable": true,
+      "why": "updateMe spreads the whole ctx.request.body.data into the Document Service update call, so a reader can send plan, entitlements, internalNotes or organisation along with their display name and have them persisted. The comment is wrong about why that is safe: `private: true` in subscriber/schema.json only strips those attributes from responses, it does not filter them out of an inbound payload, and this handler never calls sanitizeInput.",
+      "packageJson": {
+        "name": "northbeam-newsroom",
+        "version": "1.7.2",
+        "private": true,
+        "description": "Northbeam newsroom CMS and reader portal",
+        "scripts": {
+          "build": "strapi build",
+          "console": "strapi console",
+          "deploy": "strapi deploy",
+          "develop": "strapi develop",
+          "start": "strapi start",
+          "strapi": "strapi"
+        },
+        "dependencies": {
+          "@strapi/plugin-cloud": "5.6.0",
+          "@strapi/plugin-users-permissions": "5.6.0",
+          "@strapi/strapi": "5.6.0",
+          "pg": "8.12.0",
+          "react": "^18.3.1",
+          "react-dom": "^18.3.1",
+          "react-router-dom": "^6.26.2",
+          "styled-components": "^6.1.13"
+        },
+        "devDependencies": {
+          "@types/node": "^20.14.10",
+          "typescript": "^5.5.4"
+        },
+        "engines": {
+          "node": ">=18.0.0 <=22.x.x",
+          "npm": ">=6.0.0"
+        }
+      },
+      "extraFiles": {
+        "src/utils/access.ts": "/**\n * Access helpers shared by the portal and desk controllers.\n *\n * The users-permissions plugin verifies the JWT and drops the bare user row on\n * ctx.state.user, but it will not populate our custom `organisation` relation,\n * so anything that needs to know which newsroom the caller belongs to has to\n * ask for it. API tokens arrive without a user at all - the desk cron jobs show\n * up on ctx.state.auth instead.\n */\n\nexport type Membership = {\n  userId: number;\n  userDocumentId: string;\n  organisationId: string | null;\n  organisationName: string | null;\n  roleType: string | null;\n};\n\nconst EDITORIAL_ROLE_TYPES = new Set([\"editor\", \"managing_editor\", \"newsroom_admin\"]);\n\nexport async function resolveMembership(ctx: any): Promise<Membership | null> {\n  const sessionUser = ctx.state.user;\n  if (!sessionUser?.documentId) {\n    return null;\n  }\n\n  const account: any = await strapi\n    .documents(\"plugin::users-permissions.user\")\n    .findOne({\n      documentId: sessionUser.documentId,\n      fields: [\"username\", \"blocked\"],\n      populate: {\n        role: { fields: [\"type\"] },\n        organisation: { fields: [\"name\"] },\n      },\n    });\n\n  if (!account || account.blocked) {\n    return null;\n  }\n\n  return {\n    userId: sessionUser.id,\n    userDocumentId: sessionUser.documentId,\n    organisationId: account.organisation?.documentId ?? null,\n    organisationName: account.organisation?.name ?? null,\n    roleType: account.role?.type ?? null,\n  };\n}\n\nexport function isEditorialStaff(membership: Membership | null): boolean {\n  return Boolean(membership?.roleType && EDITORIAL_ROLE_TYPES.has(membership.roleType));\n}\n\n/**\n * The desk cron and the syndication worker talk to us with a full-access API\n * token rather than a session.\n */\nexport function isFullAccessToken(ctx: any): boolean {\n  return (\n    ctx.state.auth?.strategy?.name === \"api-token\" &&\n    ctx.state.auth?.credentials?.type === \"full-access\"\n  );\n}\n",
+        "src/api/subscriber/routes/subscriber.ts": "export default {\n  type: \"content-api\",\n  routes: [\n    {\n      method: \"GET\",\n      path: \"/subscribers/me\",\n      handler: \"subscriber.findMe\",\n      config: {\n        policies: [\"global::is-authenticated\"],\n        middlewares: [],\n      },\n    },\n    {\n      method: \"PUT\",\n      path: \"/subscribers/me\",\n      handler: \"subscriber.updateMe\",\n      config: {\n        policies: [\"global::is-authenticated\"],\n        middlewares: [],\n      },\n    },\n  ],\n};\n",
+        "src/api/subscriber/content-types/subscriber/schema.json": "{\n  \"kind\": \"collectionType\",\n  \"collectionName\": \"subscribers\",\n  \"info\": {\n    \"singularName\": \"subscriber\",\n    \"pluralName\": \"subscribers\",\n    \"displayName\": \"Subscriber\",\n    \"description\": \"Reader-facing side of an account: the login lives in users-permissions\"\n  },\n  \"options\": {\n    \"draftAndPublish\": false\n  },\n  \"attributes\": {\n    \"displayName\": {\n      \"type\": \"string\",\n      \"required\": true\n    },\n    \"email\": {\n      \"type\": \"email\",\n      \"required\": true\n    },\n    \"timezone\": {\n      \"type\": \"string\",\n      \"default\": \"Europe/Amsterdam\"\n    },\n    \"marketingOptIn\": {\n      \"type\": \"boolean\",\n      \"default\": false\n    },\n    \"lastPortalUpdateAt\": {\n      \"type\": \"datetime\"\n    },\n    \"plan\": {\n      \"type\": \"enumeration\",\n      \"enum\": [\"trial\", \"digital\", \"print_digital\", \"comped\"],\n      \"default\": \"trial\",\n      \"private\": true\n    },\n    \"entitlements\": {\n      \"type\": \"json\",\n      \"private\": true\n    },\n    \"internalNotes\": {\n      \"type\": \"text\",\n      \"private\": true\n    },\n    \"account\": {\n      \"type\": \"relation\",\n      \"relation\": \"oneToOne\",\n      \"target\": \"plugin::users-permissions.user\"\n    },\n    \"organisation\": {\n      \"type\": \"relation\",\n      \"relation\": \"manyToOne\",\n      \"target\": \"api::organisation.organisation\",\n      \"inversedBy\": \"subscribers\",\n      \"private\": true\n    }\n  }\n}\n",
+        "src/policies/is-authenticated.ts": "/**\n * global::is-authenticated\n *\n * users-permissions already rejects a missing or expired JWT before the policy\n * chain runs; this one additionally bounces accounts that have been blocked\n * since their token was issued.\n */\nexport default (policyContext: any, _config: unknown, { strapi }: any) => {\n  const user = policyContext.state.user;\n\n  if (!user) {\n    return false;\n  }\n\n  if (user.blocked) {\n    strapi.log.warn(`blocked account ${user.id} hit ${policyContext.request.url}`);\n    return false;\n  }\n\n  return true;\n};\n"
+      }
+    },
+    {
+      "id": "h7-strapi-cms-reader-preference-self-update",
+      "family": "strapi-cms",
+      "architecture": "Strapi 5 content-API application in TypeScript: content-type controllers, services and routers under src/api/, the Document Service API over Postgres as the data layer (with strapi.db.query and a strapi.db.connection.raw escape hatch), and the caller's identity coming from the Users & Permissions plugin's JWT on ctx.state.user (API tokens on ctx.state.auth), with the newsroom tenant resolved from the user's organisation relation.",
+      "language": "typescript",
+      "file": "strapi-cms/src/api/reader-preference/controllers/reader-preference.ts",
+      "scanAs": "src/api/reader-preference/controllers/reader-preference.ts",
+      "kind": "safe",
+      "pairedWith": "h7-strapi-cms-subscriber-self-update",
+      "route": "PUT /reader-preferences/me",
+      "runtimeVerifiable": true,
+      "why": "The same self-service PUT against the same data layer, but the body is never handed to the document service: the handler copies exactly the three fields the form owns into a fresh patch object, type-checking each and rejecting values outside the enumerations, so no extra attribute in the payload can reach update().",
+      "packageJson": {
+        "name": "northbeam-newsroom",
+        "version": "1.7.2",
+        "private": true,
+        "description": "Northbeam newsroom CMS and reader portal",
+        "scripts": {
+          "build": "strapi build",
+          "console": "strapi console",
+          "deploy": "strapi deploy",
+          "develop": "strapi develop",
+          "start": "strapi start",
+          "strapi": "strapi"
+        },
+        "dependencies": {
+          "@strapi/plugin-cloud": "5.6.0",
+          "@strapi/plugin-users-permissions": "5.6.0",
+          "@strapi/strapi": "5.6.0",
+          "pg": "8.12.0",
+          "react": "^18.3.1",
+          "react-dom": "^18.3.1",
+          "react-router-dom": "^6.26.2",
+          "styled-components": "^6.1.13"
+        },
+        "devDependencies": {
+          "@types/node": "^20.14.10",
+          "typescript": "^5.5.4"
+        },
+        "engines": {
+          "node": ">=18.0.0 <=22.x.x",
+          "npm": ">=6.0.0"
+        }
+      },
+      "extraFiles": {
+        "src/utils/access.ts": "/**\n * Access helpers shared by the portal and desk controllers.\n *\n * The users-permissions plugin verifies the JWT and drops the bare user row on\n * ctx.state.user, but it will not populate our custom `organisation` relation,\n * so anything that needs to know which newsroom the caller belongs to has to\n * ask for it. API tokens arrive without a user at all - the desk cron jobs show\n * up on ctx.state.auth instead.\n */\n\nexport type Membership = {\n  userId: number;\n  userDocumentId: string;\n  organisationId: string | null;\n  organisationName: string | null;\n  roleType: string | null;\n};\n\nconst EDITORIAL_ROLE_TYPES = new Set([\"editor\", \"managing_editor\", \"newsroom_admin\"]);\n\nexport async function resolveMembership(ctx: any): Promise<Membership | null> {\n  const sessionUser = ctx.state.user;\n  if (!sessionUser?.documentId) {\n    return null;\n  }\n\n  const account: any = await strapi\n    .documents(\"plugin::users-permissions.user\")\n    .findOne({\n      documentId: sessionUser.documentId,\n      fields: [\"username\", \"blocked\"],\n      populate: {\n        role: { fields: [\"type\"] },\n        organisation: { fields: [\"name\"] },\n      },\n    });\n\n  if (!account || account.blocked) {\n    return null;\n  }\n\n  return {\n    userId: sessionUser.id,\n    userDocumentId: sessionUser.documentId,\n    organisationId: account.organisation?.documentId ?? null,\n    organisationName: account.organisation?.name ?? null,\n    roleType: account.role?.type ?? null,\n  };\n}\n\nexport function isEditorialStaff(membership: Membership | null): boolean {\n  return Boolean(membership?.roleType && EDITORIAL_ROLE_TYPES.has(membership.roleType));\n}\n\n/**\n * The desk cron and the syndication worker talk to us with a full-access API\n * token rather than a session.\n */\nexport function isFullAccessToken(ctx: any): boolean {\n  return (\n    ctx.state.auth?.strategy?.name === \"api-token\" &&\n    ctx.state.auth?.credentials?.type === \"full-access\"\n  );\n}\n",
+        "src/api/reader-preference/routes/reader-preference.ts": "export default {\n  type: \"content-api\",\n  routes: [\n    {\n      method: \"PUT\",\n      path: \"/reader-preferences/me\",\n      handler: \"reader-preference.updateMe\",\n      config: {\n        policies: [\"global::is-authenticated\"],\n        middlewares: [],\n      },\n    },\n  ],\n};\n",
+        "src/policies/is-authenticated.ts": "/**\n * global::is-authenticated\n *\n * users-permissions already rejects a missing or expired JWT before the policy\n * chain runs; this one additionally bounces accounts that have been blocked\n * since their token was issued.\n */\nexport default (policyContext: any, _config: unknown, { strapi }: any) => {\n  const user = policyContext.state.user;\n\n  if (!user) {\n    return false;\n  }\n\n  if (user.blocked) {\n    strapi.log.warn(`blocked account ${user.id} hit ${policyContext.request.url}`);\n    return false;\n  }\n\n  return true;\n};\n"
+      }
+    },
+    {
+      "id": "h7-strapi-cms-archive-relevance-search",
+      "family": "strapi-cms",
+      "architecture": "Strapi 5 content-API application in TypeScript: content-type controllers, services and routers under src/api/, the Document Service API over Postgres as the data layer (with strapi.db.query and a strapi.db.connection.raw escape hatch), and the caller's identity coming from the Users & Permissions plugin's JWT on ctx.state.user (API tokens on ctx.state.auth), with the newsroom tenant resolved from the user's organisation relation.",
+      "language": "typescript",
+      "file": "strapi-cms/src/api/article/services/article.ts",
+      "scanAs": "src/api/article/services/article.ts",
+      "kind": "vulnerable",
+      "category": "sql_injection_via_interpolated_raw_query",
+      "cwe": "CWE-89",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 47,
+      "lineRange": [
+        31,
+        52
+      ],
+      "route": "GET /articles/archive-search",
+      "runtimeVerifiable": true,
+      "why": "searchArchive builds the statement by template interpolation and hands it to strapi.db.connection.raw with no bindings: the search term reaches the ILIKE literals and query.sortBy is pasted in as an ORDER BY identifier, both of them arriving unmodified from ctx.query.q and ctx.query.sort in the archive-search controller. Quoting a value in the template is not a binding, so a term containing a quote breaks out of the literal and the whole database is reachable.",
+      "packageJson": {
+        "name": "northbeam-newsroom",
+        "version": "1.7.2",
+        "private": true,
+        "description": "Northbeam newsroom CMS and reader portal",
+        "scripts": {
+          "build": "strapi build",
+          "console": "strapi console",
+          "deploy": "strapi deploy",
+          "develop": "strapi develop",
+          "start": "strapi start",
+          "strapi": "strapi"
+        },
+        "dependencies": {
+          "@strapi/plugin-cloud": "5.6.0",
+          "@strapi/plugin-users-permissions": "5.6.0",
+          "@strapi/strapi": "5.6.0",
+          "pg": "8.12.0",
+          "react": "^18.3.1",
+          "react-dom": "^18.3.1",
+          "react-router-dom": "^6.26.2",
+          "styled-components": "^6.1.13"
+        },
+        "devDependencies": {
+          "@types/node": "^20.14.10",
+          "typescript": "^5.5.4"
+        },
+        "engines": {
+          "node": ">=18.0.0 <=22.x.x",
+          "npm": ">=6.0.0"
+        }
+      },
+      "extraFiles": {
+        "src/utils/access.ts": "/**\n * Access helpers shared by the portal and desk controllers.\n *\n * The users-permissions plugin verifies the JWT and drops the bare user row on\n * ctx.state.user, but it will not populate our custom `organisation` relation,\n * so anything that needs to know which newsroom the caller belongs to has to\n * ask for it. API tokens arrive without a user at all - the desk cron jobs show\n * up on ctx.state.auth instead.\n */\n\nexport type Membership = {\n  userId: number;\n  userDocumentId: string;\n  organisationId: string | null;\n  organisationName: string | null;\n  roleType: string | null;\n};\n\nconst EDITORIAL_ROLE_TYPES = new Set([\"editor\", \"managing_editor\", \"newsroom_admin\"]);\n\nexport async function resolveMembership(ctx: any): Promise<Membership | null> {\n  const sessionUser = ctx.state.user;\n  if (!sessionUser?.documentId) {\n    return null;\n  }\n\n  const account: any = await strapi\n    .documents(\"plugin::users-permissions.user\")\n    .findOne({\n      documentId: sessionUser.documentId,\n      fields: [\"username\", \"blocked\"],\n      populate: {\n        role: { fields: [\"type\"] },\n        organisation: { fields: [\"name\"] },\n      },\n    });\n\n  if (!account || account.blocked) {\n    return null;\n  }\n\n  return {\n    userId: sessionUser.id,\n    userDocumentId: sessionUser.documentId,\n    organisationId: account.organisation?.documentId ?? null,\n    organisationName: account.organisation?.name ?? null,\n    roleType: account.role?.type ?? null,\n  };\n}\n\nexport function isEditorialStaff(membership: Membership | null): boolean {\n  return Boolean(membership?.roleType && EDITORIAL_ROLE_TYPES.has(membership.roleType));\n}\n\n/**\n * The desk cron and the syndication worker talk to us with a full-access API\n * token rather than a session.\n */\nexport function isFullAccessToken(ctx: any): boolean {\n  return (\n    ctx.state.auth?.strategy?.name === \"api-token\" &&\n    ctx.state.auth?.credentials?.type === \"full-access\"\n  );\n}\n",
+        "src/api/article/controllers/archive-search.ts": "/**\n * Archive search controller.\n *\n * Thin wrapper over api::article.article's searchArchive - the desk UI hits\n * this while the reader types, so it has to stay cheap.\n */\nimport { factories } from \"@strapi/strapi\";\n\nimport { resolveMembership } from \"../../../utils/access\";\n\nconst MIN_TERM_LENGTH = 2;\n\nexport default factories.createCoreController(\"api::article.article\", ({ strapi }) => ({\n  async find(ctx) {\n    const membership = await resolveMembership(ctx);\n    if (!membership?.organisationId) {\n      return ctx.unauthorized(\"No organisation on this account\");\n    }\n\n    const term = String(ctx.query.q ?? \"\");\n    if (term.trim().length < MIN_TERM_LENGTH) {\n      return ctx.badRequest(\"q must be at least two characters\");\n    }\n\n    const rows = await strapi.service(\"api::article.article\").searchArchive({\n      term,\n      sortBy: ctx.query.sort as string | undefined,\n      direction: ctx.query.direction as string | undefined,\n      limit: ctx.query.limit as string | undefined,\n      organisationId: membership.organisationId,\n    });\n\n    ctx.body = { data: rows, meta: { count: rows.length } };\n  },\n}));\n",
+        "src/api/article/routes/archive-search.ts": "export default {\n  type: \"content-api\",\n  routes: [\n    {\n      method: \"GET\",\n      path: \"/articles/archive-search\",\n      handler: \"archive-search.find\",\n      config: {\n        policies: [\"global::is-authenticated\"],\n        middlewares: [],\n      },\n    },\n  ],\n};\n",
+        "config/database.ts": "export default ({ env }) => ({\n  connection: {\n    client: \"postgres\",\n    connection: {\n      host: env(\"DATABASE_HOST\", \"127.0.0.1\"),\n      port: env.int(\"DATABASE_PORT\", 5432),\n      database: env(\"DATABASE_NAME\", \"northbeam\"),\n      user: env(\"DATABASE_USERNAME\", \"northbeam\"),\n      password: env(\"DATABASE_PASSWORD\", \"\"),\n      schema: env(\"DATABASE_SCHEMA\", \"public\"),\n      ssl: env.bool(\"DATABASE_SSL\", false) && {\n        rejectUnauthorized: env.bool(\"DATABASE_SSL_REJECT_UNAUTHORIZED\", true),\n      },\n    },\n    pool: {\n      min: env.int(\"DATABASE_POOL_MIN\", 2),\n      max: env.int(\"DATABASE_POOL_MAX\", 10),\n    },\n    acquireConnectionTimeout: env.int(\"DATABASE_CONNECTION_TIMEOUT\", 60000),\n  },\n});\n"
+      }
+    },
+    {
+      "id": "h7-strapi-cms-tag-suggest",
+      "family": "strapi-cms",
+      "architecture": "Strapi 5 content-API application in TypeScript: content-type controllers, services and routers under src/api/, the Document Service API over Postgres as the data layer (with strapi.db.query and a strapi.db.connection.raw escape hatch), and the caller's identity coming from the Users & Permissions plugin's JWT on ctx.state.user (API tokens on ctx.state.auth), with the newsroom tenant resolved from the user's organisation relation.",
+      "language": "typescript",
+      "file": "strapi-cms/src/api/tag/services/tag.ts",
+      "scanAs": "src/api/tag/services/tag.ts",
+      "kind": "safe",
+      "pairedWith": "h7-strapi-cms-archive-relevance-search",
+      "route": "GET /tags/suggest",
+      "runtimeVerifiable": true,
+      "why": "The same knex escape hatch on the same connection with a caller-supplied term and sort, but every value travels as a positional binding and the only interpolated fragments are a column looked up in the SORTABLE_COLUMNS allowlist and a direction narrowed to asc/desc by a ternary, so nothing from the request becomes SQL text.",
+      "packageJson": {
+        "name": "northbeam-newsroom",
+        "version": "1.7.2",
+        "private": true,
+        "description": "Northbeam newsroom CMS and reader portal",
+        "scripts": {
+          "build": "strapi build",
+          "console": "strapi console",
+          "deploy": "strapi deploy",
+          "develop": "strapi develop",
+          "start": "strapi start",
+          "strapi": "strapi"
+        },
+        "dependencies": {
+          "@strapi/plugin-cloud": "5.6.0",
+          "@strapi/plugin-users-permissions": "5.6.0",
+          "@strapi/strapi": "5.6.0",
+          "pg": "8.12.0",
+          "react": "^18.3.1",
+          "react-dom": "^18.3.1",
+          "react-router-dom": "^6.26.2",
+          "styled-components": "^6.1.13"
+        },
+        "devDependencies": {
+          "@types/node": "^20.14.10",
+          "typescript": "^5.5.4"
+        },
+        "engines": {
+          "node": ">=18.0.0 <=22.x.x",
+          "npm": ">=6.0.0"
+        }
+      },
+      "extraFiles": {
+        "src/utils/access.ts": "/**\n * Access helpers shared by the portal and desk controllers.\n *\n * The users-permissions plugin verifies the JWT and drops the bare user row on\n * ctx.state.user, but it will not populate our custom `organisation` relation,\n * so anything that needs to know which newsroom the caller belongs to has to\n * ask for it. API tokens arrive without a user at all - the desk cron jobs show\n * up on ctx.state.auth instead.\n */\n\nexport type Membership = {\n  userId: number;\n  userDocumentId: string;\n  organisationId: string | null;\n  organisationName: string | null;\n  roleType: string | null;\n};\n\nconst EDITORIAL_ROLE_TYPES = new Set([\"editor\", \"managing_editor\", \"newsroom_admin\"]);\n\nexport async function resolveMembership(ctx: any): Promise<Membership | null> {\n  const sessionUser = ctx.state.user;\n  if (!sessionUser?.documentId) {\n    return null;\n  }\n\n  const account: any = await strapi\n    .documents(\"plugin::users-permissions.user\")\n    .findOne({\n      documentId: sessionUser.documentId,\n      fields: [\"username\", \"blocked\"],\n      populate: {\n        role: { fields: [\"type\"] },\n        organisation: { fields: [\"name\"] },\n      },\n    });\n\n  if (!account || account.blocked) {\n    return null;\n  }\n\n  return {\n    userId: sessionUser.id,\n    userDocumentId: sessionUser.documentId,\n    organisationId: account.organisation?.documentId ?? null,\n    organisationName: account.organisation?.name ?? null,\n    roleType: account.role?.type ?? null,\n  };\n}\n\nexport function isEditorialStaff(membership: Membership | null): boolean {\n  return Boolean(membership?.roleType && EDITORIAL_ROLE_TYPES.has(membership.roleType));\n}\n\n/**\n * The desk cron and the syndication worker talk to us with a full-access API\n * token rather than a session.\n */\nexport function isFullAccessToken(ctx: any): boolean {\n  return (\n    ctx.state.auth?.strategy?.name === \"api-token\" &&\n    ctx.state.auth?.credentials?.type === \"full-access\"\n  );\n}\n",
+        "src/api/tag/controllers/tag-suggest.ts": "/**\n * Tag autocomplete for the desk editor sidebar.\n */\nimport { factories } from \"@strapi/strapi\";\n\nimport { resolveMembership } from \"../../../utils/access\";\n\nexport default factories.createCoreController(\"api::tag.tag\", ({ strapi }) => ({\n  async find(ctx) {\n    const membership = await resolveMembership(ctx);\n    if (!membership?.organisationId) {\n      return ctx.unauthorized(\"No organisation on this account\");\n    }\n\n    const rows = await strapi.service(\"api::tag.tag\").suggest({\n      term: String(ctx.query.q ?? \"\"),\n      sortBy: ctx.query.sort as string | undefined,\n      direction: ctx.query.direction as string | undefined,\n      limit: ctx.query.limit as string | undefined,\n      organisationId: membership.organisationId,\n    });\n\n    ctx.body = { data: rows, meta: { count: rows.length } };\n  },\n}));\n",
+        "src/api/tag/routes/tag.ts": "export default {\n  type: \"content-api\",\n  routes: [\n    {\n      method: \"GET\",\n      path: \"/tags/suggest\",\n      handler: \"tag-suggest.find\",\n      config: {\n        policies: [\"global::is-authenticated\"],\n        middlewares: [],\n      },\n    },\n  ],\n};\n",
+        "config/database.ts": "export default ({ env }) => ({\n  connection: {\n    client: \"postgres\",\n    connection: {\n      host: env(\"DATABASE_HOST\", \"127.0.0.1\"),\n      port: env.int(\"DATABASE_PORT\", 5432),\n      database: env(\"DATABASE_NAME\", \"northbeam\"),\n      user: env(\"DATABASE_USERNAME\", \"northbeam\"),\n      password: env(\"DATABASE_PASSWORD\", \"\"),\n      schema: env(\"DATABASE_SCHEMA\", \"public\"),\n      ssl: env.bool(\"DATABASE_SSL\", false) && {\n        rejectUnauthorized: env.bool(\"DATABASE_SSL_REJECT_UNAUTHORIZED\", true),\n      },\n    },\n    pool: {\n      min: env.int(\"DATABASE_POOL_MIN\", 2),\n      max: env.int(\"DATABASE_POOL_MAX\", 10),\n    },\n    acquireConnectionTimeout: env.int(\"DATABASE_CONNECTION_TIMEOUT\", 60000),\n  },\n});\n"
+      }
+    },
+    {
+      "id": "h7-strapi-cms-article-retraction",
+      "family": "strapi-cms",
+      "architecture": "Strapi 5 content-API application in TypeScript: content-type controllers, services and routers under src/api/, the Document Service API over Postgres as the data layer (with strapi.db.query and a strapi.db.connection.raw escape hatch), and the caller's identity coming from the Users & Permissions plugin's JWT on ctx.state.user (API tokens on ctx.state.auth), with the newsroom tenant resolved from the user's organisation relation.",
+      "language": "typescript",
+      "file": "strapi-cms/src/api/article/controllers/moderation.ts",
+      "scanAs": "src/api/article/controllers/moderation.ts",
+      "kind": "vulnerable",
+      "category": "missing_authorization_on_content_state_change",
+      "cwe": "CWE-862",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 51,
+      "lineRange": [
+        23,
+        62
+      ],
+      "route": "POST /articles/:documentId/retract",
+      "runtimeVerifiable": true,
+      "why": "retract establishes only that some caller exists - any users-permissions JWT, or any full-access API token - and then unpublishes and rewrites any article by the documentId in the URL. The comment says the desk routes sit in the editorial policy group, but src/api/article/routes/moderation.ts ships with policies: [] and the editorial policy commented out, so neither the route nor the handler checks the caller's role or newsroom: a reader can take any newsroom's story off the site.",
+      "packageJson": {
+        "name": "northbeam-newsroom",
+        "version": "1.7.2",
+        "private": true,
+        "description": "Northbeam newsroom CMS and reader portal",
+        "scripts": {
+          "build": "strapi build",
+          "console": "strapi console",
+          "deploy": "strapi deploy",
+          "develop": "strapi develop",
+          "start": "strapi start",
+          "strapi": "strapi"
+        },
+        "dependencies": {
+          "@strapi/plugin-cloud": "5.6.0",
+          "@strapi/plugin-users-permissions": "5.6.0",
+          "@strapi/strapi": "5.6.0",
+          "pg": "8.12.0",
+          "react": "^18.3.1",
+          "react-dom": "^18.3.1",
+          "react-router-dom": "^6.26.2",
+          "styled-components": "^6.1.13"
+        },
+        "devDependencies": {
+          "@types/node": "^20.14.10",
+          "typescript": "^5.5.4"
+        },
+        "engines": {
+          "node": ">=18.0.0 <=22.x.x",
+          "npm": ">=6.0.0"
+        }
+      },
+      "extraFiles": {
+        "src/utils/access.ts": "/**\n * Access helpers shared by the portal and desk controllers.\n *\n * The users-permissions plugin verifies the JWT and drops the bare user row on\n * ctx.state.user, but it will not populate our custom `organisation` relation,\n * so anything that needs to know which newsroom the caller belongs to has to\n * ask for it. API tokens arrive without a user at all - the desk cron jobs show\n * up on ctx.state.auth instead.\n */\n\nexport type Membership = {\n  userId: number;\n  userDocumentId: string;\n  organisationId: string | null;\n  organisationName: string | null;\n  roleType: string | null;\n};\n\nconst EDITORIAL_ROLE_TYPES = new Set([\"editor\", \"managing_editor\", \"newsroom_admin\"]);\n\nexport async function resolveMembership(ctx: any): Promise<Membership | null> {\n  const sessionUser = ctx.state.user;\n  if (!sessionUser?.documentId) {\n    return null;\n  }\n\n  const account: any = await strapi\n    .documents(\"plugin::users-permissions.user\")\n    .findOne({\n      documentId: sessionUser.documentId,\n      fields: [\"username\", \"blocked\"],\n      populate: {\n        role: { fields: [\"type\"] },\n        organisation: { fields: [\"name\"] },\n      },\n    });\n\n  if (!account || account.blocked) {\n    return null;\n  }\n\n  return {\n    userId: sessionUser.id,\n    userDocumentId: sessionUser.documentId,\n    organisationId: account.organisation?.documentId ?? null,\n    organisationName: account.organisation?.name ?? null,\n    roleType: account.role?.type ?? null,\n  };\n}\n\nexport function isEditorialStaff(membership: Membership | null): boolean {\n  return Boolean(membership?.roleType && EDITORIAL_ROLE_TYPES.has(membership.roleType));\n}\n\n/**\n * The desk cron and the syndication worker talk to us with a full-access API\n * token rather than a session.\n */\nexport function isFullAccessToken(ctx: any): boolean {\n  return (\n    ctx.state.auth?.strategy?.name === \"api-token\" &&\n    ctx.state.auth?.credentials?.type === \"full-access\"\n  );\n}\n",
+        "src/api/article/routes/moderation.ts": "/**\n * Desk moderation routes.\n *\n * The editorial policy is parked until the role rename lands in staging - see\n * NB-1874. The controllers log every action, so we can reconstruct who did what\n * in the meantime.\n */\nexport default {\n  type: \"content-api\",\n  routes: [\n    {\n      method: \"POST\",\n      path: \"/articles/:documentId/retract\",\n      handler: \"moderation.retract\",\n      config: {\n        // policies: [\"global::is-editorial-staff\"],\n        policies: [],\n        middlewares: [],\n      },\n    },\n  ],\n};\n",
+        "src/policies/is-editorial-staff.ts": "/**\n * global::is-editorial-staff\n *\n * Guards the desk routes. Reads the role off the session user - the plugin\n * populates `role` on ctx.state.user, so no extra query is needed here.\n */\nconst EDITORIAL_ROLE_TYPES = [\"editor\", \"managing_editor\", \"newsroom_admin\"];\n\nexport default (policyContext: any, _config: unknown, { strapi }: any) => {\n  const user = policyContext.state.user;\n\n  if (!user) {\n    return false;\n  }\n\n  if (!EDITORIAL_ROLE_TYPES.includes(user.role?.type)) {\n    strapi.log.warn(`role ${user.role?.type} refused at ${policyContext.request.url}`);\n    return false;\n  }\n\n  return true;\n};\n"
+      }
+    },
+    {
+      "id": "h7-strapi-cms-article-embargo-hold",
+      "family": "strapi-cms",
+      "architecture": "Strapi 5 content-API application in TypeScript: content-type controllers, services and routers under src/api/, the Document Service API over Postgres as the data layer (with strapi.db.query and a strapi.db.connection.raw escape hatch), and the caller's identity coming from the Users & Permissions plugin's JWT on ctx.state.user (API tokens on ctx.state.auth), with the newsroom tenant resolved from the user's organisation relation.",
+      "language": "typescript",
+      "file": "strapi-cms/src/api/article/controllers/embargo.ts",
+      "scanAs": "src/api/article/controllers/embargo.ts",
+      "kind": "safe",
+      "pairedWith": "h7-strapi-cms-article-retraction",
+      "route": "POST /articles/:documentId/embargo",
+      "runtimeVerifiable": true,
+      "why": "The same kind of privileged state change - unpublish plus update by documentId - behind the same route group with policies: [], but here the handler does the work the policy would have done: it resolves the membership, refuses anyone who is not editorial staff, and compares the loaded article's organisation.documentId with the caller's organisationId before mutating.",
+      "packageJson": {
+        "name": "northbeam-newsroom",
+        "version": "1.7.2",
+        "private": true,
+        "description": "Northbeam newsroom CMS and reader portal",
+        "scripts": {
+          "build": "strapi build",
+          "console": "strapi console",
+          "deploy": "strapi deploy",
+          "develop": "strapi develop",
+          "start": "strapi start",
+          "strapi": "strapi"
+        },
+        "dependencies": {
+          "@strapi/plugin-cloud": "5.6.0",
+          "@strapi/plugin-users-permissions": "5.6.0",
+          "@strapi/strapi": "5.6.0",
+          "pg": "8.12.0",
+          "react": "^18.3.1",
+          "react-dom": "^18.3.1",
+          "react-router-dom": "^6.26.2",
+          "styled-components": "^6.1.13"
+        },
+        "devDependencies": {
+          "@types/node": "^20.14.10",
+          "typescript": "^5.5.4"
+        },
+        "engines": {
+          "node": ">=18.0.0 <=22.x.x",
+          "npm": ">=6.0.0"
+        }
+      },
+      "extraFiles": {
+        "src/utils/access.ts": "/**\n * Access helpers shared by the portal and desk controllers.\n *\n * The users-permissions plugin verifies the JWT and drops the bare user row on\n * ctx.state.user, but it will not populate our custom `organisation` relation,\n * so anything that needs to know which newsroom the caller belongs to has to\n * ask for it. API tokens arrive without a user at all - the desk cron jobs show\n * up on ctx.state.auth instead.\n */\n\nexport type Membership = {\n  userId: number;\n  userDocumentId: string;\n  organisationId: string | null;\n  organisationName: string | null;\n  roleType: string | null;\n};\n\nconst EDITORIAL_ROLE_TYPES = new Set([\"editor\", \"managing_editor\", \"newsroom_admin\"]);\n\nexport async function resolveMembership(ctx: any): Promise<Membership | null> {\n  const sessionUser = ctx.state.user;\n  if (!sessionUser?.documentId) {\n    return null;\n  }\n\n  const account: any = await strapi\n    .documents(\"plugin::users-permissions.user\")\n    .findOne({\n      documentId: sessionUser.documentId,\n      fields: [\"username\", \"blocked\"],\n      populate: {\n        role: { fields: [\"type\"] },\n        organisation: { fields: [\"name\"] },\n      },\n    });\n\n  if (!account || account.blocked) {\n    return null;\n  }\n\n  return {\n    userId: sessionUser.id,\n    userDocumentId: sessionUser.documentId,\n    organisationId: account.organisation?.documentId ?? null,\n    organisationName: account.organisation?.name ?? null,\n    roleType: account.role?.type ?? null,\n  };\n}\n\nexport function isEditorialStaff(membership: Membership | null): boolean {\n  return Boolean(membership?.roleType && EDITORIAL_ROLE_TYPES.has(membership.roleType));\n}\n\n/**\n * The desk cron and the syndication worker talk to us with a full-access API\n * token rather than a session.\n */\nexport function isFullAccessToken(ctx: any): boolean {\n  return (\n    ctx.state.auth?.strategy?.name === \"api-token\" &&\n    ctx.state.auth?.credentials?.type === \"full-access\"\n  );\n}\n",
+        "src/api/article/routes/embargo.ts": "/**\n * Embargo routes. Same story as the moderation router: the editorial policy is\n * parked (NB-1874), so these handlers do their own role and tenant checks.\n */\nexport default {\n  type: \"content-api\",\n  routes: [\n    {\n      method: \"POST\",\n      path: \"/articles/:documentId/embargo\",\n      handler: \"embargo.hold\",\n      config: {\n        // policies: [\"global::is-editorial-staff\"],\n        policies: [],\n        middlewares: [],\n      },\n    },\n  ],\n};\n",
+        "src/policies/is-editorial-staff.ts": "/**\n * global::is-editorial-staff\n *\n * Guards the desk routes. Reads the role off the session user - the plugin\n * populates `role` on ctx.state.user, so no extra query is needed here.\n */\nconst EDITORIAL_ROLE_TYPES = [\"editor\", \"managing_editor\", \"newsroom_admin\"];\n\nexport default (policyContext: any, _config: unknown, { strapi }: any) => {\n  const user = policyContext.state.user;\n\n  if (!user) {\n    return false;\n  }\n\n  if (!EDITORIAL_ROLE_TYPES.includes(user.role?.type)) {\n    strapi.log.warn(`role ${user.role?.type} refused at ${policyContext.request.url}`);\n    return false;\n  }\n\n  return true;\n};\n"
+      }
+    },
+    {
+      "id": "h7-strapi-cms-contributor-byline",
+      "family": "strapi-cms",
+      "architecture": "Strapi 5 content-API application in TypeScript: content-type controllers, services and routers under src/api/, the Document Service API over Postgres as the data layer (with strapi.db.query and a strapi.db.connection.raw escape hatch), and the caller's identity coming from the Users & Permissions plugin's JWT on ctx.state.user (API tokens on ctx.state.auth), with the newsroom tenant resolved from the user's organisation relation.",
+      "language": "typescript",
+      "file": "strapi-cms/src/api/contributor/controllers/contributor.ts",
+      "scanAs": "src/api/contributor/controllers/contributor.ts",
+      "kind": "vulnerable",
+      "category": "over_populated_relation_exposes_account_secrets",
+      "cwe": "CWE-200",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 31,
+      "lineRange": [
+        26,
+        50
+      ],
+      "route": "GET /contributors/:documentId/profile",
+      "runtimeVerifiable": true,
+      "why": "publicProfile populates the `account` relation - a plugin::users-permissions.user - without a `fields` list and returns the document straight on ctx.body, so every scalar on the user row leaves the server: email, provider, resetPasswordToken and confirmationToken among them. The comment is wrong that private attributes are stripped: that only happens in the core controller's sanitizeOutput, which this handler never calls, and the route is auth: false with a five-minute public Cache-Control, so the tokens land in the CDN.",
+      "packageJson": {
+        "name": "northbeam-newsroom",
+        "version": "1.7.2",
+        "private": true,
+        "description": "Northbeam newsroom CMS and reader portal",
+        "scripts": {
+          "build": "strapi build",
+          "console": "strapi console",
+          "deploy": "strapi deploy",
+          "develop": "strapi develop",
+          "start": "strapi start",
+          "strapi": "strapi"
+        },
+        "dependencies": {
+          "@strapi/plugin-cloud": "5.6.0",
+          "@strapi/plugin-users-permissions": "5.6.0",
+          "@strapi/strapi": "5.6.0",
+          "pg": "8.12.0",
+          "react": "^18.3.1",
+          "react-dom": "^18.3.1",
+          "react-router-dom": "^6.26.2",
+          "styled-components": "^6.1.13"
+        },
+        "devDependencies": {
+          "@types/node": "^20.14.10",
+          "typescript": "^5.5.4"
+        },
+        "engines": {
+          "node": ">=18.0.0 <=22.x.x",
+          "npm": ">=6.0.0"
+        }
+      },
+      "extraFiles": {
+        "src/api/contributor/routes/contributor.ts": "/**\n * Public byline routes - the marketing site renders these at build time and the\n * CDN caches them, so they run without a session.\n */\nexport default {\n  type: \"content-api\",\n  routes: [\n    {\n      method: \"GET\",\n      path: \"/contributors/:documentId/profile\",\n      handler: \"contributor.publicProfile\",\n      config: {\n        auth: false,\n        policies: [],\n        middlewares: [],\n      },\n    },\n  ],\n};\n",
+        "src/api/contributor/content-types/contributor/schema.json": "{\n  \"kind\": \"collectionType\",\n  \"collectionName\": \"contributors\",\n  \"info\": {\n    \"singularName\": \"contributor\",\n    \"pluralName\": \"contributors\",\n    \"displayName\": \"Contributor\",\n    \"description\": \"A writer or photographer who can carry a byline\"\n  },\n  \"options\": {\n    \"draftAndPublish\": true\n  },\n  \"attributes\": {\n    \"penName\": {\n      \"type\": \"string\",\n      \"required\": true\n    },\n    \"bio\": {\n      \"type\": \"text\"\n    },\n    \"avatarUrl\": {\n      \"type\": \"string\"\n    },\n    \"payoutReference\": {\n      \"type\": \"string\",\n      \"private\": true\n    },\n    \"account\": {\n      \"type\": \"relation\",\n      \"relation\": \"oneToOne\",\n      \"target\": \"plugin::users-permissions.user\",\n      \"inversedBy\": \"contributor\"\n    },\n    \"organisation\": {\n      \"type\": \"relation\",\n      \"relation\": \"manyToOne\",\n      \"target\": \"api::organisation.organisation\",\n      \"inversedBy\": \"contributors\"\n    },\n    \"articles\": {\n      \"type\": \"relation\",\n      \"relation\": \"manyToMany\",\n      \"target\": \"api::article.article\",\n      \"mappedBy\": \"contributors\"\n    }\n  }\n}\n"
+      }
+    },
+    {
+      "id": "h7-strapi-cms-contributor-directory",
+      "family": "strapi-cms",
+      "architecture": "Strapi 5 content-API application in TypeScript: content-type controllers, services and routers under src/api/, the Document Service API over Postgres as the data layer (with strapi.db.query and a strapi.db.connection.raw escape hatch), and the caller's identity coming from the Users & Permissions plugin's JWT on ctx.state.user (API tokens on ctx.state.auth), with the newsroom tenant resolved from the user's organisation relation.",
+      "language": "typescript",
+      "file": "strapi-cms/src/api/contributor/controllers/contributor-directory.ts",
+      "scanAs": "src/api/contributor/controllers/contributor-directory.ts",
+      "kind": "safe",
+      "pairedWith": "h7-strapi-cms-contributor-byline",
+      "route": "GET /contributors/directory",
+      "runtimeVerifiable": true,
+      "why": "The same unauthenticated, CDN-cached endpoint populating the same users-permissions relation, but the populate names fields: [\"username\"] on the account so nothing else on the user row is selected, and the result still goes through this.sanitizeOutput before it is written to ctx.body.",
+      "packageJson": {
+        "name": "northbeam-newsroom",
+        "version": "1.7.2",
+        "private": true,
+        "description": "Northbeam newsroom CMS and reader portal",
+        "scripts": {
+          "build": "strapi build",
+          "console": "strapi console",
+          "deploy": "strapi deploy",
+          "develop": "strapi develop",
+          "start": "strapi start",
+          "strapi": "strapi"
+        },
+        "dependencies": {
+          "@strapi/plugin-cloud": "5.6.0",
+          "@strapi/plugin-users-permissions": "5.6.0",
+          "@strapi/strapi": "5.6.0",
+          "pg": "8.12.0",
+          "react": "^18.3.1",
+          "react-dom": "^18.3.1",
+          "react-router-dom": "^6.26.2",
+          "styled-components": "^6.1.13"
+        },
+        "devDependencies": {
+          "@types/node": "^20.14.10",
+          "typescript": "^5.5.4"
+        },
+        "engines": {
+          "node": ">=18.0.0 <=22.x.x",
+          "npm": ">=6.0.0"
+        }
+      },
+      "extraFiles": {
+        "src/api/contributor/routes/contributor-directory.ts": "export default {\n  type: \"content-api\",\n  routes: [\n    {\n      method: \"GET\",\n      path: \"/contributors/directory\",\n      handler: \"contributor-directory.find\",\n      config: {\n        auth: false,\n        policies: [],\n        middlewares: [],\n      },\n    },\n  ],\n};\n",
+        "src/api/contributor/content-types/contributor/schema.json": "{\n  \"kind\": \"collectionType\",\n  \"collectionName\": \"contributors\",\n  \"info\": {\n    \"singularName\": \"contributor\",\n    \"pluralName\": \"contributors\",\n    \"displayName\": \"Contributor\",\n    \"description\": \"A writer or photographer who can carry a byline\"\n  },\n  \"options\": {\n    \"draftAndPublish\": true\n  },\n  \"attributes\": {\n    \"penName\": {\n      \"type\": \"string\",\n      \"required\": true\n    },\n    \"bio\": {\n      \"type\": \"text\"\n    },\n    \"avatarUrl\": {\n      \"type\": \"string\"\n    },\n    \"payoutReference\": {\n      \"type\": \"string\",\n      \"private\": true\n    },\n    \"account\": {\n      \"type\": \"relation\",\n      \"relation\": \"oneToOne\",\n      \"target\": \"plugin::users-permissions.user\",\n      \"inversedBy\": \"contributor\"\n    },\n    \"organisation\": {\n      \"type\": \"relation\",\n      \"relation\": \"manyToOne\",\n      \"target\": \"api::organisation.organisation\",\n      \"inversedBy\": \"contributors\"\n    },\n    \"articles\": {\n      \"type\": \"relation\",\n      \"relation\": \"manyToMany\",\n      \"target\": \"api::article.article\",\n      \"mappedBy\": \"contributors\"\n    }\n  }\n}\n"
+      }
+    },
+    {
+      "id": "h7-strapi-cms-press-kit-download",
+      "family": "strapi-cms",
+      "architecture": "Strapi 5 content-API application in TypeScript: content-type controllers, services and routers under src/api/, the Document Service API over Postgres as the data layer (with strapi.db.query and a strapi.db.connection.raw escape hatch), and the caller's identity coming from the Users & Permissions plugin's JWT on ctx.state.user (API tokens on ctx.state.auth), with the newsroom tenant resolved from the user's organisation relation.",
+      "language": "typescript",
+      "file": "strapi-cms/src/api/press-kit/controllers/press-kit.ts",
+      "scanAs": "src/api/press-kit/controllers/press-kit.ts",
+      "kind": "vulnerable",
+      "category": "path_traversal_in_download_handler",
+      "cwe": "CWE-22",
+      "severityBand": [
+        "high",
+        "critical"
+      ],
+      "line": 53,
+      "lineRange": [
+        32,
+        71
+      ],
+      "route": "GET /press-kits/:documentId/download",
+      "runtimeVerifiable": true,
+      "why": "The `file` query parameter is joined onto PRESS_KIT_ROOT and the result is opened with fs.createReadStream, with no normalisation and no check that the resolved path is still inside the root. The comment reasons about `folder`, which is generated, and never about `requested`, which is not: ?file=../../../.env on this unauthenticated route streams any file the Node process can read.",
+      "packageJson": {
+        "name": "northbeam-newsroom",
+        "version": "1.7.2",
+        "private": true,
+        "description": "Northbeam newsroom CMS and reader portal",
+        "scripts": {
+          "build": "strapi build",
+          "console": "strapi console",
+          "deploy": "strapi deploy",
+          "develop": "strapi develop",
+          "start": "strapi start",
+          "strapi": "strapi"
+        },
+        "dependencies": {
+          "@strapi/plugin-cloud": "5.6.0",
+          "@strapi/plugin-users-permissions": "5.6.0",
+          "@strapi/strapi": "5.6.0",
+          "pg": "8.12.0",
+          "react": "^18.3.1",
+          "react-dom": "^18.3.1",
+          "react-router-dom": "^6.26.2",
+          "styled-components": "^6.1.13"
+        },
+        "devDependencies": {
+          "@types/node": "^20.14.10",
+          "typescript": "^5.5.4"
+        },
+        "engines": {
+          "node": ">=18.0.0 <=22.x.x",
+          "npm": ">=6.0.0"
+        }
+      },
+      "extraFiles": {
+        "src/api/press-kit/routes/press-kit.ts": "export default {\n  type: \"content-api\",\n  routes: [\n    {\n      method: \"GET\",\n      path: \"/press-kits/:documentId/download\",\n      handler: \"press-kit.download\",\n      config: {\n        auth: false,\n        policies: [],\n        middlewares: [],\n      },\n    },\n  ],\n};\n"
+      }
+    },
+    {
+      "id": "h7-strapi-cms-brand-asset-download",
+      "family": "strapi-cms",
+      "architecture": "Strapi 5 content-API application in TypeScript: content-type controllers, services and routers under src/api/, the Document Service API over Postgres as the data layer (with strapi.db.query and a strapi.db.connection.raw escape hatch), and the caller's identity coming from the Users & Permissions plugin's JWT on ctx.state.user (API tokens on ctx.state.auth), with the newsroom tenant resolved from the user's organisation relation.",
+      "language": "typescript",
+      "file": "strapi-cms/src/api/press-kit/controllers/brand-asset.ts",
+      "scanAs": "src/api/press-kit/controllers/brand-asset.ts",
+      "kind": "safe",
+      "pairedWith": "h7-strapi-cms-press-kit-download",
+      "route": "GET /press-kits/:documentId/assets/:assetId",
+      "runtimeVerifiable": true,
+      "why": "The same unauthenticated fs.createReadStream download, but the file name never comes off the request: the asset is looked up by documentId under its press kit and the stored storageKey is used, then resolveInsideRoot path.resolves it and refuses anything that does not start with the asset root, so a crafted parameter cannot select a file outside it.",
+      "packageJson": {
+        "name": "northbeam-newsroom",
+        "version": "1.7.2",
+        "private": true,
+        "description": "Northbeam newsroom CMS and reader portal",
+        "scripts": {
+          "build": "strapi build",
+          "console": "strapi console",
+          "deploy": "strapi deploy",
+          "develop": "strapi develop",
+          "start": "strapi start",
+          "strapi": "strapi"
+        },
+        "dependencies": {
+          "@strapi/plugin-cloud": "5.6.0",
+          "@strapi/plugin-users-permissions": "5.6.0",
+          "@strapi/strapi": "5.6.0",
+          "pg": "8.12.0",
+          "react": "^18.3.1",
+          "react-dom": "^18.3.1",
+          "react-router-dom": "^6.26.2",
+          "styled-components": "^6.1.13"
+        },
+        "devDependencies": {
+          "@types/node": "^20.14.10",
+          "typescript": "^5.5.4"
+        },
+        "engines": {
+          "node": ">=18.0.0 <=22.x.x",
+          "npm": ">=6.0.0"
+        }
+      },
+      "extraFiles": {
+        "src/api/press-kit/routes/brand-asset.ts": "export default {\n  type: \"content-api\",\n  routes: [\n    {\n      method: \"GET\",\n      path: \"/press-kits/:documentId/assets/:assetId\",\n      handler: \"brand-asset.download\",\n      config: {\n        auth: false,\n        policies: [],\n        middlewares: [],\n      },\n    },\n  ],\n};\n"
+      }
+    },
+    {
+      "id": "h7-strapi-cms-feed-preview",
+      "family": "strapi-cms",
+      "architecture": "Strapi 5 content-API application in TypeScript: content-type controllers, services and routers under src/api/, the Document Service API over Postgres as the data layer (with strapi.db.query and a strapi.db.connection.raw escape hatch), and the caller's identity coming from the Users & Permissions plugin's JWT on ctx.state.user (API tokens on ctx.state.auth), with the newsroom tenant resolved from the user's organisation relation.",
+      "language": "typescript",
+      "file": "strapi-cms/src/api/syndication-feed/controllers/syndication-feed.ts",
+      "scanAs": "src/api/syndication-feed/controllers/syndication-feed.ts",
+      "kind": "vulnerable",
+      "category": "server_side_request_forgery_in_feed_preview",
+      "cwe": "CWE-918",
+      "severityBand": [
+        "medium",
+        "high"
+      ],
+      "line": 47,
+      "lineRange": [
+        34,
+        70
+      ],
+      "route": "POST /syndication-feeds/preview",
+      "runtimeVerifiable": true,
+      "why": "preview fetches whatever URL the request body carries - only checking that it parses - and reflects the status, content type and first four kilobytes of the response back to the caller, with caller-supplied headers merged in. An editor, or anyone who has taken an editorial session, can point it at http://169.254.169.254/latest/meta-data/ or an internal admin service and read the answer; being behind an editorial role check limits who can do it, not what the server will connect to.",
+      "packageJson": {
+        "name": "northbeam-newsroom",
+        "version": "1.7.2",
+        "private": true,
+        "description": "Northbeam newsroom CMS and reader portal",
+        "scripts": {
+          "build": "strapi build",
+          "console": "strapi console",
+          "deploy": "strapi deploy",
+          "develop": "strapi develop",
+          "start": "strapi start",
+          "strapi": "strapi"
+        },
+        "dependencies": {
+          "@strapi/plugin-cloud": "5.6.0",
+          "@strapi/plugin-users-permissions": "5.6.0",
+          "@strapi/strapi": "5.6.0",
+          "pg": "8.12.0",
+          "react": "^18.3.1",
+          "react-dom": "^18.3.1",
+          "react-router-dom": "^6.26.2",
+          "styled-components": "^6.1.13"
+        },
+        "devDependencies": {
+          "@types/node": "^20.14.10",
+          "typescript": "^5.5.4"
+        },
+        "engines": {
+          "node": ">=18.0.0 <=22.x.x",
+          "npm": ">=6.0.0"
+        }
+      },
+      "extraFiles": {
+        "src/utils/access.ts": "/**\n * Access helpers shared by the portal and desk controllers.\n *\n * The users-permissions plugin verifies the JWT and drops the bare user row on\n * ctx.state.user, but it will not populate our custom `organisation` relation,\n * so anything that needs to know which newsroom the caller belongs to has to\n * ask for it. API tokens arrive without a user at all - the desk cron jobs show\n * up on ctx.state.auth instead.\n */\n\nexport type Membership = {\n  userId: number;\n  userDocumentId: string;\n  organisationId: string | null;\n  organisationName: string | null;\n  roleType: string | null;\n};\n\nconst EDITORIAL_ROLE_TYPES = new Set([\"editor\", \"managing_editor\", \"newsroom_admin\"]);\n\nexport async function resolveMembership(ctx: any): Promise<Membership | null> {\n  const sessionUser = ctx.state.user;\n  if (!sessionUser?.documentId) {\n    return null;\n  }\n\n  const account: any = await strapi\n    .documents(\"plugin::users-permissions.user\")\n    .findOne({\n      documentId: sessionUser.documentId,\n      fields: [\"username\", \"blocked\"],\n      populate: {\n        role: { fields: [\"type\"] },\n        organisation: { fields: [\"name\"] },\n      },\n    });\n\n  if (!account || account.blocked) {\n    return null;\n  }\n\n  return {\n    userId: sessionUser.id,\n    userDocumentId: sessionUser.documentId,\n    organisationId: account.organisation?.documentId ?? null,\n    organisationName: account.organisation?.name ?? null,\n    roleType: account.role?.type ?? null,\n  };\n}\n\nexport function isEditorialStaff(membership: Membership | null): boolean {\n  return Boolean(membership?.roleType && EDITORIAL_ROLE_TYPES.has(membership.roleType));\n}\n\n/**\n * The desk cron and the syndication worker talk to us with a full-access API\n * token rather than a session.\n */\nexport function isFullAccessToken(ctx: any): boolean {\n  return (\n    ctx.state.auth?.strategy?.name === \"api-token\" &&\n    ctx.state.auth?.credentials?.type === \"full-access\"\n  );\n}\n",
+        "src/api/syndication-feed/routes/syndication-feed.ts": "export default {\n  type: \"content-api\",\n  routes: [\n    {\n      method: \"POST\",\n      path: \"/syndication-feeds/preview\",\n      handler: \"syndication-feed.preview\",\n      config: {\n        policies: [\"global::is-authenticated\"],\n        middlewares: [],\n      },\n    },\n  ],\n};\n",
+        "src/policies/is-authenticated.ts": "/**\n * global::is-authenticated\n *\n * users-permissions already rejects a missing or expired JWT before the policy\n * chain runs; this one additionally bounces accounts that have been blocked\n * since their token was issued.\n */\nexport default (policyContext: any, _config: unknown, { strapi }: any) => {\n  const user = policyContext.state.user;\n\n  if (!user) {\n    return false;\n  }\n\n  if (user.blocked) {\n    strapi.log.warn(`blocked account ${user.id} hit ${policyContext.request.url}`);\n    return false;\n  }\n\n  return true;\n};\n"
+      }
+    },
+    {
+      "id": "h7-strapi-cms-partner-mirror-preview",
+      "family": "strapi-cms",
+      "architecture": "Strapi 5 content-API application in TypeScript: content-type controllers, services and routers under src/api/, the Document Service API over Postgres as the data layer (with strapi.db.query and a strapi.db.connection.raw escape hatch), and the caller's identity coming from the Users & Permissions plugin's JWT on ctx.state.user (API tokens on ctx.state.auth), with the newsroom tenant resolved from the user's organisation relation.",
+      "language": "typescript",
+      "file": "strapi-cms/src/api/syndication-feed/controllers/partner-mirror.ts",
+      "scanAs": "src/api/syndication-feed/controllers/partner-mirror.ts",
+      "kind": "safe",
+      "pairedWith": "h7-strapi-cms-feed-preview",
+      "route": "POST /syndication-feeds/mirror",
+      "runtimeVerifiable": true,
+      "why": "The same server-side fetch of a body-supplied URL with the response reflected back, but the URL must parse as https and its hostname must be present in the PARTNER_HOSTS set by exact match before anything is opened, redirects are not followed (redirect: \"manual\") and no caller-supplied headers are forwarded, so the reachable set is three partner hosts.",
+      "packageJson": {
+        "name": "northbeam-newsroom",
+        "version": "1.7.2",
+        "private": true,
+        "description": "Northbeam newsroom CMS and reader portal",
+        "scripts": {
+          "build": "strapi build",
+          "console": "strapi console",
+          "deploy": "strapi deploy",
+          "develop": "strapi develop",
+          "start": "strapi start",
+          "strapi": "strapi"
+        },
+        "dependencies": {
+          "@strapi/plugin-cloud": "5.6.0",
+          "@strapi/plugin-users-permissions": "5.6.0",
+          "@strapi/strapi": "5.6.0",
+          "pg": "8.12.0",
+          "react": "^18.3.1",
+          "react-dom": "^18.3.1",
+          "react-router-dom": "^6.26.2",
+          "styled-components": "^6.1.13"
+        },
+        "devDependencies": {
+          "@types/node": "^20.14.10",
+          "typescript": "^5.5.4"
+        },
+        "engines": {
+          "node": ">=18.0.0 <=22.x.x",
+          "npm": ">=6.0.0"
+        }
+      },
+      "extraFiles": {
+        "src/utils/access.ts": "/**\n * Access helpers shared by the portal and desk controllers.\n *\n * The users-permissions plugin verifies the JWT and drops the bare user row on\n * ctx.state.user, but it will not populate our custom `organisation` relation,\n * so anything that needs to know which newsroom the caller belongs to has to\n * ask for it. API tokens arrive without a user at all - the desk cron jobs show\n * up on ctx.state.auth instead.\n */\n\nexport type Membership = {\n  userId: number;\n  userDocumentId: string;\n  organisationId: string | null;\n  organisationName: string | null;\n  roleType: string | null;\n};\n\nconst EDITORIAL_ROLE_TYPES = new Set([\"editor\", \"managing_editor\", \"newsroom_admin\"]);\n\nexport async function resolveMembership(ctx: any): Promise<Membership | null> {\n  const sessionUser = ctx.state.user;\n  if (!sessionUser?.documentId) {\n    return null;\n  }\n\n  const account: any = await strapi\n    .documents(\"plugin::users-permissions.user\")\n    .findOne({\n      documentId: sessionUser.documentId,\n      fields: [\"username\", \"blocked\"],\n      populate: {\n        role: { fields: [\"type\"] },\n        organisation: { fields: [\"name\"] },\n      },\n    });\n\n  if (!account || account.blocked) {\n    return null;\n  }\n\n  return {\n    userId: sessionUser.id,\n    userDocumentId: sessionUser.documentId,\n    organisationId: account.organisation?.documentId ?? null,\n    organisationName: account.organisation?.name ?? null,\n    roleType: account.role?.type ?? null,\n  };\n}\n\nexport function isEditorialStaff(membership: Membership | null): boolean {\n  return Boolean(membership?.roleType && EDITORIAL_ROLE_TYPES.has(membership.roleType));\n}\n\n/**\n * The desk cron and the syndication worker talk to us with a full-access API\n * token rather than a session.\n */\nexport function isFullAccessToken(ctx: any): boolean {\n  return (\n    ctx.state.auth?.strategy?.name === \"api-token\" &&\n    ctx.state.auth?.credentials?.type === \"full-access\"\n  );\n}\n",
+        "src/api/syndication-feed/routes/partner-mirror.ts": "export default {\n  type: \"content-api\",\n  routes: [\n    {\n      method: \"POST\",\n      path: \"/syndication-feeds/mirror\",\n      handler: \"partner-mirror.preview\",\n      config: {\n        policies: [\"global::is-authenticated\"],\n        middlewares: [],\n      },\n    },\n  ],\n};\n",
+        "src/policies/is-authenticated.ts": "/**\n * global::is-authenticated\n *\n * users-permissions already rejects a missing or expired JWT before the policy\n * chain runs; this one additionally bounces accounts that have been blocked\n * since their token was issued.\n */\nexport default (policyContext: any, _config: unknown, { strapi }: any) => {\n  const user = policyContext.state.user;\n\n  if (!user) {\n    return false;\n  }\n\n  if (user.blocked) {\n    strapi.log.warn(`blocked account ${user.id} hit ${policyContext.request.url}`);\n    return false;\n  }\n\n  return true;\n};\n"
+      }
+    }
+  ]
+}

@@ -145,6 +145,30 @@
       "kind": "safe",
       "pairedWith": "hono-embedded-widget-origins",
       "why": "The same credentialed cors middleware on the same kind of mount, but the origin callback returns the request origin only when it is a member of a fixed allowlist and otherwise returns null, so an unknown origin receives no CORS headers at all."
+    },
+    {
+      "id": "hono-campaign-preview-subject",
+      "family": "hono",
+      "architecture": "Hono 4 route modules in TypeScript, mounted with app.use middleware for session handling, reading input through c.req.param/query/json, persisting through a Prisma client or a pg pool, and answering with c.json, c.html or a raw Response",
+      "language": "typescript",
+      "file": "hono/email-preview.ts",
+      "kind": "vulnerable",
+      "category": "reflected_cross_site_scripting",
+      "severityBand": ["medium", "high"],
+      "route": "GET /campaigns/:campaignId/preview",
+      "line": 26,
+      "lineRange": [24, 26],
+      "runtimeVerifiable": true,
+      "why": "The subject query parameter is interpolated into a plain template string and sent with c.html, which sets text/html without escaping anything. A link to the preview with a subject containing a script tag runs in the editor's origin with the viewer's session."
+    },
+    {
+      "id": "hono-campaign-draft-subject",
+      "family": "hono",
+      "language": "typescript",
+      "file": "hono/email-draft.ts",
+      "kind": "safe",
+      "pairedWith": "hono-campaign-preview-subject",
+      "why": "The same preview, but the page is built with hono/html's html tag, which escapes every interpolated value; only the saved template is marked raw, and it is not caller input."
     }
   ]
 }

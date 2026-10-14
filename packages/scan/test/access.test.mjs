@@ -7,6 +7,10 @@ import path from "node:path";
 import { parseFile } from "../dist/ast/parse.js";
 import { discoverRoutes } from "../dist/ast/routes.js";
 import * as accessRules from "../dist/rules/access.js";
+// Loading the engine registers the framework adapters. A decorator-routed
+// controller, a queue processor, and an edge worker have no entry point without
+// them, and with no entry point the rules below have nothing to judge.
+import "../dist/index.js";
 
 /**
  * The access rules are driven directly rather than through `scan()`, so these
@@ -241,6 +245,90 @@ test("a sign-in handler is not reported for having no session of its own", async
   );
 });
 
+test("a webhook receiver that writes without checking its signature is reported", async () => {
+  const found = await runAccess({
+    "src/receivers/billing-events.ts": `
+      import { Router } from "itty-router";
+
+      const router = Router();
+      const encoder = new TextEncoder();
+
+      async function digestMatches(secret: string, raw: string, header: string | null) {
+        if (!header || !secret) return false;
+        const key = await crypto.subtle.importKey("raw", encoder.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["verify"]);
+        return crypto.subtle.verify("HMAC", key, encoder.encode(header), encoder.encode(raw));
+      }
+
+      router.post("/receivers/invoices", async (request: Request, env) => {
+        const raw = await request.text();
+        if (!(await digestMatches(env.INVOICE_SECRET, raw, request.headers.get("x-sign")))) {
+          return new Response("rejected", { status: 401 });
+        }
+        const event = JSON.parse(raw);
+        await env.DB.prepare("insert into invoice_events (id, account_id) values (?1, ?2)").bind(event.id, event.accountId).run();
+        return Response.json({ received: true });
+      });
+
+      router.post("/receivers/wallet", async (request: Request, env) => {
+        const raw = await request.text();
+        const event = JSON.parse(raw);
+        await env.DB.prepare("update accounts set credit_cents = credit_cents + ?1 where id = ?2")
+          .bind(Number(event.creditCents), event.accountId)
+          .run();
+        return Response.json({ applied: true });
+      });
+
+      export default { fetch: router.handle };
+    `
+  });
+  const hits = of(found, "missing_authentication");
+  assert.equal(hits.length, 1, "the sibling verifies its signature, so the omission is an omission");
+  assert.equal(hits[0].route, "POST /receivers/wallet");
+  assert.equal(hits[0].severity, "critical");
+});
+
+test("webhook receivers that all verify their signature are quiet", async () => {
+  const found = await runAccess({
+    "src/receivers/billing-events.ts": `
+      import { Router } from "itty-router";
+
+      const router = Router();
+      const encoder = new TextEncoder();
+
+      async function digestMatches(secret: string, raw: string, header: string | null) {
+        if (!header || !secret) return false;
+        const key = await crypto.subtle.importKey("raw", encoder.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["verify"]);
+        return crypto.subtle.verify("HMAC", key, encoder.encode(header), encoder.encode(raw));
+      }
+
+      router.post("/receivers/invoices", async (request: Request, env) => {
+        const raw = await request.text();
+        if (!(await digestMatches(env.INVOICE_SECRET, raw, request.headers.get("x-sign")))) {
+          return new Response("rejected", { status: 401 });
+        }
+        const event = JSON.parse(raw);
+        await env.DB.prepare("insert into invoice_events (id, account_id) values (?1, ?2)").bind(event.id, event.accountId).run();
+        return Response.json({ received: true });
+      });
+
+      router.post("/receivers/wallet", async (request: Request, env) => {
+        const raw = await request.text();
+        if (!(await digestMatches(env.WALLET_SECRET, raw, request.headers.get("x-sign")))) {
+          return new Response("rejected", { status: 401 });
+        }
+        const event = JSON.parse(raw);
+        await env.DB.prepare("update accounts set credit_cents = credit_cents + ?1 where id = ?2")
+          .bind(Number(event.creditCents), event.accountId)
+          .run();
+        return Response.json({ applied: true });
+      });
+
+      export default { fetch: router.handle };
+    `
+  });
+  assert.deepEqual(categories(found), [], "both receivers recompute the issuer's signature before writing");
+});
+
 /* ------------------------------------------------------------------ mass_assignment */
 
 test("the request body spread into an update is reported", async () => {
@@ -386,6 +474,89 @@ test("an allowlist copied into a payload before the spread is quiet", async () =
     `
   });
   assert.deepEqual(categories(found), [], "the spread carries only the fields the allowlist copied in");
+});
+
+test("caller-supplied fields copied onto a stored record are reported", async () => {
+  const found = await runAccess({
+    "src/settings/listener-profile.controller.ts": `
+      import { Body, Controller, Patch, Req, UseGuards } from "@nestjs/common";
+      import { InjectRepository } from "@nestjs/typeorm";
+      import { Repository } from "typeorm";
+      import { JwtAuthGuard } from "../auth/jwt-auth.guard";
+      import { ListenerProfile } from "./listener-profile.entity";
+
+      @UseGuards(JwtAuthGuard)
+      @Controller("listeners/me")
+      export class ListenerProfileController {
+        constructor(@InjectRepository(ListenerProfile) private readonly profiles: Repository<ListenerProfile>) {}
+
+        @Patch()
+        async update(@Req() req, @Body() attributes: Partial<ListenerProfile>) {
+          const profile = await this.profiles.findOneByOrFail({ id: req.user.id });
+          Object.assign(profile, attributes);
+          profile.updatedAt = new Date();
+          return this.profiles.save(profile);
+        }
+      }
+    `
+  });
+  const hits = of(found, "mass_assignment");
+  assert.equal(hits.length, 1, "Object.assign copies whatever keys the caller sent");
+  assert.match(hits[0].summary, /Object\.assign/);
+});
+
+test("copying only permitted fields onto the same record is quiet", async () => {
+  const found = await runAccess({
+    "src/settings/listener-profile.controller.ts": `
+      import { Body, Controller, Patch, Req, UseGuards } from "@nestjs/common";
+      import { InjectRepository } from "@nestjs/typeorm";
+      import { Repository } from "typeorm";
+      import { JwtAuthGuard } from "../auth/jwt-auth.guard";
+      import { ListenerProfile } from "./listener-profile.entity";
+
+      const WRITABLE = ["displayName", "locale", "timezone"] as const;
+
+      @UseGuards(JwtAuthGuard)
+      @Controller("listeners/me")
+      export class ListenerProfileController {
+        constructor(@InjectRepository(ListenerProfile) private readonly profiles: Repository<ListenerProfile>) {}
+
+        @Patch()
+        async update(@Req() req, @Body() attributes: Partial<ListenerProfile>) {
+          const profile = await this.profiles.findOneByOrFail({ id: req.user.id });
+          for (const field of WRITABLE) {
+            if (field in attributes) Object.assign(profile, { [field]: attributes[field] });
+          }
+          profile.updatedAt = new Date();
+          return this.profiles.save(profile);
+        }
+      }
+    `
+  });
+  assert.deepEqual(categories(found), [], "the copy names the field it sets on every iteration");
+});
+
+test("caller fields copied onto a record that is never stored are quiet", async () => {
+  const found = await runAccess({
+    "src/settings/listener-preview.controller.ts": `
+      import { Body, Controller, Post, Req, UseGuards } from "@nestjs/common";
+      import { JwtAuthGuard } from "../auth/jwt-auth.guard";
+
+      const DEFAULTS = { displayName: "", locale: "en" };
+
+      @UseGuards(JwtAuthGuard)
+      @Controller("listeners/me/preview")
+      export class ListenerPreviewController {
+        @Post()
+        async preview(@Req() req, @Body() attributes: Record<string, unknown>) {
+          const view = { ...DEFAULTS };
+          Object.assign(view, attributes);
+          return { preview: view, viewer: req.user.id };
+        }
+      }
+    `
+  });
+  assert.deepEqual(categories(found), [], "a view model that never reaches storage over-writes no row");
 });
 
 /* --------------------------------------------- broken_function_level_authorization */
@@ -682,6 +853,125 @@ test("a privileged dispatched route whose helper checks a role is not reported",
   assert.deepEqual(categories(found), [], "the branch delegates to a helper that compares the caller's roles");
 });
 
+test("a decorator-routed role change with no required-role decorator is reported", async () => {
+  const found = await runAccess({
+    "src/squads/squad-members.controller.ts": `
+      import { Body, Controller, Delete, Param, Patch, Req, UseGuards } from "@nestjs/common";
+      import { JwtAuthGuard } from "../auth/jwt-auth.guard";
+      import { Roles } from "../auth/roles.decorator";
+      import { TierGuard } from "../auth/tier.guard";
+      import { PrismaService } from "../prisma/prisma.service";
+
+      @UseGuards(JwtAuthGuard, TierGuard)
+      @Controller("squads/:squadId/members")
+      export class SquadMembersController {
+        constructor(private readonly prisma: PrismaService) {}
+
+        @Roles("captain")
+        @Delete(":memberId")
+        async drop(@Req() req, @Param("memberId") memberId: string) {
+          await this.prisma.squadMembership.delete({ where: { id: memberId } });
+          return { dropped: memberId };
+        }
+
+        @Patch(":memberId/tier")
+        async retier(@Req() req, @Param("memberId") memberId: string, @Body() body: { tier: string }) {
+          const updated = await this.prisma.squadMembership.update({
+            where: { id: memberId },
+            data: { tier: body.tier, tierChangedBy: req.user.id }
+          });
+          return { id: updated.id, tier: updated.tier };
+        }
+      }
+    `
+  });
+  const hits = of(found, "broken_function_level_authorization");
+  assert.equal(hits.length, 1, "a guard that reads metadata nobody declared admits everyone");
+  assert.equal(hits[0].route, "PATCH /squads/:squadId/members/:memberId/tier");
+  assert.equal(hits[0].severity, "high");
+});
+
+test("the same decorator-routed change is quiet when the method declares its required role", async () => {
+  const found = await runAccess({
+    "src/squads/squad-members.controller.ts": `
+      import { Body, Controller, Param, Patch, Req, UseGuards } from "@nestjs/common";
+      import { JwtAuthGuard } from "../auth/jwt-auth.guard";
+      import { Roles } from "../auth/roles.decorator";
+      import { TierGuard } from "../auth/tier.guard";
+      import { PrismaService } from "../prisma/prisma.service";
+
+      @UseGuards(JwtAuthGuard, TierGuard)
+      @Controller("squads/:squadId/members")
+      export class SquadMembersController {
+        constructor(private readonly prisma: PrismaService) {}
+
+        @Roles("captain")
+        @Patch(":memberId/tier")
+        async retier(@Req() req, @Param("memberId") memberId: string, @Body() body: { tier: string }) {
+          const updated = await this.prisma.squadMembership.update({
+            where: { id: memberId },
+            data: { tier: body.tier, tierChangedBy: req.user.id }
+          });
+          return { id: updated.id, tier: updated.tier };
+        }
+      }
+    `
+  });
+  assert.deepEqual(categories(found), [], "the required role is declared on the method the guard protects");
+});
+
+test("a route decorator whose path segment reads like a privilege is not an authorization check", async () => {
+  const found = await runAccess({
+    "src/squads/squad-roles.controller.ts": `
+      import { Body, Controller, Param, Patch, Req, UseGuards } from "@nestjs/common";
+      import { JwtAuthGuard } from "../auth/jwt-auth.guard";
+      import { PrismaService } from "../prisma/prisma.service";
+
+      @UseGuards(JwtAuthGuard)
+      @Controller("squads/:squadId")
+      export class SquadRolesController {
+        constructor(private readonly prisma: PrismaService) {}
+
+        @Patch("roles/:memberId")
+        async retier(@Req() req, @Param("memberId") memberId: string, @Body() body: { tier: string }) {
+          const updated = await this.prisma.squadMembership.update({
+            where: { id: memberId },
+            data: { tier: body.tier, tierChangedBy: req.user.id }
+          });
+          return { id: updated.id, tier: updated.tier };
+        }
+      }
+    `
+  });
+  const hits = of(found, "broken_function_level_authorization");
+  assert.equal(hits.length, 1, "`@Patch(\"roles/:memberId\")` is an address, not a required role");
+});
+
+test("a rank comparison between two roles is recognised as the authorization decision", async () => {
+  const found = await runAccess({
+    "src/pods.js": `
+      const express = require("express");
+      const { pool } = require("../lib/db");
+      const { requireUser } = require("../middleware/auth");
+
+      const router = express.Router();
+      const RANK = { guest: 0, crew: 1, captain: 2 };
+
+      router.patch("/pods/:podId/people/:personId/rank", requireUser, async (req, res) => {
+        const target = await pool.query("select role from pod_people where id = $1", [req.params.personId]);
+        if (RANK[req.session.role] <= RANK[target.rows[0].role]) {
+          return res.status(403).json({ error: "outranked" });
+        }
+        await pool.query("UPDATE pod_people SET role = $1 WHERE id = $2", [req.body.role, req.params.personId]);
+        res.json({ ok: true });
+      });
+
+      module.exports = router;
+    `
+  });
+  assert.deepEqual(categories(found), [], "the caller's rank is compared against the target's before the write");
+});
+
 /* ----------------------------------------------------------- missing_csrf_protection */
 
 test("a cookie-authenticated state change with a cross-site cookie and no token is reported", async () => {
@@ -871,6 +1161,83 @@ test("logging a field whose name says it is a credential is reported", async () 
   assert.equal(hits[0].severity, "high");
 });
 
+test("a queue payload the module reads a token out of is reported when logged whole", async () => {
+  const found = await runAccess({
+    "workers/inbox-refresh.js": `
+      "use strict";
+
+      const { Worker } = require("bullmq");
+      const { connection } = require("../lib/redis");
+      const { logger } = require("../lib/logger");
+      const { openInbox, pullSince } = require("../lib/inbox");
+
+      const worker = new Worker(
+        "inbox-refresh",
+        async (task) => {
+          try {
+            const client = await openInbox(task.data.provider, {
+              accessToken: task.data.accessToken,
+              refreshToken: task.data.refreshToken
+            });
+            const pulled = await pullSince(client, task.data.since);
+            logger.info({ taskId: task.id, tenant: task.data.tenantId, pulled }, "inbox refresh complete");
+            return { pulled };
+          } catch (err) {
+            logger.error({ taskId: task.id, err, task: task.data }, "inbox refresh failed");
+            throw err;
+          }
+        },
+        { connection }
+      );
+
+      module.exports = { worker };
+    `
+  });
+  const hits = of(found, "sensitive_data_in_logs");
+  assert.equal(hits.length, 1, "the failure branch logs the payload the access token lives in");
+  assert.match(hits[0].summary, /task\.data/);
+  assert.match(hits[0].summary, /accessToken/);
+  assert.equal(hits[0].severity, "medium");
+});
+
+test("logging identifiers and counts off the same payload is quiet", async () => {
+  const found = await runAccess({
+    "workers/inbox-refresh.js": `
+      "use strict";
+
+      const { Worker } = require("bullmq");
+      const { connection } = require("../lib/redis");
+      const { logger } = require("../lib/logger");
+      const { openInbox, pullSince } = require("../lib/inbox");
+
+      const worker = new Worker(
+        "inbox-refresh",
+        async (task) => {
+          try {
+            const client = await openInbox(task.data.provider, {
+              accessToken: task.data.accessToken,
+              refreshToken: task.data.refreshToken
+            });
+            const pulled = await pullSince(client, task.data.since);
+            logger.info({ taskId: task.id, tenant: task.data.tenantId, pulled }, "inbox refresh complete");
+            return { pulled };
+          } catch (err) {
+            logger.error(
+              { taskId: task.id, tenant: task.data.tenantId, reason: err.code },
+              "inbox refresh failed"
+            );
+            throw err;
+          }
+        },
+        { connection }
+      );
+
+      module.exports = { worker };
+    `
+  });
+  assert.deepEqual(categories(found), [], "an id, a tenant and an error code carry no credential");
+});
+
 /* -------------------------------------------------- secret_exposed_to_client_bundle */
 
 test("a public-prefixed service credential is reported", async () => {
@@ -924,4 +1291,466 @@ test("a publishable key and a server-only variable are quiet", async () => {
     [],
     "a publishable key is meant to be public and a server-only variable never reaches the bundle"
   );
+});
+
+/* ------------------------------------------------ sign-off without authorization */
+
+test("a server function that signs off a record with only a session check is reported", async () => {
+  const found = await runAccess({
+    "app/server/change-orders.ts": `
+      import { createServerFn } from "@tanstack/start";
+      import { z } from "zod";
+      import { db } from "../lib/db";
+      import { requireSession } from "../lib/session";
+
+      const schema = z.object({ changeOrderId: z.string().uuid() });
+
+      export const approveChangeOrder = createServerFn({ method: "POST" })
+        .validator((input: unknown) => schema.parse(input))
+        .handler(async ({ data }) => {
+          const session = await requireSession();
+
+          const order = await db.changeOrder.findUnique({
+            where: { id: data.changeOrderId },
+            select: { id: true, tenantId: true, raisedById: true, totalCents: true }
+          });
+          if (!order || order.tenantId !== session.tenantId) throw new Error("gone");
+
+          return db.changeOrder.update({
+            where: { id: order.id },
+            data: { status: "approved", approvedById: session.userId, approvedAt: new Date() },
+            select: { id: true, status: true }
+          });
+        });
+    `
+  });
+  const hits = of(found, "broken_function_level_authorization");
+  assert.equal(hits.length, 1);
+  assert.match(hits[0].title, /approveChangeOrder/, "the finding is addressed by the name a client imports");
+  assert.ok(
+    hits[0].route === undefined || !hits[0].route.includes("/"),
+    "a server function is addressed by the name a client imports, never by an invented URL path"
+  );
+  assert.match(hits[0].summary, /approved state/);
+});
+
+test("the same sign-off is quiet when the handler requires an approving role", async () => {
+  const found = await runAccess({
+    "app/server/change-orders.ts": `
+      import { createServerFn } from "@tanstack/start";
+      import { z } from "zod";
+      import { db } from "../lib/db";
+      import { requireRole } from "../lib/authz";
+      import { requireSession } from "../lib/session";
+
+      const schema = z.object({ changeOrderId: z.string().uuid() });
+
+      export const approveChangeOrder = createServerFn({ method: "POST" })
+        .validator((input: unknown) => schema.parse(input))
+        .handler(async ({ data }) => {
+          const session = await requireSession();
+          requireRole(session, "approver", "finance");
+
+          const order = await db.changeOrder.findUnique({
+            where: { id: data.changeOrderId },
+            select: { id: true, tenantId: true, raisedById: true }
+          });
+          if (!order || order.tenantId !== session.tenantId) throw new Error("gone");
+
+          return db.changeOrder.update({
+            where: { id: order.id },
+            data: { status: "approved", approvedById: session.userId, approvedAt: new Date() },
+            select: { id: true, status: true }
+          });
+        });
+    `
+  });
+  assert.deepEqual(
+    of(found, "broken_function_level_authorization"),
+    [],
+    "the role the operation needs is compared before the write"
+  );
+});
+
+test("a sign-off narrowed to the caller's own row is quiet", async () => {
+  const found = await runAccess({
+    "app/server/consents.ts": `
+      import { createServerFn } from "@tanstack/start";
+      import { db } from "../lib/db";
+      import { requireSession } from "../lib/session";
+
+      export const grantConsent = createServerFn({ method: "POST" })
+        .handler(async ({ data }) => {
+          const session = await requireSession();
+          return db.consentGrant.update({
+            where: { id: data.grantId, userId: session.userId },
+            data: { status: "approved", approvedAt: new Date() },
+            select: { id: true }
+          });
+        });
+    `
+  });
+  assert.deepEqual(
+    of(found, "broken_function_level_authorization"),
+    [],
+    "a subject approving their own row escalates nothing"
+  );
+});
+
+test("a sign-off that refuses the requester as approver is quiet", async () => {
+  const found = await runAccess({
+    "app/server/claims.ts": `
+      import { createServerFn } from "@tanstack/start";
+      import { db } from "../lib/db";
+      import { requireSession } from "../lib/session";
+
+      export const approveClaim = createServerFn({ method: "POST" })
+        .handler(async ({ data }) => {
+          const session = await requireSession();
+          const claim = await db.claim.findUnique({
+            where: { id: data.claimId },
+            select: { id: true, submittedById: true }
+          });
+          if (!claim) throw new Error("gone");
+          if (claim.submittedById === session.userId) throw new Error("cannot approve your own claim");
+
+          return db.claim.update({
+            where: { id: claim.id },
+            data: { status: "approved", approvedById: session.userId },
+            select: { id: true }
+          });
+        });
+    `
+  });
+  assert.deepEqual(
+    of(found, "broken_function_level_authorization"),
+    [],
+    "separation of duties is the control an approval workflow turns on"
+  );
+});
+
+test("a raw-SQL sign-off is recognised from the state the statement writes", async () => {
+  const found = await runAccess({
+    "src/routes/invoices.js": `
+      const express = require("express");
+      const { pool } = require("../db");
+      const { requireSession } = require("../session");
+
+      const router = express.Router();
+
+      router.post("/invoices/:id/approve", async (request, response) => {
+        const session = await requireSession(request);
+        await pool.query(
+          "UPDATE invoices SET status = 'approved', approved_by = $2, approved_at = now() WHERE id = $1",
+          [request.params.id, session.userId]
+        );
+        response.json({ ok: true });
+      });
+
+      module.exports = router;
+    `
+  });
+  const hits = of(found, "broken_function_level_authorization");
+  assert.equal(hits.length, 1, "the column names never say `role`, and the statement is still a sign-off");
+  assert.match(hits[0].reasoning, /approved state/);
+});
+
+test("creating a record that is already approved is not a sign-off", async () => {
+  const found = await runAccess({
+    "app/server/imports.ts": `
+      import { createServerFn } from "@tanstack/start";
+      import { db } from "../lib/db";
+      import { requireSession } from "../lib/session";
+
+      export const recordAutoApproval = createServerFn({ method: "POST" })
+        .handler(async ({ data }) => {
+          const session = await requireSession();
+          return db.approvalRecord.create({
+            data: { subjectId: data.subjectId, status: "approved", approvedById: session.userId },
+            select: { id: true }
+          });
+        });
+    `
+  });
+  assert.deepEqual(
+    of(found, "broken_function_level_authorization"),
+    [],
+    "a row that comes into existence approved changes no earlier decision"
+  );
+});
+
+/* --------------------------------- unauthenticated external extension channels */
+
+const COMPANION_WORKER = `
+  const API = "https://api.example.com";
+
+  async function readToken() {
+    const { linkedToken } = await chrome.storage.local.get("linkedToken");
+    if (!linkedToken) throw new Error("not_linked");
+    return linkedToken;
+  }
+
+  async function call(path) {
+    const response = await fetch(API + path, {
+      headers: { authorization: "Bearer " + (await readToken()) }
+    });
+    return response.json();
+  }
+
+  const commands = {
+    listVaults: () => call("/v1/vaults"),
+    vaultSecrets: ({ vaultId }) => call("/v1/vaults/" + encodeURIComponent(vaultId) + "/secrets")
+  };
+
+  function run(message) {
+    const command = commands[message && message.kind];
+    if (!command) return Promise.reject(new Error("unknown_command"));
+    return command(message);
+  }
+`;
+
+test("an external extension listener that lends the worker's token is reported", async () => {
+  const found = await runAccess({
+    "background/service-worker.js": `${COMPANION_WORKER}
+      chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => {
+        run(message).then(
+          (result) => sendResponse({ ok: true, result }),
+          (error) => sendResponse({ ok: false, error: error.message })
+        );
+        return true;
+      });
+
+      chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+        run(message).then((result) => sendResponse({ ok: true, result }));
+        return true;
+      });
+    `
+  });
+  const hits = of(found, "missing_authentication");
+  assert.equal(hits.length, 1, "only the channel a web page can address is reported");
+  assert.match(hits[0].title, /onMessageExternal/);
+  assert.match(hits[0].summary, /onMessage\b/, "the internal sibling is named as the boundary this one is not");
+  assert.equal(hits[0].verification, "strong_evidence");
+});
+
+test("the same worker is quiet when the external listener checks the sender's origin", async () => {
+  const found = await runAccess({
+    "background/service-worker.js": `${COMPANION_WORKER}
+      const CONSOLE_ORIGIN = "https://app.example.com";
+
+      chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => {
+        if (sender.origin !== CONSOLE_ORIGIN) {
+          sendResponse({ ok: false, error: "forbidden_origin" });
+          return false;
+        }
+        run(message).then((result) => sendResponse({ ok: true, result }));
+        return true;
+      });
+
+      chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+        run(message).then((result) => sendResponse({ ok: true, result }));
+        return true;
+      });
+    `
+  });
+  assert.deepEqual(
+    of(found, "missing_authentication"),
+    [],
+    "the browser-filled sender is compared against an allow list, which is the whole of authentication here"
+  );
+});
+
+test("an internal-only extension worker with no sender check is quiet", async () => {
+  const found = await runAccess({
+    "background/service-worker.js": `${COMPANION_WORKER}
+      chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+        run(message).then((result) => sendResponse({ ok: true, result }));
+        return true;
+      });
+    `
+  });
+  assert.deepEqual(
+    of(found, "missing_authentication"),
+    [],
+    "runtime.onMessage is reachable only from the extension's own scripts, which need no sender check"
+  );
+});
+
+test("an external listener that reaches no privileged capability is quiet", async () => {
+  const found = await runAccess({
+    "background/service-worker.js": `
+      chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => {
+        sendResponse({ ok: true, version: chrome.runtime.getManifest().version });
+        return true;
+      });
+    `
+  });
+  assert.deepEqual(
+    of(found, "missing_authentication"),
+    [],
+    "answering with the extension's own version lends nothing the page did not already have"
+  );
+});
+
+/* ------------------------------------------- missing_authentication: webhook receivers */
+
+/*
+ * A webhook receiver is unauthenticated by design in exactly one sense — no session
+ * reaches it — and is emphatically not open by design: the issuer signs the payload so
+ * the receiver can refuse everybody else.
+ *
+ * Three separate gates used to suppress this whole class, each of them correct for a
+ * session-authenticated route and wrong for a receiver: a module needed two endpoints, it
+ * needed one that already authenticated, and the handler had to touch a record belonging
+ * to an identifiable subject. A webhook module usually holds exactly one receiver, which
+ * authenticates nothing and writes rows keyed by a carrier reference, so it failed all
+ * three. A fourth gate then exempted it for "establishing a session", because handling a
+ * shared signing secret has the vocabulary of a credential exchange.
+ */
+
+const WEBHOOK_HELPERS = `
+  import crypto from "node:crypto";
+  export const SIGNING_SECRETS: Record<string, string> = {
+    northline: process.env.NORTHLINE_SECRET ?? "",
+    tidewater: process.env.TIDEWATER_SECRET ?? ""
+  };
+  export function expectedSignature(secret: string, body: string): Buffer {
+    return crypto.createHmac("sha256", secret).update(body).digest();
+  }
+`;
+
+test("a lone webhook receiver whose signature check is optional is reported as a candidate", async () => {
+  const found = await runAccess({
+    "src/lib/signing.ts": WEBHOOK_HELPERS,
+    "src/webhooks/carrier-status.ts": `
+      import crypto from "node:crypto";
+      import express from "express";
+      import { SIGNING_SECRETS, expectedSignature } from "../lib/signing";
+      import { db } from "../lib/db";
+
+      export const router = express.Router();
+
+      router.post("/api/webhooks/carrier-status", async (req, res) => {
+        const raw = JSON.stringify(req.body);
+        const carrierCode = req.body.carrierCode;
+        const signature = req.header("x-carrier-signature");
+        const secret = SIGNING_SECRETS[carrierCode];
+        // Carriers that have finished onboarding sign their callbacks.
+        if (signature && secret) {
+          const expected = expectedSignature(secret, raw);
+          if (!crypto.timingSafeEqual(Buffer.from(signature, "hex"), expected)) {
+            return res.status(401).json({ error: "bad signature" });
+          }
+        }
+        await db.update("consignments", { status: req.body.status }, { reference: req.body.reference });
+        return res.json({ ok: true });
+      });
+    `
+  });
+  const reported = of(found, "missing_authentication");
+  assert.equal(reported.length, 1, `expected one finding, got ${JSON.stringify(categories(found))}`);
+  // Nothing in the module verifies a signature unconditionally, so middleware outside
+  // this file cannot be ruled out and the finding is a question rather than a claim.
+  assert.equal(reported[0].verification, "needs_review");
+  assert.match(reported[0].title, /unsigned event body/);
+});
+
+test("a lone webhook receiver that verifies before writing is silent", async () => {
+  const found = await runAccess({
+    "src/lib/signing.ts": WEBHOOK_HELPERS,
+    "src/webhooks/carrier-milestones.ts": `
+      import crypto from "node:crypto";
+      import express from "express";
+      import { SIGNING_SECRETS, expectedSignature } from "../lib/signing";
+      import { db } from "../lib/db";
+
+      export const router = express.Router();
+
+      router.post("/api/webhooks/carrier-milestones", async (req, res) => {
+        const raw = JSON.stringify(req.body);
+        const signature = req.header("x-carrier-signature");
+        if (!signature) return res.status(401).json({ error: "unsigned" });
+        const secret = SIGNING_SECRETS[req.body.carrierCode];
+        if (!secret) return res.status(401).json({ error: "unknown carrier" });
+        const expected = expectedSignature(secret, raw);
+        if (!crypto.timingSafeEqual(Buffer.from(signature, "hex"), expected)) {
+          return res.status(401).json({ error: "bad signature" });
+        }
+        await db.update("consignments", { milestone: req.body.milestone }, { reference: req.body.reference });
+        return res.json({ ok: true });
+      });
+    `
+  });
+  assert.deepEqual(of(found, "missing_authentication"), []);
+});
+
+test("a receiver is recognised from its module path when neither name nor route says webhook", async () => {
+  const found = await runAccess({
+    "src/webhooks/inbound.ts": `
+      import express from "express";
+      import { db } from "../lib/db";
+
+      export const router = express.Router();
+
+      router.post("/api/carrier/events", async (req, res) => {
+        await db.update("consignments", { status: req.body.status }, { reference: req.body.reference });
+        return res.json({ ok: true });
+      });
+    `
+  });
+  assert.equal(of(found, "missing_authentication").length, 1);
+});
+
+test("a receiver that only reads, and writes nothing, is not reported", async () => {
+  const found = await runAccess({
+    "src/webhooks/carrier-status.ts": `
+      import express from "express";
+      import { db } from "../lib/db";
+
+      export const router = express.Router();
+
+      router.post("/api/webhooks/carrier-status", async (req, res) => {
+        const row = await db.select("consignments", { reference: req.body.reference });
+        return res.json({ known: Boolean(row) });
+      });
+    `
+  });
+  assert.deepEqual(of(found, "missing_authentication"), []);
+});
+
+test("a verified sibling in the same module states the finding as established rather than as a question", async () => {
+  const found = await runAccess({
+    "src/lib/signing.ts": WEBHOOK_HELPERS,
+    "src/webhooks/carrier.ts": `
+      import crypto from "node:crypto";
+      import express from "express";
+      import { SIGNING_SECRETS, expectedSignature } from "../lib/signing";
+      import { db } from "../lib/db";
+
+      export const router = express.Router();
+
+      router.post("/api/webhooks/carrier-milestones", async (req, res) => {
+        const signature = req.header("x-carrier-signature");
+        if (!signature) return res.status(401).json({ error: "unsigned" });
+        const secret = SIGNING_SECRETS[req.body.carrierCode];
+        if (!secret) return res.status(401).json({ error: "unknown carrier" });
+        const expected = expectedSignature(secret, JSON.stringify(req.body));
+        if (!crypto.timingSafeEqual(Buffer.from(signature, "hex"), expected)) {
+          return res.status(401).json({ error: "bad signature" });
+        }
+        await db.update("consignments", { milestone: req.body.milestone }, { reference: req.body.reference });
+        return res.json({ ok: true });
+      });
+
+      router.post("/api/webhooks/carrier-status", async (req, res) => {
+        await db.update("consignments", { status: req.body.status }, { reference: req.body.reference });
+        return res.json({ ok: true });
+      });
+    `
+  });
+  const reported = of(found, "missing_authentication");
+  assert.equal(reported.length, 1, `expected one finding, got ${reported.length}`);
+  assert.equal(reported[0].verification, "strong_evidence");
+  // The example a reader is sent to must be the verifying receiver, not a session route.
+  assert.match(reported[0].reasoning, /verify their signature/);
 });

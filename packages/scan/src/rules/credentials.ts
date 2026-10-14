@@ -1,8 +1,16 @@
 import ts from "typescript";
-import { calleeName, calleeTail, collect, expressionName, isConstantString, literalTextOf, walk } from "../ast/helpers.js";
+import {
+  calleeName,
+  calleeTail,
+  collect,
+  enclosingFunction,
+  expressionName,
+  isConstantString,
+  literalTextOf,
+  walk, isAbortCall } from "../ast/helpers.js";
 import { analyzeFunction, functionsIn, rootOf, taintOrigin } from "../ast/taint.js";
 import { lineOf, type ParsedFile } from "../ast/parse.js";
-import { locationOf, sourceEvidence, type Rule, type RuleContext, routeFor } from "./context.js";
+import { formatRoute, locationOf, routeFor, sourceEvidence, type Rule, type RuleContext } from "./context.js";
 
 /**
  * How an application handles its own secrets: how it stores passwords, how it
@@ -29,6 +37,22 @@ const PASSWORD_NAME = /pass(word|wd|phrase)|\bpwd\b|credentials?\b/i;
 /** Names that mean the value must be unguessable to whoever receives it. */
 const UNGUESSABLE_NAME =
   /(session|token|secret|nonce|csrf|xsrf|reset|verif(y|ication)|invit(e|ation)|api[_-]?key|apikey|password|passcode|otp|magic|challenge|credential|\bsid\b|\bsalt\b|recovery|activation|confirm|signature|handoff|onetime|one[_-]time)/i;
+
+/**
+ * A "code", a "pin" or a "key" that a qualifier marks as something the holder is
+ * admitted by.
+ *
+ * On their own those three words are the most overloaded nouns in an
+ * application — a status code, a country code, a sort key — so `UNGUESSABLE_NAME`
+ * cannot contain them without reporting every `statusCode` that a test fixture
+ * randomises. What settles it is the qualifier in front: a pairing code, an
+ * enrolment code, an access code and a recovery pin all say what the value admits
+ * the holder to, and every one of them is a bearer credential. Without this the
+ * rule is blind to whole families of flows — device pairing, account recovery,
+ * invitation redemption — because none of them calls the value a token.
+ */
+const ADMITTING_CODE =
+  /(pair(ing)?|enrol(l)?(ment)?|activation|invit(e|ation)|access|join|share|claim|redeem|unlock|device|login|sign[_-]?in|confirm(ation)?|verif(y|ication)|recovery|backup|security|auth|otp|one[_-]?time|onetime|mfa|2fa|two[_-]?factor|reset|challenge)[_-]?(code|pin|secret|key)/i;
 
 /** Names that mean an unpredictable value is a convenience, not a control. */
 const BENIGN_RANDOM_NAME =
@@ -79,6 +103,44 @@ const CREDENTIAL_SHAPES: ReadonlyArray<{ id: string; label: string; pattern: Reg
   { id: "github_token", label: "GitHub token", pattern: /^gh[pousr]_[A-Za-z0-9]{20,}$/, live: true },
   { id: "slack_token", label: "Slack token", pattern: /^xox[abprs]-[A-Za-z0-9-]{10,}$/, live: true },
   { id: "jwt", label: "signed JSON Web Token", pattern: /^eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}$/ },
+  /*
+   * Providers below added 2026-08-25, after a scan of a deliberately ordinary
+   * application found the Stripe key and the database password and walked past a
+   * SendGrid key sitting on the line between them.
+   *
+   * The binding was called `SENDGRID_KEY`, which `SECRET_BINDING_NAME` does not match:
+   * it wants a qualified `api_key`, and a bare `_KEY` suffix is too common to admit —
+   * `sort_key`, `cache_key`, `idempotency_key`. So the entropy path never ran and the
+   * shape path had nothing to match.
+   *
+   * A vendor prefix is the right kind of list to lengthen. It is not a guess about what
+   * the next application will call its variables; it is a documented fact about a token
+   * format, published by the issuer, and it cannot drift as a naming convention does.
+   * Ordered roughly by how often the key actually leaks.
+   */
+  { id: "sendgrid", label: "SendGrid API key", pattern: /^SG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}$/, live: true },
+  { id: "npm_token", label: "npm access token", pattern: /^npm_[A-Za-z0-9]{36}$/, live: true },
+  { id: "gitlab_pat", label: "GitLab personal access token", pattern: /^glpat-[A-Za-z0-9_-]{20,}$/, live: true },
+  { id: "google_oauth_secret", label: "Google OAuth client secret", pattern: /^GOCSPX-[A-Za-z0-9_-]{20,}$/, live: true },
+  { id: "shopify", label: "Shopify access token", pattern: /^shp(at|ss|ca|pa)_[a-fA-F0-9]{32}$/, live: true },
+  { id: "square", label: "Square access token", pattern: /^sq0(atp|csp)-[A-Za-z0-9_-]{20,}$/, live: true },
+  { id: "mailgun", label: "Mailgun API key", pattern: /^key-[a-f0-9]{32}$/, live: true },
+  { id: "twilio_api_key", label: "Twilio API key", pattern: /^SK[a-f0-9]{32}$/, live: true },
+  { id: "supabase_service", label: "Supabase service key", pattern: /^sbp_[a-f0-9]{40}$/, live: true },
+  { id: "doppler", label: "Doppler service token", pattern: /^dp\.(pt|st|sa)\.[A-Za-z0-9_-]{20,}$/, live: true },
+  { id: "linear", label: "Linear API key", pattern: /^lin_api_[A-Za-z0-9]{20,}$/, live: true },
+  { id: "huggingface", label: "Hugging Face access token", pattern: /^hf_[A-Za-z0-9]{30,}$/, live: true },
+  { id: "resend", label: "Resend API key", pattern: /^re_[A-Za-z0-9_]{20,}$/, live: true },
+  { id: "groq", label: "Groq API key", pattern: /^gsk_[A-Za-z0-9]{40,}$/, live: true },
+  { id: "discord_bot", label: "Discord bot token", pattern: /^[MNO][A-Za-z0-9_-]{23,}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,}$/, live: true },
+  { id: "telegram_bot", label: "Telegram bot token", pattern: /^\d{8,12}:[A-Za-z0-9_-]{35}$/, live: true },
+  { id: "sentry_dsn", label: "Sentry DSN with an inline key", pattern: /^https:\/\/[a-f0-9]{16,}@[\w.-]*ingest[\w.-]*\.sentry\.io\/\d+$/, live: true },
+  {
+    id: "azure_storage",
+    label: "Azure storage connection string",
+    pattern: /AccountKey=[A-Za-z0-9+/=]{40,}/,
+    live: true
+  },
   { id: "private_key", label: "PEM private key", pattern: /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/, live: true },
   {
     id: "connection_string",
@@ -368,7 +430,7 @@ export function attributeRoute(context: RuleContext, node: ts.Node): string | un
     const paths = new Set(context.routes.map((hint) => hint.path));
     if (paths.size === 1) {
       const first = context.routes[0]!;
-      return first.method === "ANY" ? first.path : `${first.method} ${first.path}`;
+      return formatRoute(first.method, first.path);
     }
   }
   return undefined;
@@ -381,6 +443,9 @@ function withRoute(context: RuleContext, node: ts.Node): { route?: string } {
 
 /* -------------------------------------------------------------- shared helpers */
 
+/** Calls that hand back the very object they were given. */
+const FREEZING_CALL = /^Object\.(freeze|seal|preventExtensions)$/;
+
 function unwrap(node: ts.Node): ts.Node {
   let current = node;
   for (let depth = 0; depth < 6; depth += 1) {
@@ -390,6 +455,21 @@ function unwrap(node: ts.Node): ts.Node {
     }
     if (ts.isSatisfiesExpression(current) || ts.isTypeAssertionExpression(current) || ts.isAwaitExpression(current)) {
       current = current.expression;
+      continue;
+    }
+    /*
+     * `Object.freeze({...})` is the object it was handed.
+     *
+     * A pinned verify-options constant is idiomatically written frozen, and reading
+     * the wrapper instead of the object made this rule report the *more* careful
+     * author: `Object.freeze` is a call expression, so `optionsObjectOf` found no
+     * object literal, concluded no `algorithms` list was passed, and reported a
+     * verification bypass against code that pins the algorithm, the issuer and the
+     * audience. Four of the eight false positives in holdout-5 were this one
+     * wrapper, on a single shared session middleware.
+     */
+    if (ts.isCallExpression(current) && FREEZING_CALL.test(calleeName(current)) && current.arguments.length === 1) {
+      current = current.arguments[0] as ts.Expression;
       continue;
     }
     return current;
@@ -442,6 +522,12 @@ function numberValueOf(file: ParsedFile, node: ts.Node | undefined): number | nu
   return null;
 }
 
+/** Operators that store a value under the name on their left. */
+const ASSIGNMENT_OPERATORS = new Set<ts.SyntaxKind>([
+  ts.SyntaxKind.EqualsToken,
+  ts.SyntaxKind.PlusEqualsToken
+]);
+
 /** The nearest name this expression's result is stored under. */
 function assignmentTargetName(file: ParsedFile, node: ts.Node): string | null {
   let current: ts.Node | undefined = node;
@@ -449,7 +535,11 @@ function assignmentTargetName(file: ParsedFile, node: ts.Node): string | null {
     if (ts.isVariableDeclaration(current) && ts.isIdentifier(current.name)) return current.name.text;
     if (ts.isPropertyAssignment(current)) return current.name.getText(file.source).replace(/['"]/g, "");
     if (ts.isShorthandPropertyAssignment(current)) return current.name.text;
-    if (ts.isBinaryExpression(current) && current.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+    // `=` is only half of it. A code, a one-time password and an invite string are
+    // almost always accumulated a character at a time — `code += ALPHABET[…]` —
+    // and reading only plain assignment leaves the value that is being built
+    // nameless, so nothing downstream can tell what it is for.
+    if (ts.isBinaryExpression(current) && ASSIGNMENT_OPERATORS.has(current.operatorToken.kind)) {
       return current.left.getText(file.source);
     }
     current = current.parent;
@@ -935,6 +1025,58 @@ const HANDED_OUT_SECRET =
 /** Purposes that are timestamps or durations rather than credentials. */
 const TIME_LIKE = /(expir|\bttl\b|until|deadline|created|updated|issued[_-]?at|_at$|At$|timestamp|_ms$|_sec|seconds|minutes|hours|age$|window|interval|duration)/i;
 
+/**
+ * Does this name say the value is handed to somebody and has to be unguessable?
+ *
+ * The qualified-code vocabulary belongs here as well as in `UNGUESSABLE_NAME`: a
+ * pairing code minted from the clock is the same defect as a reset token minted
+ * from the clock, and splitting the two vocabularies would report one and stay
+ * silent on the other.
+ */
+function handedOutSecretName(name: string): boolean {
+  return HANDED_OUT_SECRET.test(name) || ADMITTING_CODE.test(name);
+}
+
+/**
+ * The ambient, attacker-observable source this expression is built from.
+ *
+ * The clock is the usual one, but it is not the only thing reached for when a
+ * developer wants "something that changes each time": a process id and a module
+ * counter are just as common and just as enumerable, and a value assembled from
+ * them is as predictable as one assembled from `Date.now()`. Returning the source
+ * rather than a boolean keeps the report honest about which of them it saw.
+ */
+function ambientSourceOf(file: ParsedFile, node: ts.Node): { source: string; detail: string } | null {
+  const text = node.getText(file.source);
+  if (/Date\.now|performance\.now|process\.hrtime|new Date\b/.test(text)) {
+    return {
+      source: "the current clock reading",
+      detail:
+        "The clock is public and monotonic: anyone who knows roughly when the value was issued can enumerate the small range it must fall in."
+    };
+  }
+  if (/process\.(pid|ppid|uptime)\b/.test(text)) {
+    return {
+      source: "the process id",
+      detail:
+        "A process id is a small number the operating system hands out in near sequence, and it does not change between the values one process issues, so it narrows the search space instead of widening it."
+    };
+  }
+  let counter: string | null = null;
+  walk(node, (inner) => {
+    if (counter) return;
+    if (ts.isIdentifier(inner) && isCounterLike(file, inner.text)) counter = inner.text;
+  });
+  if (counter) {
+    return {
+      source: `the counter \`${counter}\``,
+      detail:
+        "A counter's next value is its previous value plus one, so anybody who has been issued a single value knows every value issued after it."
+    };
+  }
+  return null;
+}
+
 /** Collections whose keys are session handles rather than ordinary records. */
 const SESSION_STORE_NAME = /(session|sess\b|\bsid\b|_sid|logins?$|authenticated)/i;
 
@@ -948,7 +1090,7 @@ function isSessionPurpose(purposes: readonly string[]): boolean {
 function unguessablePurpose(purposes: readonly string[]): boolean {
   if (purposes.length === 0) return false;
   if (anyMatches(purposes, BENIGN_RANDOM_NAME)) return false;
-  return anyMatches(purposes, UNGUESSABLE_NAME);
+  return anyMatches(purposes, UNGUESSABLE_NAME) || anyMatches(purposes, ADMITTING_CODE);
 }
 
 function wordPattern(name: string): RegExp {
@@ -1063,6 +1205,72 @@ function sessionUseOf(file: ParsedFile, candidates: readonly string[]): string |
 }
 
 /**
+ * Every name in this file that the application later checks against a value the
+ * caller hands in, with the check written out for the report.
+ *
+ * A generated value that is compared with something the caller presents is a
+ * bearer credential whatever it is named: that comparison is the moment holding
+ * the value is accepted as proof of entitlement. Reading names alone misses every
+ * flow that names its secret after what it unlocks — a pairing `code`, a join
+ * `key`, a plain `value` in a claim record — and those are exactly the flows
+ * where a predictable generator is worth the most to an attacker.
+ *
+ * Two conditions keep this off ordinary equality. The value the caller presents
+ * has to be recognisable as one — named as a presented value, or reaching the
+ * comparison from a request — and the two operands must not be the same field on
+ * both sides, which is the shape of an echo check (`variant === query.variant`, a
+ * confirmation field, an idempotency key) rather than a held secret against a
+ * guess. Computed once per file because it walks every function's taint.
+ */
+const verificationCache = new WeakMap<ts.SourceFile, Map<string, string>>();
+
+function verificationChecks(file: ParsedFile): Map<string, string> {
+  const cached = verificationCache.get(file.source);
+  if (cached) return cached;
+
+  const checks = new Map<string, string>();
+  for (const fn of functionsIn(file.source)) {
+    const scope = analyzeFunction(file, fn);
+    const presented = (operand: ts.Expression): boolean =>
+      taintOrigin(operand, scope) !== null || PRESENTED_NAME.test(lastSegment(operand.getText(file.source)));
+
+    for (const comparison of collect(fn, ts.isBinaryExpression)) {
+      if (!EQUALITY_OPERATORS.has(comparison.operatorToken.kind)) continue;
+      if (!isComparableValue(file, comparison.left) || !isComparableValue(file, comparison.right)) continue;
+
+      const leftName = lastSegment(comparison.left.getText(file.source));
+      const rightName = lastSegment(comparison.right.getText(file.source));
+      if (leftName === rightName) continue;
+
+      for (const [held, guess, heldName] of [
+        [comparison.left, comparison.right, leftName],
+        [comparison.right, comparison.left, rightName]
+      ] as const) {
+        if (PRESENTED_NAME.test(heldName)) continue;
+        if (!presented(guess)) continue;
+        if (checks.has(heldName)) continue;
+        checks.set(
+          heldName,
+          `it is checked against \`${guess.getText(file.source)}\`, which the caller presents, so holding \`${heldName}\` is what proves the caller is entitled`
+        );
+      }
+    }
+  }
+
+  verificationCache.set(file.source, checks);
+  return checks;
+}
+
+function verificationUseOf(file: ParsedFile, candidates: readonly string[]): string | null {
+  const checks = verificationChecks(file);
+  for (const candidate of candidates) {
+    const use = checks.get(candidate);
+    if (use) return use;
+  }
+  return null;
+}
+
+/**
  * One decision shared by every rule that looks at a generated value, so a single
  * defect can never be reported twice under two categories.
  */
@@ -1077,8 +1285,12 @@ interface SecurityPurpose {
 
 function classifySecurityPurpose(file: ParsedFile, purposes: readonly string[]): SecurityPurpose {
   if (anyMatches(purposes, BENIGN_RANDOM_NAME)) return { unguessable: false, session: false, use: null };
-  const use = sessionUseOf(file, purposes);
-  const session = isSessionPurpose(purposes) || use !== null;
+  const sessionUse = sessionUseOf(file, purposes);
+  // Being verified against a presented value proves the value is security-bearing
+  // but says nothing about it being a session handle, so it is only consulted when
+  // the session evidence is absent and it never promotes the finding to a session.
+  const use = sessionUse ?? verificationUseOf(file, purposes);
+  const session = isSessionPurpose(purposes) || sessionUse !== null;
   return { unguessable: unguessablePurpose(purposes) || use !== null, session, use };
 }
 
@@ -1116,7 +1328,9 @@ function reportPredictable(context: RuleContext, finding: PredictableReport): vo
     evidence: [sourceEvidence(context, finding.node, `${subject} is produced from ${finding.source}.`)],
     reasoning: `The value is built from ${finding.source}. ${
       finding.purpose.use
-        ? `It is classified as a session identifier because ${finding.purpose.use}, which is stronger evidence than the binding name.`
+        ? `${
+            session ? "It is classified as a session identifier because" : "It is treated as security-bearing because"
+          } ${finding.purpose.use}, which is stronger evidence than the binding name.`
         : `Its purpose names (${finding.purposes.join(", ")}) mark it as security-bearing.`
     }`
   });
@@ -1161,22 +1375,23 @@ export const predictableSecurityValue: Rule = {
       });
     }
 
-    // A clock reading or a counter used directly as the value, with no digest at all.
+    // A clock reading, a process id, or a counter used directly as the value, with
+    // no digest at all.
     for (const declaration of collect(context.file.source, ts.isVariableDeclaration)) {
       if (!ts.isIdentifier(declaration.name) || !declaration.initializer) continue;
       const name = declaration.name.text;
-      if (!HANDED_OUT_SECRET.test(name) || TIME_LIKE.test(name) || BENIGN_RANDOM_NAME.test(name)) continue;
+      if (!handedOutSecretName(name) || TIME_LIKE.test(name) || BENIGN_RANDOM_NAME.test(name)) continue;
       const initializer = declaration.initializer;
-      if (!/Date\.now|performance\.now|process\.hrtime|new Date/.test(initializer.getText(context.file.source))) continue;
+      const ambient = ambientSourceOf(context.file, initializer);
+      if (!ambient) continue;
       if (!isPredictableComposition(context.file, initializer)) continue;
 
       reportPredictable(context, {
         node: declaration,
         purposes: [name],
         purpose: classifySecurityPurpose(context.file, [name]),
-        source: "the current clock reading",
-        detail:
-          "The clock is public and monotonic: anyone who knows roughly when the value was issued can enumerate the small range it must fall in."
+        source: ambient.source,
+        detail: ambient.detail
       });
     }
   }
@@ -1238,6 +1453,21 @@ export const legacyDigestAlgorithm: Rule = {
 /* --------------------------------------------------------- JWT verification */
 
 const JWT_MODULES = /^(jsonwebtoken|jose|jwt-simple|njwt|jwt-decode|@tsndr\/cloudflare-worker-jwt|fast-jwt)$/;
+
+/**
+ * The spellings of "parse this token without checking it".
+ *
+ * `jose` calls it `decodeJwt` and is now the library most JavaScript reaches for — it is
+ * what Auth.js uses — while `jwt-decode` exports a bare `jwtDecode`. The rule matched
+ * `decode` alone, which is `jsonwebtoken`'s name and nobody else's, so a Nuxt middleware
+ * taking a portal token straight to `decodeJwt` and trusting the `sub` was silent. It is
+ * the same defect under a different library's vocabulary.
+ *
+ * `decodeProtectedHeader` is deliberately absent. Reading the header to pick a key by
+ * `kid` before verifying with it is the correct pattern, and the rule's own note below
+ * says so — flagging it would report the careful implementation.
+ */
+const DECODE_TAILS = ["decode", "decodeJwt", "jwtDecode"];
 
 /** Local names bound to a JWT library in this file. */
 function jwtBindings(file: ParsedFile): Set<string> {
@@ -1304,7 +1534,7 @@ function propertyOf(file: ParsedFile, options: ts.ObjectLiteralExpression, key: 
 function branchStops(statement: ts.Node): boolean {
   let stops = false;
   walk(statement, (node) => {
-    if (ts.isReturnStatement(node) || ts.isThrowStatement(node)) stops = true;
+    if (ts.isReturnStatement(node) || ts.isThrowStatement(node) || isAbortCall(node)) stops = true;
   });
   return stops;
 }
@@ -1347,11 +1577,24 @@ export const jwtVerificationBypass: Rule = {
     );
 
     for (const call of collect(context.file.source, ts.isCallExpression)) {
-      if (!isJwtCall(context.file, call, bindings, "decode")) continue;
+      if (!DECODE_TAILS.some((tail) => isJwtCall(context.file, call, bindings, tail))) continue;
       const subject = call.arguments[0]?.getText(context.file.source) ?? "";
       // Decoding to read the `kid` before verifying with the matching key is a
       // legitimate pattern; it is only a bypass when nothing verifies the token.
-      const verified = verifyCalls.some((verify) => verify.arguments[0]?.getText(context.file.source) === subject);
+      //
+      // Matching on the argument's TEXT alone is not enough, and the difference
+      // is the whole finding. A file commonly holds a correct helper —
+      // `function readRefreshToken(raw) { … jwt.verify(raw, key) }` — beside a
+      // handler that decodes its own `raw` and trusts the claims. Both spell the
+      // token `raw`, so a text match reports the file as verified and the actual
+      // bypass disappears. A verify only speaks for this decode when it can see
+      // the same binding: the same function body, or module scope.
+      const decodeScope = enclosingFunction(call);
+      const verified = verifyCalls.some(
+        (verify) =>
+          verify.arguments[0]?.getText(context.file.source) === subject &&
+          enclosingFunction(verify) === decodeScope
+      );
       if (verified) continue;
       // A decoded payload nobody reads is not a decision.
       const used = assignmentTargetName(context.file, call) !== null || isDecisionSite(call);
@@ -1753,9 +1996,78 @@ function classifyCredential(value: string): { id: string; label: string; live: b
   return null;
 }
 
+/**
+ * A URI whose authority is this machine.
+ *
+ * `localhost`, `127.0.0.0/8`, `::1`, and the container-DNS names a compose file uses for a
+ * service on the same private network — `db`, `postgres`, `mysql`, `redis`, `mongo` — which
+ * resolve nowhere outside it. Anything else is a real host and stays reported.
+ */
+const LOOPBACK_CONNECTION =
+  /^[a-z0-9+.-]{2,20}:\/\/[^\s:@/]{1,64}:[^\s@/]+@(?:localhost|127(?:\.\d{1,3}){3}|\[::1\]|::1|0\.0\.0\.0|host\.docker\.internal|(?:db|database|postgres|postgresql|mysql|mariadb|redis|mongo|mongodb)(?::\d+)?)(?::\d+)?(?:[/?#]|$)/i;
+
 /** Identifier names that mean the value beside them is meant to stay secret. */
 const SECRET_BINDING_NAME =
   /(secret|password|passwd|token|api[_-]?key|apikey|private[_-]?key|access[_-]?key|client[_-]?secret|session[_-]?key|credential|auth[_-]?token|signing[_-]?key|encryption[_-]?key|dsn|connection[_-]?string)/i;
+
+export interface CredentialVerdict {
+  label: string;
+  live: boolean;
+  /** True when a documented vendor shape matched, false for a secret-named binding. */
+  shape: boolean;
+}
+
+/**
+ * Whether one literal value is a credential, and of what kind. Shared by the
+ * `credential-literal` rule and by the plain-text scan the CLI runs over a diff
+ * before committing, so both draw the line in the same place.
+ */
+export function assessCredentialValue(rawValue: string, boundTo: readonly string[]): CredentialVerdict | null {
+  const value = rawValue.trim();
+  if (value.length < 8 || value.length > 4096) return null;
+  if (PLACEHOLDER_VALUE.test(value)) return null;
+  if (PUBLIC_VALUE_PREFIX.test(value)) return null;
+
+  /*
+   * A connection string whose host is loopback authenticates to nothing.
+   *
+   *     url: 'postgres://northgate:****@localhost:5432/northgate_dev'
+   *
+   * Sails' own generator writes that line, and so does every framework that ships a
+   * development datastore config; the username, the password and the database name are
+   * usually the project's name three times. Reporting it is not a judgement call that
+   * went the wrong way — the credential cannot be used from anywhere except the machine
+   * it is already on, so there is no disclosure to report, and "rotate this at the
+   * issuer" is advice with no issuer to act on.
+   *
+   * It also cost more than one finding. The first family authored for the reference
+   * corpus shipped that config to every case in it, so one line arrived as seven
+   * false positives and took the family's asserted rate to 0.538.
+   *
+   * Narrow on purpose: only the host decides, and only loopback counts. A credential
+   * pointing at a real hostname stays reported however development-ish the file looks,
+   * because that one can be used by whoever reads it.
+   */
+  if (LOOPBACK_CONNECTION.test(value)) return null;
+
+  const shape = classifyCredential(value);
+  // Without a recognisable shape, a value that names itself is a fixture.
+  if (!shape && SELF_DESCRIBING_VALUE.test(value)) return null;
+  if (shape) return { label: shape.label, live: shape.live, shape: true };
+
+  const named = boundTo.some((name) => SECRET_BINDING_NAME.test(name));
+  if (named && value.length >= 12 && shannonEntropy(value) >= 3.4 && !/\s/.test(value)) {
+    return {
+      label: `credential assigned to ${boundTo.find((name) => SECRET_BINDING_NAME.test(name))}`,
+      // A long, high-entropy value under a secret-named binding is a working
+      // credential, whichever vendor issued it; the impact does not depend on
+      // whether the engine recognised the vendor's prefix.
+      live: value.length >= 24 && shannonEntropy(value) >= 3.5,
+      shape: false
+    };
+  }
+  return null;
+}
 
 export const credentialLiteral: Rule = {
   id: "credential-literal",
@@ -1766,32 +2078,12 @@ export const credentialLiteral: Rule = {
 
     const consider = (node: ts.Node, rawValue: string, boundTo: readonly string[], how: string): void => {
       const value = rawValue.trim();
-      if (value.length < 8 || value.length > 4096) return;
-      if (PLACEHOLDER_VALUE.test(value)) return;
-      if (PUBLIC_VALUE_PREFIX.test(value)) return;
-
-      const shape = classifyCredential(value);
-      // Without a recognisable shape, a value that names itself is a fixture.
-      if (!shape && SELF_DESCRIBING_VALUE.test(value)) return;
-      const named = boundTo.some((name) => SECRET_BINDING_NAME.test(name));
-
-      let label: string;
-      let live: boolean;
-      let reasoning: string;
-      if (shape) {
-        label = shape.label;
-        live = shape.live;
-        reasoning = `The literal matches the documented shape of a ${shape.label}${how ? ` and ${how}` : ""}.`;
-      } else if (named && value.length >= 12 && shannonEntropy(value) >= 3.4 && !/\s/.test(value)) {
-        label = `credential assigned to ${boundTo.find((name) => SECRET_BINDING_NAME.test(name))}`;
-        // A long, high-entropy value under a secret-named binding is a working
-        // credential, whichever vendor issued it; the impact does not depend on
-        // whether the engine recognised the vendor's prefix.
-        live = value.length >= 24 && shannonEntropy(value) >= 3.5;
-        reasoning = `The literal ${how || "is bound to a secret-named binding"}, is ${value.length} characters with entropy ${shannonEntropy(value).toFixed(2)}, and contains no whitespace.`;
-      } else {
-        return;
-      }
+      const verdict = assessCredentialValue(value, boundTo);
+      if (!verdict) return;
+      const { label, live } = verdict;
+      const reasoning = verdict.shape
+        ? `The literal matches the documented shape of a ${label}${how ? ` and ${how}` : ""}.`
+        : `The literal ${how || "is bound to a secret-named binding"}, is ${value.length} characters with entropy ${shannonEntropy(value).toFixed(2)}, and contains no whitespace.`;
 
       const key = `${label}:${value.slice(0, 8)}:${lineOf(context.file, node)}`;
       if (reported.has(key)) return;
